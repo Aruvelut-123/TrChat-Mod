@@ -2,9 +2,13 @@ package me.arasple.mc.trchat.module.internal.listener
 
 import me.arasple.mc.trchat.TrChat
 import me.arasple.mc.trchat.module.adventure.toAdventure
+import io.papermc.paper.event.player.PlayerOpenSignEvent
 import me.arasple.mc.trchat.module.internal.TrChatBukkit
+import me.arasple.mc.trchat.util.data
+import me.arasple.mc.trchat.util.session
 import me.arasple.mc.trchat.util.color.MessageColors
 import me.arasple.mc.trchat.util.parseSimple
+import org.bukkit.entity.Player
 import org.bukkit.event.block.SignChangeEvent
 import taboolib.common.platform.Platform
 import taboolib.common.platform.PlatformSide
@@ -12,6 +16,7 @@ import taboolib.common.platform.event.EventPriority
 import taboolib.common.platform.event.SubscribeEvent
 import taboolib.common.platform.function.adaptPlayer
 import taboolib.module.configuration.ConfigNode
+import taboolib.platform.util.sendLang
 
 /**
  * @author ItsFlicker
@@ -23,6 +28,9 @@ object ListenerSignChange {
     @ConfigNode("Enable.Sign", "filter.yml")
     var filter = true
         private set
+
+    @ConfigNode("Chat.Sign-Edit-Permission-Check", "settings.yml")
+    var signEditPermissionCheck = true
 
     @ConfigNode("Color.Sign", "settings.yml")
     var color = true
@@ -52,5 +60,22 @@ object ListenerSignChange {
                 e.setLine(index, MessageColors.replaceWithPermission(p, edited, MessageColors.Type.SIGN))
             }
         }
+    }
+
+    @SubscribeEvent(priority = EventPriority.LOW, ignoreCancelled = true)
+    fun onPlayerOpenSign(e: PlayerOpenSignEvent) {
+        if (!signEditPermissionCheck) return
+        val player = e.player
+        if (!player.hasPermission("trchat.bypass.signedit") && !canSpeak(player)) {
+            e.isCancelled = true
+            player.sendLang("Sign-Edit-No-Permission")
+        }
+    }
+
+    private fun canSpeak(player: Player): Boolean {
+        if (TrChatBukkit.isGlobalMuting && !player.hasPermission("trchat.bypass.globalmute")) return false
+        if (player.data.isMuted) return false
+        val channel = player.session.getChannel()
+        return channel == null || channel.canSpeak(player)
     }
 }
