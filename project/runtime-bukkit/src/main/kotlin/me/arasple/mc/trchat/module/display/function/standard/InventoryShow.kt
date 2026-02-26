@@ -134,10 +134,11 @@ object InventoryShow : Function("INVENTORY") {
                 })
                 inv.setItem(3, inventory.itemInHand.replaceAir())
                 inv.setItem(4, PLACEHOLDER_ITEM)
-                inv.setItem(5, inventory.getItem(inventory.size - 2).replaceAir())
-                inv.setItem(6, inventory.getItem(inventory.size - 3).replaceAir())
-                inv.setItem(7, inventory.getItem(inventory.size - 4).replaceAir())
-                inv.setItem(8, inventory.getItem(inventory.size - 5).replaceAir())
+                val armor = inventory.armorContents
+                inv.setItem(5, armor[3].replaceAir()) // 头盔
+                inv.setItem(6, armor[2].replaceAir()) // 胸甲
+                inv.setItem(7, armor[1].replaceAir()) // 护腿
+                inv.setItem(8, armor[0].replaceAir()) // 靴子
                 (9..17).forEach { slot -> inv.setItem(slot, PLACEHOLDER_ITEM) }
             }
             onClick(lock = true)
