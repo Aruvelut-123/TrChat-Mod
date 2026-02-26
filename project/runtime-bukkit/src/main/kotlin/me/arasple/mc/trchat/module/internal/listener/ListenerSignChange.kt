@@ -29,6 +29,9 @@ object ListenerSignChange {
     var filter = true
         private set
 
+    @ConfigNode("Chat.Sign-Edit-Permission-Check", "settings.yml")
+    var signEditPermissionCheck = true
+
     @ConfigNode("Color.Sign", "settings.yml")
     var color = true
         private set
@@ -61,6 +64,7 @@ object ListenerSignChange {
 
     @SubscribeEvent(priority = EventPriority.LOW, ignoreCancelled = true)
     fun onPlayerOpenSign(e: PlayerOpenSignEvent) {
+        if (!signEditPermissionCheck) return
         val player = e.player
         if (!player.hasPermission("trchat.bypass.signedit") && !canSpeak(player)) {
             e.isCancelled = true
