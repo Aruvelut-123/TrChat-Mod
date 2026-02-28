@@ -50,3 +50,6 @@ Simple-Component:
   Hover: false
   Anvil: false
   Sign: false
+
+MiniMessage:
+  Text: true

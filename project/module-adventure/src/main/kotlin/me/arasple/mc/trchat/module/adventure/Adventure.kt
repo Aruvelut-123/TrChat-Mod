@@ -1,6 +1,7 @@
 package me.arasple.mc.trchat.module.adventure
 
 import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.minimessage.MiniMessage
 import net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
@@ -27,6 +28,12 @@ private val plainSerializer: Any? = try {
     null
 }
 
+val miniMessage: Any? = try {
+    MiniMessage.miniMessage()
+} catch (_: Throwable) {
+    null
+}
+
 fun gson(component: Component) = (gsonSerializer as GsonComponentSerializer).serialize(component)
 
 fun gson(string: String) = (gsonSerializer as GsonComponentSerializer).deserialize(string)
@@ -47,4 +54,14 @@ fun ComponentText.hoverItemAdventure(item: ItemStack): ComponentText {
     this as? AdventureComponent ?: error("Unsupported component type.")
     this.latest.hoverEvent(item.asHoverEvent())
     return this
+}
+
+fun String.parseMiniMessage(): ComponentText {
+    val mm = miniMessage as? MiniMessage ?: return Components.text("No MiniMessage support in your environment!")
+    val component = mm.deserialize(this)
+    return if (Components.useAdventure) {
+        AdventureComponent(component)
+    } else {
+        Components.parseRaw(gson(component))
+    }
 }

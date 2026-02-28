@@ -1,13 +1,13 @@
 package me.arasple.mc.trchat.module.internal.listener
 
+import io.papermc.paper.event.player.PlayerOpenSignEvent
 import me.arasple.mc.trchat.TrChat
 import me.arasple.mc.trchat.module.adventure.toAdventure
-import io.papermc.paper.event.player.PlayerOpenSignEvent
 import me.arasple.mc.trchat.module.internal.TrChatBukkit
-import me.arasple.mc.trchat.util.data
-import me.arasple.mc.trchat.util.session
 import me.arasple.mc.trchat.util.color.MessageColors
+import me.arasple.mc.trchat.util.data
 import me.arasple.mc.trchat.util.parseSimple
+import me.arasple.mc.trchat.util.session
 import org.bukkit.entity.Player
 import org.bukkit.event.block.SignChangeEvent
 import taboolib.common.platform.Platform
@@ -30,7 +30,7 @@ object ListenerSignChange {
         private set
 
     @ConfigNode("Chat.Sign-Edit-Permission-Check", "settings.yml")
-    var signEditPermissionCheck = true
+    var signEditPermissionCheck = false
 
     @ConfigNode("Color.Sign", "settings.yml")
     var color = true
