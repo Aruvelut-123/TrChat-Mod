@@ -17,7 +17,6 @@ import org.bukkit.inventory.ItemStack
 import taboolib.common.io.digest
 import taboolib.common.platform.Platform
 import taboolib.common.platform.PlatformSide
-import taboolib.common.platform.function.info
 import taboolib.common.util.asList
 import taboolib.common.util.resettableLazy
 import taboolib.common5.util.encodeBase64
@@ -135,7 +134,6 @@ object InventoryShow : Function("INVENTORY") {
                 })
                 inv.setItem(3, inventory.itemInHand.replaceAir())
                 inv.setItem(4, PLACEHOLDER_ITEM)
-                info("1")
                 val armor = inventory.armorContents
                 inv.setItem(5, armor[3].replaceAir()) // 头盔
                 inv.setItem(6, armor[2].replaceAir()) // 胸甲
