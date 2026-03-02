@@ -52,4 +52,4 @@ Simple-Component:
   Sign: false
 
 MiniMessage:
-  Text: true
+  Text: false
