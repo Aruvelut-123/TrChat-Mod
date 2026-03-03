@@ -29,7 +29,7 @@ object ListenerSignChange {
     var filter = true
         private set
 
-    @ConfigNode("Chat.Sign-Edit-Permission-Check", "settings.yml")
+    @ConfigNode("Chat.Permission-Check.Sign", "settings.yml")
     var signEditPermissionCheck = false
 
     @ConfigNode("Color.Sign", "settings.yml")
