@@ -49,6 +49,9 @@ object Mention : Function("MENTION") {
     @ConfigNode("General.Mention.Cooldown", "function.yml")
     val cooldown = ConfigNodeTransfer<String, Long> { parseMillis() }
 
+    @ConfigNode("General.Mention.Pattern", "function.yml")
+    val pattern = "@? ?(names)"
+
     override fun createVariable(sender: Player, message: String): String {
         if (!enabled) {
             return message
@@ -91,7 +94,7 @@ object Mention : Function("MENTION") {
             ?.sortedByDescending { it.length }
             ?.joinToString("|") { Regex.escape(it) }
             ?: return null
-        return Regex("@? ?($names)", RegexOption.IGNORE_CASE)
+        return Regex(pattern.replace("(names)", "($names)"), RegexOption.IGNORE_CASE)
     }
 
 }

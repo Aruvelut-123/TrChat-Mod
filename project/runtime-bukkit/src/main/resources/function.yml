@@ -12,6 +12,7 @@ General:
     Permission: 'none'
     Cooldown: '30s'
     Notify: true
+    Pattern: '@? ?(names)'
     Action: [ ]
   Mention-All:
     Enabled: true

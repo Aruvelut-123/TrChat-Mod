@@ -35,6 +35,9 @@ object ChatLogs {
     @Schedule(delay = (20 * 15).toLong(), period = (20 * 60 * 5).toLong(), async = true)
     @Awake(LifeCycle.DISABLE)
     fun writeToFile() {
+        if (waveList.isEmpty()) {
+            return
+        }
         val logFile = newFile(File(getDataFolder(), "logs"), "${dateFormat0.format(System.currentTimeMillis())}.txt", create = true)
         try {
             waveList.forEach { line ->

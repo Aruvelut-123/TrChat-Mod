@@ -41,7 +41,7 @@ subprojects {
 //            disableOnUnsupportedVersion = false
         }
         version {
-            taboolib = "6.2.4-99fb800"
+            taboolib = "6.2.4-e7fd043"
             coroutines = null
         }
     }
