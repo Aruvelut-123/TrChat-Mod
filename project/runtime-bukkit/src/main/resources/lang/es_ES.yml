@@ -219,7 +219,21 @@ Channel-Bad-Language:
     pitch: 0
 Sign-Edit-No-Permission:
   - type: actionbar
-    text: '&cNo Edit Sign Permission'
+    text: '&cYou do not have permission to edit the bulletin board.'
+  - type: sound
+    sound: 'ENTITY_ITEM_BREAK'
+    volume: 1
+    pitch: 0
+Book-Edit-No-Permission:
+  - type: actionbar
+    text: '&cYou do not have permission to edit the book.'
+  - type: sound
+    sound: 'ENTITY_ITEM_BREAK'
+    volume: 1
+    pitch: 0
+Anvil-Edit-No-Permission:
+  - type: actionbar
+    text: '&cYou do not have permission to rename items in anvil.'
   - type: sound
     sound: 'ENTITY_ITEM_BREAK'
     volume: 1
