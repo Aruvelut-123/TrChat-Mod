@@ -8,7 +8,7 @@ dependencies {
     compileOnly(project(":project:module-chat"))
     compileOnly(project(":project:module-compat"))
     compileOnly(project(":project:module-nms"))
-    compileOnly("ink.ptms.core:v12105:12105:universal")
+    compileOnly("ink.ptms.core:v260100:260100")
     compileOnly("net.md-5:bungeecord-chat:1.21-R0.3")
     compileOnly(fileTree(rootDir.resolve("libs")))
 

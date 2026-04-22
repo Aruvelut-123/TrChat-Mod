@@ -23,6 +23,7 @@ object ListenerPackets {
 
     /**
      * 去除进入时右上角提示/禁止聊天举报
+     * FIXME
      */
     @SubscribeEvent
     fun secure(e: PacketSendEvent) {
@@ -40,6 +41,9 @@ object ListenerPackets {
             }
             "PacketPlayOutLogin" -> {
                 if (versionId >= 12005) e.packet.source.setProperty("l", true, findToParent = false, remap = false)
+            }
+            "ClientboundLoginPacket" -> {
+                if (versionId >= 260100) e.packet.source.setProperty("enforcesSecureChat", true, findToParent = false, remap = false)
             }
         }
     }

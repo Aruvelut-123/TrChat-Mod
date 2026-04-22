@@ -34,7 +34,8 @@ abstract class NMS {
         @JvmStatic
         val instance by unsafeLazy {
             if (MinecraftVersion.versionId < 12005) nmsProxy<NMS>()
-            else nmsProxy<NMS>("me.arasple.mc.trchat.api.nms.NMSImpl12005")
+            else if (MinecraftVersion.versionId < 260100) nmsProxy<NMS>("me.arasple.mc.trchat.api.nms.NMSImpl12005")
+            else nmsProxy<NMS>("me.arasple.mc.trchat.api.nms.NMSImpl260100")
         }
 
         // 1.20.4-
