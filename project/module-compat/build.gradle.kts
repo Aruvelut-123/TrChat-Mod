@@ -19,8 +19,6 @@ dependencies {
 //    compileOnly("com.nexomc:nexo:0.7.0")
     compileOnly("xyz.xenondevs.nova:nova-api:0.12.13") { isTransitive = false }
 
-    compileOnly("org.sayandev:sayanvanish-api:1.7.0-SNAPSHOT") { isTransitive = false }
-    compileOnly("org.sayandev:sayanvanish-bukkit:1.7.0-SNAPSHOT") { isTransitive = false }
 }
 
 taboolib { subproject = true }
