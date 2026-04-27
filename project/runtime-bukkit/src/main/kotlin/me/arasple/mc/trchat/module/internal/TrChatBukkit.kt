@@ -12,6 +12,7 @@ import me.arasple.mc.trchat.module.display.function.Function
 import me.arasple.mc.trchat.module.internal.data.PlayerData
 import me.arasple.mc.trchat.module.internal.hook.HookPlugin
 import me.arasple.mc.trchat.util.hasClass
+import me.arasple.mc.trchat.util.YamlUpdater
 import org.bukkit.Bukkit
 import taboolib.common.LifeCycle
 import taboolib.common.platform.*
@@ -48,9 +49,11 @@ object TrChatBukkit : Plugin() {
     internal fun onConst() {
 //        System.setProperty("taboolib.dev", "true")
         detectPaperEnv()
-//        registerLifeCycleTask(LifeCycle.INIT, 0) {
-//            YamlUpdater.update("settings.yml", updateExists = false)
-//        }
+    }
+
+    @Awake(LifeCycle.INIT)
+    internal fun updateConfigs() {
+        YamlUpdater.update("settings.yml", updateExists = false)
     }
 
     override fun onLoad() {

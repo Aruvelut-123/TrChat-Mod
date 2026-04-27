@@ -5,6 +5,7 @@ import me.arasple.mc.trchat.module.internal.service.Updater
 import me.arasple.mc.trchat.util.data
 import me.arasple.mc.trchat.util.session
 import org.bukkit.event.player.PlayerJoinEvent
+import taboolib.common.platform.Ghost
 import taboolib.common.platform.Platform
 import taboolib.common.platform.PlatformSide
 import taboolib.common.platform.event.EventPriority
@@ -20,6 +21,7 @@ import taboolib.common.platform.function.submitAsync
 @PlatformSide(Platform.BUKKIT)
 object ListenerJoin {
 
+    @Ghost
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     fun onJoin(e: PlayerJoinEvent) {
         val player = e.player
