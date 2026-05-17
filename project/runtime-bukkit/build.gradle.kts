@@ -12,7 +12,7 @@ dependencies {
     compileOnly("net.md-5:bungeecord-chat:1.21-R0.3")
     compileOnly(fileTree(rootDir.resolve("libs")))
 
-    compileOnly("me.clip:placeholderapi:2.11.7") { isTransitive = false }
+    compileOnly("me.clip:placeholderapi:2.12.2") { isTransitive = false }
     compileOnly("com.discordsrv:discordsrv:1.26.0") { isTransitive = false }
 }
 

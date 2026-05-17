@@ -158,6 +158,10 @@ Function-EnderChest-Show-Unavailable: '&c&l该末影箱已过期或不存在...'
 Function-EnderChest-Show-Title: '{0}的末影箱'
 
 Private-Message-Spy-Format: '&8[&3监听&8] &6{0} &2-> &3{1}&f: &7{2}'
+Private-Message-Spy-Format-New:
+  - type: json
+    text: '&8\[&3监听&8\] &6{0} &2-> &3{1}&f: [message]'
+    args: [ ]
 Private-Message-Spy-On:
   - type: actionbar
     text: '&c&l&k|&f &a&l开启监听私聊模式 &c&l&k|'

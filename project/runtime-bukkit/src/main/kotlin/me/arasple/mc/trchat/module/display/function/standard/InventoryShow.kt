@@ -7,10 +7,7 @@ import me.arasple.mc.trchat.module.conf.file.Functions
 import me.arasple.mc.trchat.module.display.function.Function
 import me.arasple.mc.trchat.module.display.function.StandardFunction
 import me.arasple.mc.trchat.module.internal.script.Reaction
-import me.arasple.mc.trchat.util.CooldownType
-import me.arasple.mc.trchat.util.getCooldownLeft
-import me.arasple.mc.trchat.util.passPermission
-import me.arasple.mc.trchat.util.updateCooldown
+import me.arasple.mc.trchat.util.*
 import org.bukkit.entity.Player
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack

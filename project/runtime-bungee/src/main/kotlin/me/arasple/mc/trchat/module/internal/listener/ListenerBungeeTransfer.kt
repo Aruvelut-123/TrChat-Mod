@@ -75,10 +75,11 @@ object ListenerBungeeTransfer {
                 }
             }
             "UpdateNames" -> {
+                val port = data[1].toIntOrNull() ?: connection.address.port
                 val names = data[2].split(",")
                 val displayNames = data[3].split(",")
                 val uuids = data[4].split(",")
-                BungeeProxyManager.allNames[connection.address.port] = names.mapIndexed { index, name ->
+                BungeeProxyManager.allNames[port] = names.mapIndexed { index, name ->
                     Triple(name, displayNames[index], uuids[index])
                 }
             }

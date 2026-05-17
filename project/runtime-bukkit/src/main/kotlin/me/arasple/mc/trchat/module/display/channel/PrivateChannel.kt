@@ -14,9 +14,7 @@ import me.arasple.mc.trchat.module.internal.command.main.CommandReply
 import me.arasple.mc.trchat.module.internal.data.ChatLogs
 import me.arasple.mc.trchat.module.internal.data.PlayerData
 import me.arasple.mc.trchat.module.internal.service.Metrics
-import me.arasple.mc.trchat.util.pass
-import me.arasple.mc.trchat.util.sendComponent
-import me.arasple.mc.trchat.util.session
+import me.arasple.mc.trchat.util.*
 import org.bukkit.Bukkit
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
@@ -24,6 +22,7 @@ import taboolib.common.platform.command.PermissionDefault
 import taboolib.common.platform.command.command
 import taboolib.common.platform.function.console
 import taboolib.common.platform.function.getProxyPlayer
+import taboolib.common.util.replaceWithOrder
 import taboolib.common.util.subList
 import taboolib.module.chat.ComponentText
 import taboolib.module.chat.Components
@@ -205,11 +204,6 @@ class PrivateChannel(
             player.sendComponent(player, send)
         }
 
-        PlayerData.spying.forEach {
-            Bukkit.getPlayer(it)?.sendLang("Private-Message-Spy-Format", player.name, to, msgComponent.toLegacyText())
-        }
-        console().sendLang("Private-Message-Spy-Format", player.name, to, msgComponent.toLegacyText())
-
         CommandReply.lastMessageFrom[to] = player.name
         ChatLogs.logPrivate(player.name, to, plain)
         Metrics.increase(0)
@@ -225,7 +219,8 @@ class PrivateChannel(
                 player,
                 to,
                 player.name,
-                receive
+                receive,
+                msgComponent
             )
             BukkitProxyManager.sendProxyLang(player, to, "Private-Message-Receive", player.name)
         } else {
@@ -233,7 +228,29 @@ class PrivateChannel(
                 it.sendComponent(player, receive)
                 it.sendLang("Private-Message-Receive", player.name)
             }
+            sendSpy(player.name, to, msgComponent)
         }
+        console().sendLang("Private-Message-Spy-Format", player.name, to, msgComponent.toLegacyText())
         return ChannelExecuteResult.success(send, receive)
+    }
+
+    companion object {
+
+        fun sendSpy(sender: String, receiver: String, message: ComponentText) {
+            val player = onlinePlayers.firstOrNull() ?: return
+            val spy = player.getComponentFromLang("Private-Message-Spy-Format-New") { type, i, part, proxySender ->
+                val component = if (part.isVariable && part.text == "message") {
+                    message
+                } else {
+                    Components.text(part.text.translate(proxySender).replaceWithOrder(sender, receiver))
+                }
+                component.applyStyle(type, part, i, proxySender, sender, receiver)
+            }
+            if (spy != null) {
+                PlayerData.spying.forEach {
+                    Bukkit.getPlayer(it)?.sendComponent(null, spy)
+                }
+            }
+        }
     }
 }

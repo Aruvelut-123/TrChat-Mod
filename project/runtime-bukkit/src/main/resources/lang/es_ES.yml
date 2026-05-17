@@ -148,6 +148,10 @@ Function-Mention-All-Format:
     args: [ ]
 
 Private-Message-Spy-Format: '&8[&3Spy&8] &6{0} &2-> &3{1}&f: &7{2}'
+Private-Message-Spy-Format-New:
+  - type: json
+    text: '&8\[&3Spy&8\] &6{0} &2-> &3{1}&f: [message]'
+    args: [ ]
 Private-Message-Spy-On:
   - type: actionbar
     text: '&c&l&k|&f &a&lModo espia activado &c&l&k|'

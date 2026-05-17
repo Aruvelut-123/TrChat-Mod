@@ -12,9 +12,11 @@ import org.bukkit.Bukkit
 import org.bukkit.OfflinePlayer
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
+import taboolib.common.util.sync
 import taboolib.common.util.unsafeLazy
 import taboolib.module.chat.ComponentText
 import taboolib.module.nms.MinecraftVersion
+import taboolib.platform.Folia
 import taboolib.platform.util.sendLang
 
 val isDragonCoreHooked by unsafeLazy { Bukkit.getPluginManager().isPluginEnabled("DragonCore") && MinecraftVersion.isLower(MinecraftVersion.V1_16)  }
@@ -37,15 +39,25 @@ fun Player.passPermission(permission: String?): Boolean {
 }
 
 fun String.setPlaceholders(sender: CommandSender?): String {
-    return try {
-        if (sender is Player || sender is OfflinePlayer) {
-            PlaceholderAPI.setPlaceholders(sender, this)
-        } else {
-            PlaceholderAPI.setPlaceholders(null, this)
-        }
+    try {
+        return setPlaceholders(sender, this)
     } catch (t: Throwable) {
+        if (t is UnsupportedOperationException && Folia.isFolia) {
+            val result = sync {
+                runCatching { setPlaceholders(sender, this) }.getOrNull()
+            }
+            if (result != null) return result
+        }
         t.print("Error occurred when parsing placeholder! This is not a bug of TrChat! 这很可能不是 TrChat 的问题!")
-        this
+        return this
+    }
+}
+
+private fun setPlaceholders(sender: CommandSender?, text: String): String {
+    return if (sender is Player || sender is OfflinePlayer) {
+        PlaceholderAPI.setPlaceholders(sender, text)
+    } else {
+        PlaceholderAPI.setPlaceholders(null, text)
     }
 }
 

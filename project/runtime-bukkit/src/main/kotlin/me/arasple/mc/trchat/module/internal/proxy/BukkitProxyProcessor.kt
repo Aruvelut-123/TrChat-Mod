@@ -1,6 +1,7 @@
 package me.arasple.mc.trchat.module.internal.proxy
 
 import me.arasple.mc.trchat.api.impl.BukkitProxyManager
+import me.arasple.mc.trchat.module.display.channel.PrivateChannel
 import me.arasple.mc.trchat.module.display.function.standard.EnderChestShow
 import me.arasple.mc.trchat.module.display.function.standard.InventoryShow
 import me.arasple.mc.trchat.module.display.function.standard.ItemShow
@@ -82,6 +83,10 @@ sealed interface BukkitProxyProcessor : PluginMessageListener {
                     CommandReply.lastMessageFrom[to] = from
                 }
                 getProxyPlayer(to)?.sendComponent(null, message)
+
+                val rawMsgComponent = data.getOrNull(5)?.takeIf { it.isNotEmpty() } ?: return
+                val msgComponent = kotlin.runCatching { Components.parseRaw(rawMsgComponent) }.getOrNull() ?: return
+                PrivateChannel.sendSpy(from, to, msgComponent)
             }
             "BroadcastRaw" -> {
                 val uuid = data[1].toUUID()

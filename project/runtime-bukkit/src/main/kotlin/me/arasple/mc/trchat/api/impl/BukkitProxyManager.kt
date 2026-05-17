@@ -175,12 +175,12 @@ object BukkitProxyManager : ClientMessageManager {
         )
     }
 
-    fun sendPrivateRaw(recipient: Any?, to: String, from: String, component: ComponentText, fallback: String = component.toLegacyText()) {
-        sendMessage(recipient, arrayOf("ForwardMessage", "SendPrivateRaw", to, from, component.toRawMessage(), fallback))
+    fun sendPrivateRaw(recipient: Any?, to: String, from: String, component: ComponentText, msgComponent: ComponentText? = null, fallback: String = component.toLegacyText()) {
+        sendMessage(recipient, arrayOf("ForwardMessage", "SendPrivateRaw", to, from, component.toRawMessage(), fallback, msgComponent?.toRawMessage() ?: ""))
     }
 
     fun updateNames() {
-        sendMessage(onlinePlayers.firstOrNull(), arrayOf(
+        sendMessage(onlinePlayers.lastOrNull(), arrayOf(
             "UpdateNames",
             port.toString(),
             onlinePlayers.joinToString(",") { it.name },

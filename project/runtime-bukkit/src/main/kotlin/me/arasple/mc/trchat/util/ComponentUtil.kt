@@ -8,13 +8,21 @@ import net.md_5.bungee.api.chat.ComponentBuilder
 import net.md_5.bungee.api.chat.HoverEvent
 import org.bukkit.Material
 import org.bukkit.block.ShulkerBox
+import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
 import org.bukkit.inventory.meta.BlockStateMeta
 import org.bukkit.inventory.meta.ItemMeta
+import taboolib.common.platform.ProxyCommandSender
+import taboolib.common.platform.ProxyPlayer
+import taboolib.common.platform.function.adaptPlayer
+import taboolib.common.platform.function.severe
+import taboolib.common.util.VariableReader
+import taboolib.common.util.replaceWithOrder
 import taboolib.module.chat.ComponentText
 import taboolib.module.chat.Components
 import taboolib.module.chat.component
 import taboolib.module.chat.impl.DefaultComponent
+import taboolib.module.lang.*
 import taboolib.module.nms.MinecraftVersion.versionId
 import taboolib.module.nms.NMSItemTag
 import taboolib.module.nms.getI18nName
@@ -93,4 +101,74 @@ fun ItemStack.filter() {
             }
         }
     }
+}
+
+private val parser = VariableReader("[", "]")
+
+fun Player.getComponentFromLang(
+    node: String,
+    vararg args: Any,
+    processor: (TypeJson, Int, VariableReader.Part, ProxyPlayer) -> ComponentText = { type, i, part, sender ->
+        Components.text(part.text.translate(sender).replaceWithOrder(*args)).applyStyle(type, part, i, sender, *args)
+    }
+): ComponentText? {
+    val sender = adaptPlayer(this)
+    val file = sender.getLocaleFile() ?: return null
+    return when (val type = file.nodes[node].let { if (it is TypeList) it.list[0] else it }) {
+        is TypeJson -> {
+            var i = 0
+            val component = Components.empty()
+            parser.readToFlatten(type.text!!.joinToString()).forEach { part ->
+                component.append(processor(type, i, part, sender))
+                if (part.isVariable) {
+                    i++
+                }
+            }
+            component
+        }
+        is TypeText -> {
+            Components.text(type.asText(adaptPlayer(this), *args)!!)
+        }
+        else -> {
+            severe("Error language type (Required TypeJson or TypeText)")
+            null
+        }
+    }
+}
+
+fun ComponentText.applyStyle(type: TypeJson, part: VariableReader.Part, i: Int, sender: ProxyPlayer, vararg args: Any): ComponentText {
+    val extra = type.jsonArgs.getOrNull(i)
+    if (extra != null) {
+        if (extra.containsKey("hover")) {
+            hoverText(extra["hover"].toString().translate(sender).replaceWithOrder(*args))
+        }
+        if (extra.containsKey("command")) {
+            clickRunCommand(extra["command"].toString().translate(sender).replaceWithOrder(*args))
+        }
+        if (extra.containsKey("suggest")) {
+            clickSuggestCommand(extra["suggest"].toString().translate(sender).replaceWithOrder(*args))
+        }
+        if (extra.containsKey("insertion")) {
+            clickInsertText(extra["insertion"].toString().translate(sender).replaceWithOrder(*args))
+        }
+        if (extra.containsKey("copy")) {
+            clickCopyToClipboard(extra["copy"].toString().translate(sender).replaceWithOrder(*args))
+        }
+        if (extra.containsKey("file")) {
+            clickOpenFile(extra["file"].toString().translate(sender).replaceWithOrder(*args))
+        }
+        if (extra.containsKey("url")) {
+            clickOpenURL(extra["url"].toString().translate(sender).replaceWithOrder(*args))
+        }
+        if (extra.containsKey("font")) {
+            font(extra["font"].toString().translate(sender).replaceWithOrder(*args))
+        }
+    }
+    return this
+}
+
+internal fun String.translate(sender: ProxyCommandSender): String {
+    var s = this
+    Language.textTransfer.forEach { s = it.translate(sender, s) }
+    return s
 }
