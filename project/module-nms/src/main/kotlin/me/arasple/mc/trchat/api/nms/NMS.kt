@@ -1,7 +1,9 @@
 package me.arasple.mc.trchat.api.nms
 
+import me.arasple.mc.trchat.util.print
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
+import taboolib.common.platform.function.info
 import taboolib.common.util.unsafeLazy
 import taboolib.module.chat.ComponentText
 import taboolib.module.nms.MinecraftLanguage
@@ -33,9 +35,18 @@ abstract class NMS {
 
         @JvmStatic
         val instance by unsafeLazy {
-            if (MinecraftVersion.versionId < 12005) nmsProxy<NMS>()
-            else if (MinecraftVersion.versionId < 260100) nmsProxy<NMS>("me.arasple.mc.trchat.api.nms.NMSImpl12005")
-            else nmsProxy<NMS>("me.arasple.mc.trchat.api.nms.NMSImpl260100")
+            val ver = MinecraftVersion.versionId
+            val bind = when {
+                ver < 12005 -> "me.arasple.mc.trchat.api.nms.NMSImpl"
+                ver < 260100 -> "me.arasple.mc.trchat.api.nms.NMSImpl12005"
+                else -> "me.arasple.mc.trchat.api.nms.NMSImpl260100"
+            }
+            try {
+                nmsProxy<NMS>(bind).also { info("Using $bind as nms implementation") }
+            } catch (t: Throwable) {
+                t.print("Using NMSImplFallback as nms implementation")
+                NMSImplFallback()
+            }
         }
 
         // 1.20.4-

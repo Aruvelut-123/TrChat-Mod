@@ -60,6 +60,27 @@ object CommandMute {
                 createHelper()
             }
         }
+        command("shadowmute", listOf("muteshadow"), description = "Shadow mute a player", permission = "trchat.command.shadowmute") {
+            dynamic("player") {
+                suggestUncheck {
+                    BukkitProxyManager.getPlayerNames(true).keys.toList()
+                }
+                execute<CommandSender> { sender, ctx, _ ->
+                    muteShadow(sender, ctx["player"], "999d")
+                }
+                dynamic("time") {
+                    suggestUncheck {
+                        listOf("1d", "3h", "15m", "30s")
+                    }
+                    execute<CommandSender> { sender, ctx, _ ->
+                        muteShadow(sender, ctx["player"], ctx["time"])
+                    }
+                }
+            }
+            incorrectCommand { _, _, _, _ ->
+                createHelper()
+            }
+        }
         command("unmute", listOf("trunmute"), description = "Unmute a player", permission = "trchat.command.unmute") {
             dynamic("player") {
                 suggestUncheck {
@@ -102,10 +123,40 @@ object CommandMute {
         }
     }
 
+    fun muteShadow(sender: CommandSender, name: String, time: String) {
+        val player = Bukkit.getOfflinePlayer(name)
+        if (!player.hasPlayedBefore()) {
+            return sender.sendLang("Command-Player-Not-Exist")
+        }
+        muteShadow(sender, player, time)
+    }
+
+    fun muteShadow(sender: CommandSender?, player: OfflinePlayer, time: String) {
+        val data = player.data
+        val millis = try {
+            time.parseMillis()
+        } catch (_: Throwable) {
+            sender?.sendLang("Mute-Wrong-Format", time)
+            return
+        }
+        data.updateShadowMuteTime(millis)
+        sender?.sendLang("Mute-Muted-Player", player.name ?: "unknown", time, "shadow")
+        if (!player.isOnline) {
+            PlayerData.removeData(player)
+        }
+    }
+
     fun unmute(sender: CommandSender?, player: OfflinePlayer) {
-        player.data.updateMuteTime(0)
-        sender?.sendLang("Mute-Cancel-Muted-Player", player.name ?: "unknown")
-        player.player?.sendLang("General-Cancel-Muted")
+        val data = player.data
+        if (data.isMuted) {
+            data.updateMuteTime(0)
+            sender?.sendLang("Mute-Cancel-Muted-Player", player.name ?: "unknown")
+            player.player?.sendLang("General-Cancel-Muted")
+        }
+        if (data.isShadowMuted) {
+            data.updateShadowMuteTime(0)
+            sender?.sendLang("Mute-Cancel-Muted-Player", player.name ?: "unknown")
+        }
         if (!player.isOnline) {
             PlayerData.removeData(player)
         }

@@ -36,6 +36,10 @@ class PlayerData(val uuid: UUID) {
 
     val muteReason get() = uuid.getAutoDataContainer()["mute_reason"] ?: "null"
 
+    val shadowMuteTime get() = uuid.getAutoDataContainer()["shadow_mute_time"].clong
+
+    val isShadowMuted get() = shadowMuteTime > System.currentTimeMillis()
+
     var ignored get() = uuid.getAutoDataContainer()["ignored"]
         ?.takeIf { it.isNotBlank() }
         ?.split(",")
@@ -61,6 +65,10 @@ class PlayerData(val uuid: UUID) {
 
     fun setMuteReason(reason: String) {
         uuid.getAutoDataContainer()["mute_reason"] = reason
+    }
+
+    fun updateShadowMuteTime(time: Long) {
+        uuid.getAutoDataContainer()["shadow_mute_time"] = System.currentTimeMillis() + time
     }
 
     fun switchSpy(): Boolean {

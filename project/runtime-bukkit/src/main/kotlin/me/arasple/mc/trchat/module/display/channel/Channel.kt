@@ -175,6 +175,17 @@ open class Channel(
             return ChannelExecuteResult(failedReason = ChannelExecuteResult.FailReason.EVENT)
         }
         component = sendEvent.component
+
+        if (player.data.isShadowMuted) {
+            if (events.send(player, player.name, plain)) {
+                player.sendComponent(player, component)
+            }
+            if (toConsole) {
+                console().sendComponent(player, component)
+            }
+            return ChannelExecuteResult(failedReason = ChannelExecuteResult.FailReason.LIMITED)
+        }
+
         // Proxy
         if (settings.proxy) {
             if (BukkitProxyManager.processor != null || settings.forceProxy) {

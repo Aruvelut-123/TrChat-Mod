@@ -208,6 +208,11 @@ class PrivateChannel(
         ChatLogs.logPrivate(player.name, to, plain)
         Metrics.increase(0)
 
+        if (player.data.isShadowMuted) {
+            console().sendLang("Private-Message-Spy-Format", player.name, to, msgComponent.toLegacyText())
+            return ChannelExecuteResult(failedReason = ChannelExecuteResult.FailReason.LIMITED)
+        }
+
         val receiverEvent = TrChatSendEvent(this, session, receive, type = TrChatSendEvent.Type.RECEIVER)
         if (!receiverEvent.call()) {
             return ChannelExecuteResult(failedReason = ChannelExecuteResult.FailReason.EVENT)
