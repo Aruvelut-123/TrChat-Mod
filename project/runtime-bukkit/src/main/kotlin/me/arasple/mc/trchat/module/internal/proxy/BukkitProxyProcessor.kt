@@ -21,7 +21,6 @@ import org.bukkit.plugin.messaging.PluginMessageListener
 import org.bukkit.plugin.messaging.PluginMessageRecipient
 import taboolib.common.platform.function.console
 import taboolib.common.platform.function.getProxyPlayer
-import taboolib.common.platform.function.submitAsync
 import taboolib.common.util.subList
 import taboolib.common5.util.decodeBase64
 import taboolib.module.chat.Components
@@ -34,6 +33,7 @@ import taboolib.platform.util.deserializeToInventory
 import taboolib.platform.util.onlinePlayers
 import java.io.IOException
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
 
@@ -106,7 +106,6 @@ sealed interface BukkitProxyProcessor : PluginMessageListener {
                 }
             }
             "UpdateAllNames" -> {
-                BukkitProxyManager.updateNames()
                 val names = data[1].takeIf { it != "" }?.split(",") ?: return
                 val displayNames = data[2].split(",")
                 val uuids = data[3].split(",")
@@ -251,13 +250,7 @@ sealed interface BukkitProxyProcessor : PluginMessageListener {
 
     object RedisSide : BukkitProxyProcessor {
 
-        val allNames = mutableMapOf<String, List<Triple<String, String?, UUID>>>()
-
-        init {
-            submitAsync(period = 200L) {
-                BukkitProxyManager.updateNames()
-            }
-        }
+        val allNames = ConcurrentHashMap<String, List<Triple<String, String?, UUID>>>()
 
         override fun execute(data: Array<String>) {
             when (data[0]) {

@@ -3,12 +3,15 @@ package me.arasple.mc.trchat.util.color
 import me.arasple.mc.trchat.util.papiRegex
 import me.arasple.mc.trchat.util.setPlaceholders
 import org.bukkit.command.CommandSender
+import taboolib.common.platform.Platform
+import taboolib.common.platform.PlatformSide
 import taboolib.module.configuration.ConfigNode
 
 /**
  * @author ItsFlicker
  * @since 2021/12/12 12:30
  */
+@PlatformSide(Platform.BUKKIT)
 class CustomColor(val type: ColorType, val color: String) {
 
     enum class ColorType {

@@ -1,5 +1,6 @@
 package me.arasple.mc.trchat.module.internal.listener
 
+import me.arasple.mc.trchat.api.impl.BukkitProxyManager
 import me.arasple.mc.trchat.module.display.channel.Channel
 import me.arasple.mc.trchat.module.internal.service.Updater
 import me.arasple.mc.trchat.util.data
@@ -39,6 +40,7 @@ object ListenerJoin {
                 }
             }
             Updater.notifyPlayer(adaptPlayer(player))
+            BukkitProxyManager.updateNames()
         }
     }
 }

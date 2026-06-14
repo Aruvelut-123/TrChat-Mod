@@ -10,6 +10,8 @@ import me.arasple.mc.trchat.util.papiRegex
 import me.arasple.mc.trchat.util.setPlaceholders
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
+import taboolib.common.platform.Platform
+import taboolib.common.platform.PlatformSide
 import taboolib.common.util.replaceWithOrder
 import taboolib.module.chat.ComponentText
 import taboolib.module.chat.Components
@@ -19,6 +21,7 @@ import taboolib.module.configuration.ConfigNode
  * @author ItsFlicker
  * @since 2022/1/21 23:21
  */
+@PlatformSide(Platform.BUKKIT)
 open class Text(val content: String, val condition: Condition?) {
 
     val dynamic = papiRegex.containsMatchIn(content)

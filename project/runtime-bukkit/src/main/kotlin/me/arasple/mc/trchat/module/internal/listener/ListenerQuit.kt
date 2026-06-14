@@ -1,5 +1,6 @@
 package me.arasple.mc.trchat.module.internal.listener
 
+import me.arasple.mc.trchat.api.impl.BukkitProxyManager
 import me.arasple.mc.trchat.module.conf.file.Functions
 import me.arasple.mc.trchat.module.display.ChatSession
 import me.arasple.mc.trchat.module.display.channel.Channel
@@ -11,6 +12,7 @@ import taboolib.common.platform.Platform
 import taboolib.common.platform.PlatformSide
 import taboolib.common.platform.event.EventPriority
 import taboolib.common.platform.event.SubscribeEvent
+import taboolib.common.platform.function.submit
 
 /**
  * @author ItsFlicker
@@ -31,6 +33,9 @@ object ListenerQuit {
         Channel.channels.values.forEach { it.listeners -= name }
         ChatSession.removeSession(player)
         PlayerData.removeData(player)
+        submit(delay = 10) {
+            BukkitProxyManager.updateNames()
+        }
     }
 
 }

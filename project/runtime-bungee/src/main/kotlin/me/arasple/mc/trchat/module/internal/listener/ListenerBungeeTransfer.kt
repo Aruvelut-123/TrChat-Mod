@@ -7,12 +7,16 @@ import me.arasple.mc.trchat.util.print
 import me.arasple.mc.trchat.util.proxy.common.MessageReader
 import net.md_5.bungee.api.ProxyServer
 import net.md_5.bungee.api.connection.Connection
+import net.md_5.bungee.api.event.PlayerDisconnectEvent
 import net.md_5.bungee.api.event.PluginMessageEvent
+import net.md_5.bungee.api.event.PostLoginEvent
+import net.md_5.bungee.api.event.ServerSwitchEvent
 import taboolib.common.platform.Platform
 import taboolib.common.platform.PlatformSide
 import taboolib.common.platform.event.SubscribeEvent
 import taboolib.common.platform.function.console
 import taboolib.common.platform.function.server
+import taboolib.common.platform.function.submit
 import taboolib.module.chat.Components
 import java.io.IOException
 
@@ -41,6 +45,27 @@ object ListenerBungeeTransfer {
             } catch (ex: IOException) {
                 ex.print("Error occurred while reading plugin message.")
             }
+        }
+    }
+
+    @SubscribeEvent
+    fun onProxyJoin(e: PostLoginEvent) {
+        updateAllNamesLater()
+    }
+
+    @SubscribeEvent
+    fun onProxyQuit(e: PlayerDisconnectEvent) {
+        updateAllNamesLater()
+    }
+
+    @SubscribeEvent
+    fun onProxySwitch(e: ServerSwitchEvent) {
+        updateAllNamesLater()
+    }
+
+    private fun updateAllNamesLater() {
+        submit(delay = 30) {
+            BungeeProxyManager.updateAllNames()
         }
     }
 
@@ -79,8 +104,11 @@ object ListenerBungeeTransfer {
                 val names = data[2].split(",")
                 val displayNames = data[3].split(",")
                 val uuids = data[4].split(",")
-                BungeeProxyManager.allNames[port] = names.mapIndexed { index, name ->
+                val updated = names.mapIndexed { index, name ->
                     Triple(name, displayNames[index], uuids[index])
+                }
+                if (BungeeProxyManager.updateNames(port, updated)) {
+                    BungeeProxyManager.updateAllNames()
                 }
             }
         }

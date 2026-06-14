@@ -1,6 +1,9 @@
 package me.arasple.mc.trchat.module.internal.listener
 
+import com.velocitypowered.api.event.connection.DisconnectEvent
 import com.velocitypowered.api.event.connection.PluginMessageEvent
+import com.velocitypowered.api.event.connection.PostLoginEvent
+import com.velocitypowered.api.event.player.ServerPostConnectEvent
 import com.velocitypowered.api.proxy.ServerConnection
 import me.arasple.mc.trchat.api.impl.VelocityProxyManager
 import me.arasple.mc.trchat.module.internal.TrChatVelocity.plugin
@@ -14,6 +17,7 @@ import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 import taboolib.common.platform.Platform
 import taboolib.common.platform.PlatformSide
 import taboolib.common.platform.event.SubscribeEvent
+import taboolib.common.platform.function.submit
 import taboolib.common.platform.function.warning
 import java.io.IOException
 
@@ -43,6 +47,27 @@ object ListenerVelocityTransfer {
             }
         } catch (ex: IOException) {
             ex.print("Error occurred while reading plugin message.")
+        }
+    }
+
+    @SubscribeEvent
+    fun onProxyJoin(e: PostLoginEvent) {
+        updateAllNamesLater()
+    }
+
+    @SubscribeEvent
+    fun onProxyQuit(e: DisconnectEvent) {
+        updateAllNamesLater()
+    }
+
+    @SubscribeEvent
+    fun onProxySwitch(e: ServerPostConnectEvent) {
+        updateAllNamesLater()
+    }
+
+    private fun updateAllNamesLater() {
+        submit(delay = 30) {
+            VelocityProxyManager.updateAllNames()
         }
     }
 
@@ -81,8 +106,11 @@ object ListenerVelocityTransfer {
                 val names = data[2].split(",")
                 val displayNames = data[3].split(",")
                 val uuids = data[4].split(",")
-                VelocityProxyManager.allNames[port] = names.mapIndexed { index, name ->
+                val updated = names.mapIndexed { index, name ->
                     Triple(name, displayNames[index], uuids[index])
+                }
+                if (VelocityProxyManager.updateNames(port, updated)) {
+                    VelocityProxyManager.updateAllNames()
                 }
             }
         }

@@ -17,6 +17,7 @@ import taboolib.common.platform.PlatformFactory
 import taboolib.common.platform.PlatformSide
 import taboolib.common.platform.function.console
 import taboolib.common.platform.function.getProxyPlayer
+import taboolib.common.platform.function.submitAsync
 import taboolib.common.util.unsafeLazy
 import taboolib.common5.cint
 import taboolib.module.chat.ComponentText
@@ -99,6 +100,9 @@ object BukkitProxyManager : ClientMessageManager {
             }
             ProxyMode.REDIS -> {
                 RedisManager()
+                submitAsync(period = 200L) {
+                    updateNames()
+                }
                 BukkitProxyProcessor.RedisSide()
             }
             else -> null

@@ -16,10 +16,7 @@ import taboolib.common.platform.Schedule
 import taboolib.common.platform.function.warning
 import taboolib.common.util.unsafeLazy
 import java.io.IOException
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.Future
+import java.util.concurrent.*
 
 /**
  * @author ItsFlicker
@@ -42,7 +39,7 @@ object VelocityProxyManager : ProxyMessageManager {
         Executors.newFixedThreadPool(8, factory)
     }
 
-    override val allNames = mutableMapOf<Int, List<Triple<String, String, String>>>()
+    override val allNames = ConcurrentHashMap<Int, List<Triple<String, String, String>>>()
 
     override fun sendMessage(recipient: Any, vararg args: String): Future<*> {
         if (recipient !is ChannelMessageSink) {
@@ -87,15 +84,38 @@ object VelocityProxyManager : ProxyMessageManager {
         }
     }
 
-    @Schedule(async = true, period = 100L)
+    @Schedule(period = 1200L)
+    @Synchronized
     override fun updateAllNames() {
-        val flat = allNames.values.flatten()
+        refreshNamesFromProxy()
+        val flat = allNames.values.toList().flatten()
         sendMessageToAll(
             "UpdateAllNames",
             flat.joinToString(",") { it.first },
             flat.joinToString(",") { it.second },
             flat.joinToString(",") { it.third },
         )
+    }
+
+    @Synchronized
+    fun updateNames(port: Int, names: List<Triple<String, String, String>>): Boolean {
+        if (allNames[port]?.toSet() == names.toSet()) {
+            return false
+        }
+        allNames[port] = names
+        return true
+    }
+
+    private fun refreshNamesFromProxy() {
+        val displayNames = allNames.values.toList().flatten().associate { it.third to it.second }
+        allNames.clear()
+        plugin.server.allPlayers
+            .mapNotNull { player ->
+                val info = player.currentServer.map { it.serverInfo }.orElse(null) ?: return@mapNotNull null
+                info.address.port to Triple(player.username, displayNames[player.uniqueId.toString()] ?: "#", player.uniqueId.toString())
+            }
+            .groupBy({ it.first }, { it.second })
+            .forEach { (port, names) -> allNames[port] = names }
     }
 
 }
