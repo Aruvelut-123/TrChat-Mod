@@ -8,9 +8,9 @@ import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
 import taboolib.common.platform.function.adaptPlayer
 import taboolib.module.chat.ComponentText
+import taboolib.module.chat.Components
 import taboolib.module.nms.MinecraftLanguage
 import taboolib.module.nms.getLanguageKey
-import taboolib.platform.Folia
 import taboolib.platform.util.hoverItem
 import java.util.*
 
@@ -25,7 +25,7 @@ class NMSImpl12005 : NMS() {
     }
 
     override fun sendMessage(receiver: Player, component: ComponentText, sender: UUID?, usePacket: Boolean) {
-        if (!usePacket || Folia.isFolia || ServerUtil.isModdedServer) {
+        if (!usePacket || Components.useAdventure || ServerUtil.isModdedServer) {
             component.sendTo(adaptPlayer(receiver))
             return
         }

@@ -15,6 +15,7 @@ import taboolib.common.platform.event.EventPriority
 import taboolib.common.platform.event.SubscribeEvent
 import taboolib.module.configuration.ConfigNode
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * @author ItsFlicker
@@ -27,7 +28,7 @@ object ListenerChat {
     var cancelEvent = false
         private set
 
-    private val cachePrefix = mutableMapOf<UUID, String>()
+    private val cachePrefix = ConcurrentHashMap<UUID, String>()
 
     @Ghost
     @SubscribeEvent(priority = EventPriority.HIGHEST, ignoreCancelled = true)
