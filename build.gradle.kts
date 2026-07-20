@@ -16,6 +16,7 @@ subprojects {
     taboolib {
         env {
             install("basic-configuration")
+            install("incision")
             install(
                 BukkitHook,
                 BukkitNMSUtil,

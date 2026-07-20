@@ -40,13 +40,15 @@ object BukkitProxyManager : ClientMessageManager {
 
     override var port = 25565
 
+    // 这里不需要用 Set, 后面会转换为 Map
     var allPlayerNames = listOf<Triple<String, String?, UUID>>()
-        get() = if (mode == ProxyMode.NONE) {
-            onlinePlayers.map { Triple(it.name, ChatColor.stripColor(it.displayName), it.uniqueId) }
-        } else if (mode == ProxyMode.REDIS) {
-            (processor as BukkitProxyProcessor.RedisSide).allNames.values.flatten()
-        } else {
-            field
+        get() = when (mode) {
+            ProxyMode.NONE -> {
+                onlinePlayers.map { Triple(it.name, ChatColor.stripColor(it.displayName), it.uniqueId) }
+            }
+            else -> {
+                field + onlinePlayers.map { Triple(it.name, ChatColor.stripColor(it.displayName), it.uniqueId) }
+            }
         }
 
     init {

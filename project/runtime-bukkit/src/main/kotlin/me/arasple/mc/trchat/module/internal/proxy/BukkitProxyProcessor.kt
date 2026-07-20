@@ -110,7 +110,7 @@ sealed interface BukkitProxyProcessor : PluginMessageListener {
                 val displayNames = data[2].split(",")
                 val uuids = data[3].split(",")
                 BukkitProxyManager.allPlayerNames = names.mapIndexed { index, name ->
-                    Triple(names[index], displayNames[index].takeIf { it != "#" }, uuids[index].toUUID())
+                    Triple(name, displayNames[index].takeIf { it != "#" }, uuids[index].toUUID())
                 }
             }
             "GlobalMute" -> {
@@ -262,6 +262,7 @@ sealed interface BukkitProxyProcessor : PluginMessageListener {
                     allNames[port] = names.mapIndexed { index, name ->
                         Triple(name, displayNames[index].takeIf { it != "#" }, uuids[index].toUUID())
                     }
+                    BukkitProxyManager.allPlayerNames = allNames.values.flatten()
                 }
                 else -> super.execute(data)
             }

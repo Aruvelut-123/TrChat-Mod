@@ -9,7 +9,7 @@ repositories {
 dependencies {
     compileOnly(project(":project:common"))
     compileOnly(project(":project:module-chat"))
-    compileOnly("ink.ptms.core:v12107:12107:universal")
+    compileOnly("ink.ptms.core:v12111:12111:universal")
 
     compileOnly("com.discordsrv:discordsrv:1.26.0") { isTransitive = false }
     compileOnly("com.willfp:eco:6.35.1") { isTransitive = false }
