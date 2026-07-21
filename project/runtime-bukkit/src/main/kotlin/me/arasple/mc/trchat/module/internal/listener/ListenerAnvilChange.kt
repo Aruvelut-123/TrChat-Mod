@@ -4,8 +4,8 @@ import me.arasple.mc.trchat.TrChat
 import me.arasple.mc.trchat.module.adventure.toAdventure
 import me.arasple.mc.trchat.module.internal.TrChatBukkit
 import me.arasple.mc.trchat.util.color.MessageColors
-import me.arasple.mc.trchat.util.parseSimple
 import me.arasple.mc.trchat.util.data
+import me.arasple.mc.trchat.util.parseSimple
 import me.arasple.mc.trchat.util.session
 import org.bukkit.entity.HumanEntity
 import org.bukkit.entity.Player
@@ -22,7 +22,6 @@ import taboolib.module.configuration.ConfigNode
 import taboolib.platform.util.isAir
 import taboolib.platform.util.modifyMeta
 import taboolib.platform.util.sendLang
-import me.arasple.mc.trchat.module.internal.data.PlayerData
 
 /**
  * @author ItsFlicker
@@ -76,12 +75,18 @@ object ListenerAnvilChange {
                 return@modifyMeta
             }
             if (filter) {
-                setDisplayName(TrChat.api().getFilterManager().filter(displayName, adaptPlayer(p)).filtered)
+                val filtered = TrChat.api().getFilterManager().filter(displayName, adaptPlayer(p)).filtered
+                if (filtered != displayName) {
+                    setDisplayName(filtered)
+                }
             }
             if (simple && TrChatBukkit.isPaperEnv && p.hasPermission("trchat.simple.anvil")) {
                 displayName(displayName.parseSimple().toAdventure())
             } else if (color) {
-                setDisplayName(MessageColors.replaceWithPermission(p, displayName, MessageColors.Type.ANVIL))
+                val colored = MessageColors.replaceWithPermission(p, displayName, MessageColors.Type.ANVIL)
+                if (colored != displayName) {
+                    setDisplayName(colored)
+                }
             }
         }
         e.result = result

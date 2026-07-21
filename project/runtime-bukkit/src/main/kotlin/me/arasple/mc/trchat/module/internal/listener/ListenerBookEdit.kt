@@ -33,7 +33,12 @@ object ListenerBookEdit {
         val p = e.player
         val meta = e.newBookMeta
         if (color) {
-            meta.pages = MessageColors.replaceWithPermission(p, meta.pages, MessageColors.Type.BOOK)
+            meta.pages.forEachIndexed { index, page ->
+                val colored = MessageColors.replaceWithPermission(p, page, MessageColors.Type.BOOK)
+                if (colored != page) {
+                    meta.setPage(index, colored)
+                }
+            }
         }
         e.newBookMeta = meta
     }

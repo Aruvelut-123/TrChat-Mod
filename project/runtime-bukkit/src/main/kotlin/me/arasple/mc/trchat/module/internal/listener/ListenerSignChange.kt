@@ -52,12 +52,17 @@ object ListenerSignChange {
             var edited = origin
             if (filter) {
                 edited = TrChat.api().getFilterManager().filter(origin, adaptPlayer(p)).filtered
-                e.setLine(index, edited)
+                if (edited != origin) {
+                    e.setLine(index, edited)
+                }
             }
             if (simple && TrChatBukkit.isPaperEnv && p.hasPermission("trchat.simple.sign")) {
                 e.line(index, edited.parseSimple().toAdventure())
             } else if (color) {
-                e.setLine(index, MessageColors.replaceWithPermission(p, edited, MessageColors.Type.SIGN))
+                val colored = MessageColors.replaceWithPermission(p, edited, MessageColors.Type.SIGN)
+                if (colored != edited) {
+                    e.setLine(index, colored)
+                }
             }
         }
     }
