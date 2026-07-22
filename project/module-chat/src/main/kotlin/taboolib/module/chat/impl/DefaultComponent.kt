@@ -1,5 +1,6 @@
 package taboolib.module.chat.impl
 
+import com.google.gson.JsonParseException
 import net.kyori.adventure.text.Component
 import net.md_5.bungee.api.ChatColor
 import net.md_5.bungee.api.chat.*
@@ -61,9 +62,19 @@ class DefaultComponent() : ComponentText {
 
     override fun sendTo(sender: ProxyCommandSender) {
         if (sender is ProxyPlayer) {
-            sender.sendRawMessage(toRawMessage())
+            val message = toRawMessage()
+            try {
+                sender.sendRawMessage(message)
+            } catch (_: JsonParseException) {
+                sender.sendRawMessage(message.replace('§', '&'))
+            }
         } else {
-            sender.sendMessage(toLegacyText())
+            val message = toLegacyText()
+            try {
+                sender.sendMessage(message)
+            } catch (_: JsonParseException) {
+                sender.sendMessage(message.replace('§', '&'))
+            }
         }
     }
 

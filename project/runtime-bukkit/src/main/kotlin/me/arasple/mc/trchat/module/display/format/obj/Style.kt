@@ -6,6 +6,7 @@ import me.arasple.mc.trchat.util.*
 import me.arasple.mc.trchat.util.color.colorify
 import me.arasple.mc.trchat.util.color.parseToShadowColor
 import net.kyori.adventure.text.format.ShadowColor
+import net.md_5.bungee.api.ChatColor
 import org.bukkit.command.CommandSender
 import taboolib.common.platform.function.warning
 import taboolib.common.util.replaceWithOrder
@@ -72,19 +73,19 @@ sealed interface Style {
 
         data class Suggest(override val contents: List<Pair<String, Condition?>>) : Style {
             override fun process(component: ComponentText, content: String) {
-                component.clickSuggestCommand(content)
+                component.clickSuggestCommand(ChatColor.stripColor(content))
             }
         }
 
         data class Command(override val contents: List<Pair<String, Condition?>>) : Style {
             override fun process(component: ComponentText, content: String) {
-                component.clickRunCommand(content)
+                component.clickRunCommand(ChatColor.stripColor(content))
             }
         }
 
         data class Url(override val contents: List<Pair<String, Condition?>>) : Style {
             override fun process(component: ComponentText, content: String) {
-                component.clickOpenURL(content)
+                component.clickOpenURL(ChatColor.stripColor(content))
             }
         }
 
@@ -100,7 +101,7 @@ sealed interface Style {
 
         data class File(override val contents: List<Pair<String, Condition?>>) : Style {
             override fun process(component: ComponentText, content: String) {
-                component.clickOpenFile(content)
+                component.clickOpenFile(ChatColor.stripColor(content))
             }
         }
     }

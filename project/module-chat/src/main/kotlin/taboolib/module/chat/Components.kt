@@ -20,13 +20,13 @@ import taboolib.module.chat.impl.ErrorSimpleComponent
 @Inject
 @RuntimeDependencies(
     RuntimeDependency(
-        value = "!net.md-5:bungeecord-chat:1.21-R0.3",
+        value = "!net.md-5:bungeecord-chat:1.21-R0.4",
         test = "!net.md_5.bungee.api.chat.TextComponent",
         // relocate = ["!net.md_5.bungee", "!net.md_5.bungee117"],
         // repository = "https://repo2s.ptms.ink/repository/releases"
     ),
     RuntimeDependency(
-        value = "!net.md-5:bungeecord-serializer:1.21-R0.3",
+        value = "!net.md-5:bungeecord-serializer:1.21-R0.4",
         test = "!net.md_5.bungee.chat.ComponentSerializer"
     )
 )
