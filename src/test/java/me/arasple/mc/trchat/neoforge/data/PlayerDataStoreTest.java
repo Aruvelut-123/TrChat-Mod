@@ -8,6 +8,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlayerDataStoreTest {
 
@@ -30,6 +31,29 @@ class PlayerDataStoreTest {
             assertEquals("global", loaded.activeChannel());
             assertEquals(Set.of("normal", "global"), loaded.joinedChannels());
             assertEquals("RenamedPlayer", loaded.playerName());
+        }
+    }
+
+    @Test
+    void persistsMuteStatusReasonAndModerationFlags() {
+        UUID uuid = UUID.randomUUID();
+        long muteUntil = System.currentTimeMillis() + 3_600_000L;
+        try (PlayerDataStore store = new PlayerDataStore(directory)) {
+            store.initialize();
+            store.save(PlayerDataStore.PlayerState.empty(uuid, "MutedPlayer")
+                .withMute(muteUntil, "Repeated spam")
+                .withShadowMuted(true)
+                .withPrivateSpy(true));
+        }
+
+        try (PlayerDataStore store = new PlayerDataStore(directory)) {
+            store.initialize();
+            PlayerDataStore.PlayerState loaded = store.load(uuid, "MutedPlayer");
+
+            assertEquals(muteUntil, loaded.muteUntil());
+            assertEquals("Repeated spam", loaded.muteReason());
+            assertTrue(loaded.shadowMuted());
+            assertTrue(loaded.privateSpy());
         }
     }
 }

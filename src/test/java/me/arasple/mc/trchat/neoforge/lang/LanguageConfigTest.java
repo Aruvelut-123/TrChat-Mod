@@ -40,6 +40,9 @@ class LanguageConfigTest {
             assertLinesFit(language, "Command-Help", String.valueOf(values.get("Command-Help")));
             assertLinesFit(language, "Player-Status-Overview", String.valueOf(values.get("Player-Status-Overview")));
             assertLinesFit(language, "Updater-Available", String.valueOf(values.get("Updater-Available")));
+            String muteDetail = String.valueOf(values.get("Player-Status-Mute-Detail"));
+            assertTrue(muteDetail.contains("{0}"), language + " player status must show mute expiry");
+            assertTrue(muteDetail.contains("{1}"), language + " player status must show mute reason");
             assertLinesFit(language, "Status-Footer", String.valueOf(values.get("Status-Footer")));
             assertLinesFit(
                 language,
