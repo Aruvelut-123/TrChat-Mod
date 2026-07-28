@@ -25,12 +25,30 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          cache-cleanup: on-success
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
       - name: Build and test
         run: ./gradlew build
+
+      - name: Add test results to job summary
+        if: always()
+        run: python3 scripts/ci-test-summary.py
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ github.run_number }}
+          path: |
+            build/test-results/test/
+            build/reports/tests/test/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload NeoForge artifact
         uses: actions/upload-artifact@v4
