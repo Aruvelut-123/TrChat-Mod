@@ -26,6 +26,7 @@ NeoForge 作者与维护者：[Baymaxawa](https://space.bilibili.com/475655508)�
 - 按客户端语言自动选择 `lang/zh_CN.yml`、`en_US.yml`、`es_ES.yml`，并支持自行增加语言文件。
 - 本地 `data.db` 持久化；`datasource.yml` 可切换 SQLite、MySQL、MariaDB 或自定义 JDBC。三种常用驱动均已内嵌。
 - Redis 自动重连，以及与 Bukkit 版的广播、私聊、在线玩家列表和全服禁言协议互通。
+- 内置 GitHub Release 更新检查器：启动后检查、默认每 15 分钟复查，并向后台与 `trchat.admin` 管理员发送短版可点击提醒。
 
 ## 配置目录
 
@@ -70,6 +71,10 @@ config/trchat-neoforge/
 serverId = 25566
 serverName = "模组服"
 defaultLanguage = "zh_CN"
+
+[updates]
+enabled = true
+intervalMinutes = 15
 
 [redis]
 enabled = true
@@ -139,16 +144,18 @@ NeoForge 1.21.1 的铁砧事件不能安全地只改写重命名文本而不替�
 | 命令 | 用途 |
 | --- | --- |
 | `/trchat status` | 查看频道、Redis 与全服禁言状态 |
+| `/trchat status <玩家>` | 查看在线玩家的频道、禁言、ShadowMute、监听、OP、延迟与游戏模式 |
 | `/trchat reload` | 局部重载频道、命令绑定、function、filter、语言和 Redis |
 | `/trchat redis reconnect` | 重新连接 Redis |
 | `/trchat mute on\|off` | 开关并同步全服禁言 |
 | `/trchat mute player <玩家> <时长> [原因]` | 普通禁言，支持 `30s`、`5m`、`1h30m`、`7d`、`permanent` |
+| `/mute <玩家> <时长> [原因]` | 普通禁言快捷命令 |
 | `/trchat unmute <玩家>` | 解除普通禁言 |
 | `/trchat shadowmute <玩家> [on\|off]` | 切换影子禁言 |
+| `/shadowmute <玩家> [on\|off]` | ShadowMute 快捷命令 |
 | `/trchat spy [on\|off]` | 切换私聊监听 |
 | `/trchat msg <玩家> <内容>` | 发送私聊 |
 | `/trchat channel join <频道>` | 加入或离开频道 |
-| `/trchat redis reconnect` | 重新建立 Redis 连接 |
 | `/say <内容>` | 通过本地 `Server` 频道格式化发送 |
 
 另有 `/trmsg`、`/trreply`、`/trmute`、`/trunmute`、`/trshadowmute`、`/trspy`，以及频道 YAML 中定义的动态命令。
@@ -175,7 +182,7 @@ Set-Location D:\TrChat-Neoforge
 安装并登录 [GitHub CLI](https://cli.github.com/)，同时把 `git-cliff` 加入 PATH，然后运行：
 
 ```powershell
-.\scripts\release.ps1 -Tag v2.4.9.3
+.\scripts\release.ps1 -Tag v2.4.9.4
 ```
 
 脚本会检查干净工作区、完整构建、通过 `git-cliff` 从提交生成更新列表、创建并推送 tag，再用 `gh release create` 上传唯一的非 sources JAR。GitHub Release 发布事件也会触发工作流重新构建、更新提交列表并覆盖上传产物。
