@@ -1,0 +1,128 @@
+# Player placeholders / 玩家变量：
+# https://wiki.placeholderapi.com/users/placeholder-list/minecraft/#player
+# Server placeholders / 服务器变量：
+# https://wiki.placeholderapi.com/users/placeholder-list/minecraft/#server
+#
+# This reference file is NEVER registered as a channel.
+# 此文件仅供参考，程序会强制忽略，永远不会注册为频道。
+# Copy it to another name (for example Trade.yml) before using it.
+# 如需使用，请复制并改名（例如 Trade.yml）。
+
+Options:
+  # Permission needed to join/use; empty means everyone.
+  # 加入/使用所需权限；留空表示所有人。
+  Join-Permission: 'trchat.example'
+  # Permission needed to receive; empty inherits Join-Permission.
+  # 接收所需权限；留空时沿用 Join-Permission。
+  Listen-Permission: 'trchat.example'
+  # Bukkit-style condition: perm "node", player op, player !op, or ~.
+  # Bukkit 风格条件：perm "权限"、player op、player !op 或 ~。
+  Speak-Condition: 'perm "trchat.example"'
+  # Always listen when permission permits. / 有权限时始终监听。
+  Always-Listen: false
+  # Join automatically after login. / 登录后自动加入。
+  Auto-Join: false
+  # Private channel requiring a target. / 需要目标玩家的私聊频道。
+  Private: false
+  # ALL, SELF, SINGLE_WORLD/WORLD, DISTANCE;<blocks>.
+  # 可选 ALL、SELF、SINGLE_WORLD/WORLD、DISTANCE;<方块数>。
+  Target: ALL
+  # Here Proxy only means Bukkit-compatible Redis forwarding, not proxy linking.
+  # 此处 Proxy 只表示 Bukkit 兼容的 Redis 转发，不包含代理端连接。
+  Proxy: false
+  # Refuse delivery when Redis is down. / Redis 不可用时拒绝发送。
+  Force-Proxy: false
+  # Bukkit Redis protocol compatibility flag. / Bukkit Redis 协议兼容标记。
+  Double-Transfer: false
+  # Destination server IDs; empty means all. / 目标服务器 ID；留空表示全部。
+  Ports: []
+  # function.yml entries disabled here. / 此频道禁用的 function.yml 功能名。
+  Disabled-Functions: []
+
+Bindings:
+  # Chat prefixes; longest match wins. / 聊天前缀；最长匹配优先。
+  Prefix: ['#']
+  # Registered after restart or /reload. / 重启或执行 /reload 后注册。
+  Command: ['examplechat']
+
+# First matching format in descending priority is used.
+# 按 priority 从高到低选择第一个满足 condition 的格式。
+Formats:
+  - condition: ~
+    priority: 100
+    prefix:
+      # Group names only control output order. / 分组名只控制输出顺序。
+      channel:
+        condition: ~
+        priority: 100
+        text: '&8[&6Example&8]'
+        hover: |-
+          &7Example hover
+          &7示例悬浮文字
+        # Click actions (normally choose one). / 点击动作（通常选择一个）。
+        suggest: '/examplechat '
+        command: ''
+        url: ''
+        copy: ''
+        file: ''
+        # Shift-click insertion and resource font. / Shift 点击插入文本与资源字体。
+        insertion: ''
+        font: ''
+      spacer:
+        text: ' '
+      player:
+        - condition: 'player op'
+          priority: 100
+          text: '&c%player_name%'
+          hover: '&7Operator / 管理员'
+          suggest: '/tell %player_name% '
+        - condition: ~
+          priority: 0
+          text: '&7%player_name%'
+          hover: |-
+            &7Ping / 延迟: &3%player_ping% ms
+            &7World / 世界: &3%player_world%
+          suggest: '/tell %player_name% '
+      separator:
+        text: '&f: '
+    msg:
+      # Default legacy color and message hover. / 默认传统颜色与消息悬浮文字。
+      default-color: '&f'
+      hover: '&7%server_time_HH:mm:ss%'
+    suffix:
+      # suffix supports every component field shown above.
+      # suffix 支持上方展示的全部组件字段。
+      server:
+        text: ' &8(%server_name%)'
+        hover: '&7Online / 在线: %server_online%/%server_max_players%'
+
+# Private sender view; ignored by public channels. / 私聊发送者视角；公共频道忽略。
+Sender:
+  - condition: ~
+    priority: 100
+    prefix:
+      main:
+        text: '&8[&6Me &2-> &3%trchat_toplayer%&8] &f'
+    msg: {default-color: '&f', hover: ''}
+    suffix: {}
+
+# Private receiver view; ignored by public channels. / 私聊接收者视角；公共频道忽略。
+Receiver:
+  - condition: ~
+    priority: 100
+    prefix:
+      main:
+        text: '&8[&6%player_name% &2-> &3Me&8] &f'
+    msg: {default-color: '&f', hover: ''}
+    suffix: {}
+
+# Console log format; public format is used when absent.
+# 后台日志格式；未配置时沿用公共格式。
+Console:
+  - condition: ~
+    priority: 100
+    prefix:
+      main:
+        text: '&8[Example] &7%player_name%&f: '
+    msg: {default-color: '&f', hover: ''}
+    suffix: {}

@@ -28,5 +28,8 @@ class ChannelManagerTest {
         assertFalse(manager.byId("server").orElseThrow().options().redis());
         assertFalse(manager.normal().formats().isEmpty());
         assertNotNull(manager.normal().formats().getFirst().message());
+        assertTrue(java.nio.file.Files.exists(directory.resolve("channels").resolve("Example.yml")));
+        assertFalse(manager.byId("Example").isPresent());
+        assertTrue(manager.byCommand("examplechat").isEmpty());
     }
 }

@@ -24,6 +24,7 @@ public final class ChannelManager {
 
     private static final System.Logger LOGGER = System.getLogger(ChannelManager.class.getName());
     public static final String[] DEFAULT_CHANNELS = {"Normal", "Global", "Staff", "Private", "Server"};
+    private static final String EXAMPLE_CHANNEL = "Example";
 
     private final Path directory;
     private volatile Map<String, ChannelDefinition> channels = Map.of();
@@ -42,12 +43,14 @@ public final class ChannelManager {
             for (String channel : DEFAULT_CHANNELS) {
                 copyDefault(channel);
             }
+            copyDefault(EXAMPLE_CHANNEL);
 
             LinkedHashMap<String, ChannelDefinition> loaded = new LinkedHashMap<>();
             try (Stream<Path> files = Files.walk(directory)) {
                 for (Path file : files
                     .filter(Files::isRegularFile)
                     .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".yml"))
+                    .filter(path -> !path.getFileName().toString().equalsIgnoreCase(EXAMPLE_CHANNEL + ".yml"))
                     .sorted()
                     .toList()) {
                     ChannelDefinition definition = load(file);
