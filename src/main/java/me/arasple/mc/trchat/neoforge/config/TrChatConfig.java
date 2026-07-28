@@ -9,6 +9,7 @@ public final class TrChatConfig {
     public static final ModConfigSpec SPEC;
 
     public static final ModConfigSpec.IntValue SERVER_ID;
+    public static final ModConfigSpec.ConfigValue<String> SERVER_NAME;
     public static final ModConfigSpec.ConfigValue<String> CHAT_FORMAT;
     public static final ModConfigSpec.ConfigValue<String> GLOBAL_FORMAT;
     public static final ModConfigSpec.ConfigValue<String> PRIVATE_FORMAT;
@@ -38,6 +39,9 @@ public final class TrChatConfig {
         SERVER_ID = builder
             .comment("Numeric server identifier. Use the server port to match the Bukkit TrChat Redis protocol.")
             .defineInRange("serverId", 25565, 1, 65535);
+        SERVER_NAME = builder
+            .comment("Value exposed by %server_name%.")
+            .define("serverName", "A Minecraft Server");
         CHAT_FORMAT = builder.define("format", "&7<%player%>&f %message%");
         GLOBAL_FORMAT = builder.define("globalFormat", "&8[&bGlobal&8] &7<%player%>&f %message%");
         PRIVATE_FORMAT = builder.define("privateFormat", "&8[&dPM&8] &7%player%&8: &f%message%");
