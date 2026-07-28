@@ -154,6 +154,7 @@ public final class ChatService implements AutoCloseable {
             channel, ChannelRenderer.Audience.RECEIVER, sender, processed.component(), message, local
         );
         sender.sendSystemMessage(senderView.component());
+        lastPrivateSender.put(sender.getUUID(), exactTarget);
 
         if (moderation.shadowMuted(sender)) {
             logToConsole(channel, sender, message, local);
@@ -163,7 +164,9 @@ public final class ChatService implements AutoCloseable {
         if (localTarget != null) {
             localTarget.sendSystemMessage(receiverView.component());
             lastPrivateSender.put(localTarget.getUUID(), sender.getGameProfile().getName());
-            notifyPrivateSpies(sender, exactTarget, message, localTarget);
+            notifyPrivateSpies(
+                sender, sender.getGameProfile().getName(), exactTarget, message, localTarget
+            );
             logToConsole(channel, sender, message, local);
             return 1;
         }
@@ -180,7 +183,7 @@ public final class ChatService implements AutoCloseable {
             sendLang(sender, "Redis-Private-Unavailable");
             return 0;
         }
-        notifyPrivateSpies(sender, exactTarget, message, null);
+        notifyPrivateSpies(sender, sender.getGameProfile().getName(), exactTarget, message, null);
         logToConsole(channel, sender, message, local);
         return 1;
     }
@@ -576,17 +579,17 @@ public final class ChatService implements AutoCloseable {
         target.sendSystemMessage(component);
         if (!from.isBlank()) {
             lastPrivateSender.put(target.getUUID(), from);
-            notifyPrivateSpies(null, target.getGameProfile().getName(), component.getString(), target);
+            notifyPrivateSpies(null, from, target.getGameProfile().getName(), component.getString(), target);
         }
     }
 
     private void notifyPrivateSpies(
         ServerPlayer sender,
+        String senderName,
         String targetName,
         String message,
         ServerPlayer target
     ) {
-        String senderName = sender == null ? "Remote" : sender.getGameProfile().getName();
         for (ServerPlayer observer : server.getPlayerList().getPlayers()) {
             if (!moderation.privateSpy(observer)
                 || sender != null && observer.getUUID().equals(sender.getUUID())
