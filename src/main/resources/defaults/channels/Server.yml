@@ -2,7 +2,7 @@
 # Server 频道由代码强制限定为本服，不会通过 Redis 互通。
 Options:
   Always-Listen: true
-  Auto-Join: true
+  Auto-Join: false
   Target: ALL
 
 Console:

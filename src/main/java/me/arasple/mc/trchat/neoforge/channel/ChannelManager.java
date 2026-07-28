@@ -60,6 +60,26 @@ public final class ChannelManager {
             if (!loaded.containsKey("normal")) {
                 throw new IOException("Normal.yml is required");
             }
+            List<String> autoJoinChannels = loaded.values().stream()
+                .filter(channel -> channel.options().autoJoin())
+                .map(ChannelDefinition::id)
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .toList();
+            if (autoJoinChannels.size() > 1) {
+                throw new IOException(
+                    "Only one channel may set Options.Auto-Join to true; found "
+                        + String.join(", ", autoJoinChannels)
+                );
+            }
+            if (autoJoinChannels.size() == 1) {
+                ChannelDefinition autoJoin = loaded.get(autoJoinChannels.getFirst().toLowerCase(Locale.ROOT));
+                if (autoJoin.options().privateChannel() || autoJoin.id().equalsIgnoreCase("Server")) {
+                    throw new IOException(
+                        "Options.Auto-Join cannot be enabled for private or Server channel "
+                            + autoJoin.id()
+                    );
+                }
+            }
             channels = Map.copyOf(loaded);
             LOGGER.log(System.Logger.Level.INFO, "Loaded {0} chat channels from {1}", loaded.size(), directory);
             return loaded.size();
@@ -77,6 +97,12 @@ public final class ChannelManager {
 
     public ChannelDefinition normal() {
         return channels.get("normal");
+    }
+
+    public Optional<ChannelDefinition> autoJoin() {
+        return channels.values().stream()
+            .filter(channel -> channel.options().autoJoin())
+            .findFirst();
     }
 
     public Optional<ChannelDefinition> byId(String id) {

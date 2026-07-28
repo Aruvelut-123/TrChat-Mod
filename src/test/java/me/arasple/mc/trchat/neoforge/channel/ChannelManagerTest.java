@@ -3,6 +3,8 @@ package me.arasple.mc.trchat.neoforge.channel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,10 +28,30 @@ class ChannelManagerTest {
         assertTrue(manager.byId("private").orElseThrow().options().privateChannel());
         assertTrue(manager.byId("server").isPresent());
         assertFalse(manager.byId("server").orElseThrow().options().redis());
+        assertFalse(manager.byId("server").orElseThrow().options().autoJoin());
+        assertEquals("Normal", manager.autoJoin().orElseThrow().id());
         assertFalse(manager.normal().formats().isEmpty());
         assertNotNull(manager.normal().formats().getFirst().message());
         assertTrue(java.nio.file.Files.exists(directory.resolve("channels").resolve("Example.yml")));
         assertFalse(manager.byId("Example").isPresent());
         assertTrue(manager.byCommand("examplechat").isEmpty());
+    }
+
+    @Test
+    void rejectsMultipleAutoJoinChannelsAtomically() throws Exception {
+        Path channels = directory.resolve("channels");
+        ChannelManager manager = new ChannelManager(channels);
+        assertEquals(5, manager.reload());
+
+        Files.writeString(
+            channels.resolve("Other.yml"),
+            "Options:\n  Auto-Join: true\nFormats: []\n",
+            StandardCharsets.UTF_8
+        );
+
+        assertEquals(-1, manager.reload());
+        assertEquals(5, manager.all().size());
+        assertTrue(manager.byId("Other").isEmpty());
+        assertEquals("Normal", manager.autoJoin().orElseThrow().id());
     }
 }

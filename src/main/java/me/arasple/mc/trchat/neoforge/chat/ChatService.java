@@ -212,7 +212,9 @@ public final class ChatService implements AutoCloseable {
     public int reloadChannels() {
         int loaded = channels.reload();
         if (loaded >= 0) {
-            activeChannels.replaceAll((uuid, current) -> channels.byId(current).isPresent() ? current : "Normal");
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                restoreChannelMembership(player);
+            }
             functions.reload();
             filters.reload();
             moderation.reloadLanguages();
@@ -300,18 +302,12 @@ public final class ChatService implements AutoCloseable {
 
     public void playerJoined(ServerPlayer player) {
         moderation.playerJoined(player);
-        activeChannels.put(player.getUUID(), "Normal");
-        Set<String> joined = joinedChannels.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>());
-        joined.add("normal");
-        for (ChannelDefinition channel : channels.all()) {
-            if (channel.options().autoJoin() && canListen(player, channel)) {
-                joined.add(channel.id().toLowerCase(Locale.ROOT));
-            }
-        }
+        restoreChannelMembership(player);
         playerListChanged();
     }
 
     public void playerLeft(ServerPlayer player) {
+        persistChannelMembership(player);
         moderation.playerLeft(player);
         playerStats.remove(player.getUUID());
         activeChannels.remove(player.getUUID());
@@ -333,6 +329,9 @@ public final class ChatService implements AutoCloseable {
         if (redis != null) {
             redis.close();
             redis = null;
+        }
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            persistChannelMembership(player);
         }
         chatStates.clear();
         activeChannels.clear();
@@ -438,10 +437,13 @@ public final class ChatService implements AutoCloseable {
         String id = channel.id().toLowerCase(Locale.ROOT);
         Set<String> joined = joinedChannels.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>());
         if (activeChannels.getOrDefault(player.getUUID(), "Normal").equalsIgnoreCase(channel.id())) {
-            activeChannels.put(player.getUUID(), "Normal");
-            if (!channel.options().alwaysListen() && !channel.options().autoJoin()) {
+            if (!channel.options().alwaysListen()) {
                 joined.remove(id);
             }
+            String fallback = fallbackChannel(player, joined);
+            joined.add(fallback.toLowerCase(Locale.ROOT));
+            activeChannels.put(player.getUUID(), fallback);
+            persistChannelMembership(player);
             sendLang(player, "Channel-Quit", channel.id());
             return 1;
         }
@@ -451,6 +453,7 @@ public final class ChatService implements AutoCloseable {
         }
         activeChannels.put(player.getUUID(), channel.id());
         joined.add(id);
+        persistChannelMembership(player);
         sendLang(player, "Channel-Join", channel.id());
         return 1;
     }
@@ -482,7 +485,6 @@ public final class ChatService implements AutoCloseable {
         for (ServerPlayer receiver : server.getPlayerList().getPlayers()) {
             Set<String> joined = joinedChannels.getOrDefault(receiver.getUUID(), Set.of());
             boolean listening = channel.options().alwaysListen()
-                || channel.options().autoJoin()
                 || joined.contains(id);
             if (!listening || !canListen(receiver, channel)) {
                 continue;
@@ -498,6 +500,56 @@ public final class ChatService implements AutoCloseable {
             if (inRange) {
                 receiver.sendSystemMessage(component);
             }
+        }
+    }
+
+    private void restoreChannelMembership(ServerPlayer player) {
+        Set<String> joined = new HashSet<>(moderation.joinedChannels(player));
+        joined.removeIf(id -> channels.byId(id)
+            .map(channel -> channel.options().privateChannel() || channel.id().equalsIgnoreCase("Server"))
+            .orElse(true));
+
+        if (joined.isEmpty()) {
+            ChannelDefinition initial = channels.autoJoin()
+                .filter(channel -> hasPermission(player, channel.options().joinPermission()))
+                .orElseGet(channels::normal);
+            joined.add(initial.id().toLowerCase(Locale.ROOT));
+        }
+
+        String savedActive = moderation.activeChannel(player);
+        String active = channels.byId(savedActive)
+            .filter(channel -> joined.contains(channel.id().toLowerCase(Locale.ROOT)))
+            .filter(channel -> hasPermission(player, channel.options().joinPermission()))
+            .map(ChannelDefinition::id)
+            .orElseGet(() -> fallbackChannel(player, joined));
+        joined.add(active.toLowerCase(Locale.ROOT));
+
+        joinedChannels.put(player.getUUID(), joined);
+        activeChannels.put(player.getUUID(), active);
+        persistChannelMembership(player);
+    }
+
+    private String fallbackChannel(ServerPlayer player, Set<String> joined) {
+        if (joined.contains("normal")) {
+            return channels.normal().id();
+        }
+        return joined.stream()
+            .sorted()
+            .map(channels::byId)
+            .flatMap(java.util.Optional::stream)
+            .filter(channel -> !channel.options().privateChannel())
+            .filter(channel -> !channel.id().equalsIgnoreCase("Server"))
+            .filter(channel -> hasPermission(player, channel.options().joinPermission()))
+            .map(ChannelDefinition::id)
+            .findFirst()
+            .orElseGet(() -> channels.normal().id());
+    }
+
+    private void persistChannelMembership(ServerPlayer player) {
+        Set<String> joined = joinedChannels.get(player.getUUID());
+        String active = activeChannels.get(player.getUUID());
+        if (joined != null && active != null) {
+            moderation.setChannels(player, active, Set.copyOf(joined));
         }
     }
 

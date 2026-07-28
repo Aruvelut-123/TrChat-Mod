@@ -26,7 +26,7 @@ public record ChannelDefinition(
                 string(options.get("Listen-Permission")),
                 string(options.get("Speak-Condition")),
                 bool(options.get("Always-Listen"), false),
-                bool(options.get("Auto-Join"), false),
+                !id.equalsIgnoreCase("Server") && bool(options.get("Auto-Join"), false),
                 bool(options.get("Private"), false),
                 string(options.containsKey("Target") ? options.get("Target") : "ALL"),
                 bool(options.get("Proxy"), false),

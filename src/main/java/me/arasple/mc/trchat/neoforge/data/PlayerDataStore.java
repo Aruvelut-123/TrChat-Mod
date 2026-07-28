@@ -17,8 +17,13 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public final class PlayerDataStore implements AutoCloseable {
 
@@ -29,10 +34,19 @@ public final class PlayerDataStore implements AutoCloseable {
     private String user;
     private String password;
     private String table;
+    private String channelTable;
     private String driver;
+    private final ExecutorService saveExecutor;
 
     public PlayerDataStore() {
-        this.folder = FMLPaths.CONFIGDIR.get().resolve("trchat-neoforge");
+        this(FMLPaths.CONFIGDIR.get().resolve("trchat-neoforge"));
+    }
+
+    PlayerDataStore(Path folder) {
+        this.folder = folder;
+        this.saveExecutor = Executors.newSingleThreadExecutor(
+            Thread.ofVirtual().name("TrChat-Data-Save-", 0).factory()
+        );
     }
 
     public synchronized void initialize() {
@@ -59,6 +73,7 @@ public final class PlayerDataStore implements AutoCloseable {
                 user = "";
                 password = "";
                 table = "trchat_player_state";
+                channelTable = "trchat_player_channels";
                 driver = "org.sqlite.JDBC";
             } else if (type.equalsIgnoreCase("MySQL")) {
                 configureNetworkDatabase(root, "MySQL", "jdbc:mysql", 3306, "com.mysql.cj.jdbc.Driver");
@@ -69,7 +84,9 @@ public final class PlayerDataStore implements AutoCloseable {
                 jdbcUrl = string(jdbc.get("Url"), "");
                 user = string(jdbc.get("User"), "");
                 password = string(jdbc.get("Password"), "");
-                table = safeIdentifier(string(jdbc.get("Table-Prefix"), "trchat_") + "player_state");
+                String prefix = string(jdbc.get("Table-Prefix"), "trchat_");
+                table = safeIdentifier(prefix + "player_state");
+                channelTable = safeIdentifier(prefix + "player_channels");
                 driver = string(jdbc.get("Driver"), "");
             }
             if (jdbcUrl.isBlank()) throw new IllegalArgumentException("Data source JDBC URL is empty");
@@ -85,6 +102,14 @@ public final class PlayerDataStore implements AutoCloseable {
                       private_spy INTEGER NOT NULL DEFAULT 0
                     )
                     """.formatted(table));
+                statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS %s (
+                      uuid VARCHAR(36) NOT NULL,
+                      channel_id VARCHAR(128) NOT NULL,
+                      is_active INTEGER NOT NULL DEFAULT 0,
+                      PRIMARY KEY (uuid, channel_id)
+                    )
+                    """.formatted(channelTable));
             }
         } catch (IOException | SQLException | ClassNotFoundException exception) {
             throw new IllegalStateException("Unable to initialize player data storage", exception);
@@ -108,7 +133,9 @@ public final class PlayerDataStore implements AutoCloseable {
         user = string(database.get("User"), "");
         password = string(database.get("Password"), "");
         Map<?, ?> jdbc = map(root.get("JDBC"));
-        table = safeIdentifier(string(jdbc.get("Table-Prefix"), "trchat_") + "player_state");
+        String prefix = string(jdbc.get("Table-Prefix"), "trchat_");
+        table = safeIdentifier(prefix + "player_state");
+        channelTable = safeIdentifier(prefix + "player_channels");
         driver = driverClass;
     }
 
@@ -118,13 +145,16 @@ public final class PlayerDataStore implements AutoCloseable {
             statement.setString(1, uuid.toString());
             try (ResultSet result = statement.executeQuery()) {
                 if (result.next()) {
+                    ChannelMembership membership = loadMembership(connection, uuid);
                     return new PlayerState(
                         uuid,
                         playerName,
                         result.getLong(1),
                         result.getString(2),
                         result.getInt(3) != 0,
-                        result.getInt(4) != 0
+                        result.getInt(4) != 0,
+                        membership.activeChannel(),
+                        membership.joinedChannels()
                     );
                 }
             }
@@ -137,7 +167,7 @@ public final class PlayerDataStore implements AutoCloseable {
     }
 
     public void saveAsync(PlayerState state) {
-        Thread.ofVirtual().name("TrChat-Data-Save").start(() -> save(state));
+        saveExecutor.execute(() -> save(state));
     }
 
     public synchronized void save(PlayerState state) {
@@ -145,27 +175,79 @@ public final class PlayerDataStore implements AutoCloseable {
             + " SET player_name=?,mute_until=?,mute_reason=?,shadow_muted=?,private_spy=? WHERE uuid=?";
         String insert = "INSERT INTO " + table
             + " (uuid,player_name,mute_until,mute_reason,shadow_muted,private_spy) VALUES (?,?,?,?,?,?)";
-        try (Connection connection = connection();
-             PreparedStatement updateStatement = connection.prepareStatement(update)) {
-            updateStatement.setString(1, state.playerName());
-            updateStatement.setLong(2, state.muteUntil());
-            updateStatement.setString(3, state.muteReason());
-            updateStatement.setInt(4, state.shadowMuted() ? 1 : 0);
-            updateStatement.setInt(5, state.privateSpy() ? 1 : 0);
-            updateStatement.setString(6, state.uuid().toString());
-            if (updateStatement.executeUpdate() == 0) {
-                try (PreparedStatement insertStatement = connection.prepareStatement(insert)) {
-                    insertStatement.setString(1, state.uuid().toString());
-                    insertStatement.setString(2, state.playerName());
-                    insertStatement.setLong(3, state.muteUntil());
-                    insertStatement.setString(4, state.muteReason());
-                    insertStatement.setInt(5, state.shadowMuted() ? 1 : 0);
-                    insertStatement.setInt(6, state.privateSpy() ? 1 : 0);
-                    insertStatement.executeUpdate();
+        try (Connection connection = connection()) {
+            connection.setAutoCommit(false);
+            try {
+                try (PreparedStatement updateStatement = connection.prepareStatement(update)) {
+                    updateStatement.setString(1, state.playerName());
+                    updateStatement.setLong(2, state.muteUntil());
+                    updateStatement.setString(3, state.muteReason());
+                    updateStatement.setInt(4, state.shadowMuted() ? 1 : 0);
+                    updateStatement.setInt(5, state.privateSpy() ? 1 : 0);
+                    updateStatement.setString(6, state.uuid().toString());
+                    if (updateStatement.executeUpdate() == 0) {
+                        try (PreparedStatement insertStatement = connection.prepareStatement(insert)) {
+                            insertStatement.setString(1, state.uuid().toString());
+                            insertStatement.setString(2, state.playerName());
+                            insertStatement.setLong(3, state.muteUntil());
+                            insertStatement.setString(4, state.muteReason());
+                            insertStatement.setInt(5, state.shadowMuted() ? 1 : 0);
+                            insertStatement.setInt(6, state.privateSpy() ? 1 : 0);
+                            insertStatement.executeUpdate();
+                        }
+                    }
                 }
+                saveMembership(connection, state);
+                connection.commit();
+            } catch (SQLException exception) {
+                connection.rollback();
+                throw exception;
             }
         } catch (SQLException exception) {
             LOGGER.log(System.Logger.Level.ERROR, "Unable to save player " + state.uuid(), exception);
+        }
+    }
+
+    private ChannelMembership loadMembership(Connection connection, UUID uuid) throws SQLException {
+        String sql = "SELECT channel_id,is_active FROM " + channelTable + " WHERE uuid=?";
+        LinkedHashSet<String> joined = new LinkedHashSet<>();
+        String active = "";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, uuid.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    String channel = result.getString(1);
+                    if (channel == null || channel.isBlank()) {
+                        continue;
+                    }
+                    joined.add(channel);
+                    if (result.getInt(2) != 0) {
+                        active = channel;
+                    }
+                }
+            }
+        }
+        return new ChannelMembership(active, Set.copyOf(joined));
+    }
+
+    private void saveMembership(Connection connection, PlayerState state) throws SQLException {
+        String delete = "DELETE FROM " + channelTable + " WHERE uuid=?";
+        try (PreparedStatement statement = connection.prepareStatement(delete)) {
+            statement.setString(1, state.uuid().toString());
+            statement.executeUpdate();
+        }
+        if (state.joinedChannels().isEmpty()) {
+            return;
+        }
+        String insert = "INSERT INTO " + channelTable + " (uuid,channel_id,is_active) VALUES (?,?,?)";
+        try (PreparedStatement statement = connection.prepareStatement(insert)) {
+            for (String channel : state.joinedChannels().stream().sorted().toList()) {
+                statement.setString(1, state.uuid().toString());
+                statement.setString(2, channel);
+                statement.setInt(3, channel.equalsIgnoreCase(state.activeChannel()) ? 1 : 0);
+                statement.addBatch();
+            }
+            statement.executeBatch();
         }
     }
 
@@ -177,6 +259,15 @@ public final class PlayerDataStore implements AutoCloseable {
 
     @Override
     public void close() {
+        saveExecutor.shutdown();
+        try {
+            if (!saveExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                LOGGER.log(System.Logger.Level.WARNING, "Timed out waiting for queued player data saves");
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            LOGGER.log(System.Logger.Level.WARNING, "Interrupted while waiting for queued player data saves");
+        }
     }
 
     private static String safeIdentifier(String value) {
@@ -198,22 +289,58 @@ public final class PlayerDataStore implements AutoCloseable {
         long muteUntil,
         String muteReason,
         boolean shadowMuted,
-        boolean privateSpy
+        boolean privateSpy,
+        String activeChannel,
+        Set<String> joinedChannels
     ) {
+        public PlayerState {
+            activeChannel = normalizeChannel(activeChannel);
+            joinedChannels = joinedChannels == null
+                ? Set.of()
+                : joinedChannels.stream()
+                    .map(PlayerState::normalizeChannel)
+                    .filter(channel -> !channel.isBlank())
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            if (!activeChannel.isBlank() && !joinedChannels.contains(activeChannel)) {
+                LinkedHashSet<String> normalized = new LinkedHashSet<>(joinedChannels);
+                normalized.add(activeChannel);
+                joinedChannels = Set.copyOf(normalized);
+            }
+        }
+
         public static PlayerState empty(UUID uuid, String name) {
-            return new PlayerState(uuid, name, 0L, "", false, false);
+            return new PlayerState(uuid, name, 0L, "", false, false, "", Set.of());
         }
 
         public PlayerState withMute(long until, String reason) {
-            return new PlayerState(uuid, playerName, until, reason, shadowMuted, privateSpy);
+            return new PlayerState(
+                uuid, playerName, until, reason, shadowMuted, privateSpy, activeChannel, joinedChannels
+            );
         }
 
         public PlayerState withShadowMuted(boolean value) {
-            return new PlayerState(uuid, playerName, muteUntil, muteReason, value, privateSpy);
+            return new PlayerState(
+                uuid, playerName, muteUntil, muteReason, value, privateSpy, activeChannel, joinedChannels
+            );
         }
 
         public PlayerState withPrivateSpy(boolean value) {
-            return new PlayerState(uuid, playerName, muteUntil, muteReason, shadowMuted, value);
+            return new PlayerState(
+                uuid, playerName, muteUntil, muteReason, shadowMuted, value, activeChannel, joinedChannels
+            );
         }
+
+        public PlayerState withChannels(String active, Set<String> joined) {
+            return new PlayerState(
+                uuid, playerName, muteUntil, muteReason, shadowMuted, privateSpy, active, joined
+            );
+        }
+
+        private static String normalizeChannel(String channel) {
+            return channel == null ? "" : channel.trim().toLowerCase(java.util.Locale.ROOT);
+        }
+    }
+
+    private record ChannelMembership(String activeChannel, Set<String> joinedChannels) {
     }
 }

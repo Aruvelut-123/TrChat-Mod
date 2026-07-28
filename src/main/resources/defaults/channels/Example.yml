@@ -20,7 +20,8 @@ Options:
   Speak-Condition: 'perm "trchat.example"'
   # Always listen when permission permits. / 有权限时始终监听。
   Always-Listen: false
-  # Join automatically after login. / 登录后自动加入。
+  # Default channel only when the player has no saved channel membership; only one channel may enable this.
+  # 仅当玩家没有已保存的频道成员关系时作为默认频道；所有频道中最多只能启用一个。
   Auto-Join: false
   # Private channel requiring a target. / 需要目标玩家的私聊频道。
   Private: false

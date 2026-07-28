@@ -11,6 +11,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -99,6 +100,18 @@ public final class ModerationService implements AutoCloseable {
         return setPrivateSpy(player, !privateSpy(player));
     }
 
+    public String activeChannel(ServerPlayer player) {
+        return state(player).activeChannel();
+    }
+
+    public Set<String> joinedChannels(ServerPlayer player) {
+        return state(player).joinedChannels();
+    }
+
+    public void setChannels(ServerPlayer player, String activeChannel, Set<String> joinedChannels) {
+        update(state(player).withChannels(activeChannel, joinedChannels));
+    }
+
     public static OptionalLong parseDuration(String input) {
         if (input == null) return OptionalLong.empty();
         String normalized = input.trim().toLowerCase(Locale.ROOT);
@@ -160,8 +173,8 @@ public final class ModerationService implements AutoCloseable {
 
     @Override
     public void close() {
+        store.close();
         states.values().forEach(store::save);
         states.clear();
-        store.close();
     }
 }

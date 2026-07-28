@@ -2,6 +2,8 @@
 # Available types / 可用类型: SQLite, MySQL, MariaDB, JDBC
 # All three common drivers are bundled; no extra jar is needed.
 # SQLite、MySQL、MariaDB 驱动均已内嵌，不需要额外安装 jar。
+# Moderation state is stored in trchat_player_state and channel memberships in trchat_player_channels.
+# 禁言等状态保存于 trchat_player_state，玩家加入的频道及当前频道保存于 trchat_player_channels。
 Type: SQLite
 
 SQLite:
