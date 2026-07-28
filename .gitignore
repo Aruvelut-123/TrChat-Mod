@@ -1,4 +1,7 @@
 .gradle
 .idea
-.kotlin
 build
+run
+out
+*.iml
+*.log

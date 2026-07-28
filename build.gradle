@@ -1,0 +1,88 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.142'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+}
+
+repositories {
+    mavenCentral()
+}
+
+neoForge {
+    version = neo_version
+
+    runs {
+        server {
+            server()
+            programArgument '--nogui'
+            systemProperty 'forge.logging.console.level', 'info'
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.13.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+def generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
+    def replaceProperties = [
+        minecraft_version_range: minecraft_version_range,
+        neo_version_range      : neo_version_range,
+        loader_version_range   : loader_version_range,
+        mod_id                 : mod_id,
+        mod_name               : mod_name,
+        mod_license            : mod_license,
+        mod_version            : mod_version
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from 'src/main/templates'
+    into layout.buildDirectory.dir('generated/sources/modMetadata')
+}
+
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+    options.compilerArgs.add('-Xlint:deprecation')
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+}
+
+tasks.named('jar', Jar) {
+    manifest {
+        attributes(
+            'Specification-Title': mod_name,
+            'Specification-Vendor': 'Aruvelut-123',
+            'Specification-Version': mod_version,
+            'Implementation-Title': project.name,
+            'Implementation-Version': mod_version,
+            'Implementation-Vendor': 'Aruvelut-123'
+        )
+    }
+}

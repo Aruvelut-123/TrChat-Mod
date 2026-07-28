@@ -1,36 +1,17 @@
-name: Feature Request
-description: 'Warning: If you don’t follow the prompts to give feedback, this issue may be ignored or closed.'
+name: Feature request
+description: Suggest a feature for TrChat NeoForge
 title: "[Feature] "
-labels: ['Enhancement | 新功能']
+labels: ["enhancement"]
 body:
   - type: checkboxes
-    id: wikis
     attributes:
-      label: 'Have you checked the Wiki'
-      description: 'Often many questions are caused by not checking the Wiki in detail, have you read [Wiki](https://trchat.trixey.cc)?'
+      label: Duplicate check
       options:
-        - label: 'I have checked the Wiki and determined that this feature does not exist.'
+        - label: I checked the README and existing issues before submitting this request.
           required: true
-
-  - type: checkboxes
-    id: issues-reviewed
-    attributes:
-      label: 'Is there a duplicate issue'
-      description: 'Some features may have been mentioned by others, have you read it [Issues](https://github.com/TrPlugins/TrChat/issues)?'
-      options:
-        - label: 'I have looked through the existing issue and found no duplicate content, or a more detailed description of the existing issue.'
-          required: true
-
   - type: textarea
-    id: description
     attributes:
-      label: 'Detailed description'
-      description: 'Describe the function clearly.'
-      value: |
-        ```
-        1. ...
-        2. ...
-        3. ...
-        ```
+      label: Proposed feature
+      description: Describe the use case, expected behavior, and Redis/Bukkit interoperability impact.
     validations:
       required: true

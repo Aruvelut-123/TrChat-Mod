@@ -1,64 +1,30 @@
-name: Error Report
-description: 'Warning: Failure to properly follow the prompts for feedback errors will be closed.'
-title: "[issue] "
-labels: ['Bug | 漏洞']
+name: Bug report
+description: Report a TrChat NeoForge problem
+title: "[Bug] "
+labels: ["bug"]
 body:
   - type: checkboxes
-    id: latests
     attributes:
-      label: 'Whether the latest version has been tried'
-      description: 'Your problem may have been found and fixed in the [latest version](https://github.com/TrPlugins/TrChat/actions)'
+      label: Checks
       options:
-        - label: 'I have updated TrChat to the latest version, and the issue is also reproduced.'
+        - label: I am using Minecraft 1.21.1 and NeoForge 21.1.233 or newer.
           required: true
-
-  - type: checkboxes
-    id: wikis
-    attributes:
-      label: 'Have you checked the Wiki'
-      description: 'Often many problems are caused by not checking the wiki in detail, or the wiki already has a solution, have you read [Wiki](https://trchat.trixey.cc/guide/known-issues)?'
-      options:
-        - label: 'I have checked the Wiki for this problem and determined that the problem exists.'
+        - label: I reproduced the problem with the latest commit.
           required: true
-
-  - type: textarea
-    id: description
+  - type: input
     attributes:
-      label: 'Detailed description'
-      description: 'Actions and prerequisites that can be reproduced'
-      placeholder: |
-        1. ...
-        2. ...
-        3. ...
+      label: NeoForge version
+      placeholder: 21.1.244
     validations:
       required: true
-
   - type: textarea
-    id: configuration
     attributes:
-      label: 'configuration file'
-      description: 'The channel file or settings.yml where the error occurred'
-      render: 'YAML'
+      label: What happened?
+      description: Include steps to reproduce and the expected behavior.
     validations:
       required: true
-
   - type: textarea
-    id: logs
     attributes:
-      label: 'logs'
-      description: 'If there is a message/error in the server/client backend when an error occurs, please provide it'
-    validations:
-      required: false
-
-  - type: textarea
-    id: environments
-    attributes:
-      label: 'Server environment'
-      description: 'Paste the results of /version and /plugins here'
-      value: |
-        Server version:
-        ...
-        Plugin list:
-        ...
-    validations:
-      required: true
+      label: Logs and configuration
+      description: Remove Redis passwords before pasting logs or trchat-neoforge.toml.
+      render: shell

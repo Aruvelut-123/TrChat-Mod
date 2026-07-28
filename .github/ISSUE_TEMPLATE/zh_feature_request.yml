@@ -1,36 +1,17 @@
 name: 功能请求
-description: '注意: 未正确根据提示发布功能请求可能会被忽略或关闭.'
+description: 为 TrChat NeoForge 提出新功能
 title: "[功能] "
-labels: ['Enhancement | 新功能']
+labels: ["enhancement"]
 body:
   - type: checkboxes
-    id: wikis
     attributes:
-      label: '是否已查阅 Wiki'
-      description: '往往很多需求都是因为没有详细查阅 Wiki, 你是否已阅读 [Wiki](https://trchat.trixey.cc)?'
+      label: 重复检查
       options:
-        - label: '我已查阅 Wiki 并确定没有存在该功能.'
+        - label: 我已阅读 README 并检查现有 Issues。
           required: true
-
-  - type: checkboxes
-    id: issues-reviewed
-    attributes:
-      label: '是否存在重复 issue'
-      description: '有些功能可能已经被别人提到过，你翻阅过吗 [Issues](https://github.com/TrPlugins/TrChat/issues)?'
-      options:
-        - label: '我已翻阅现有的 issue 没有发现内容重复, 亦或是对现有 issue 的更详细的描述.'
-          required: true
-
   - type: textarea
-    id: description
     attributes:
-      label: '详细的描述'
-      description: '对该功能清晰地描述.'
-      value: |
-        ```
-        1. ...
-        2. ...
-        3. ...
-        ```
+      label: 功能说明
+      description: 请说明使用场景、预期行为，以及对 Redis/Bukkit 互通的影响。
     validations:
       required: true

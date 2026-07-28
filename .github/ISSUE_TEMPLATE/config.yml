@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
-  - name: TrChat Document
-    url: https://trchat.trixey.cc/
-    about: Official wiki of TrChat (Only Chinese now)
+  - name: TrChat NeoForge README
+    url: https://github.com/Aruvelut-123/TrChat-Neoforge#readme
+    about: Installation, Redis compatibility, commands and build instructions

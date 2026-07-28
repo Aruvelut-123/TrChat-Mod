@@ -1,0 +1,32 @@
+modLoader="javafml"
+loaderVersion="${loader_version_range}"
+license="${mod_license}"
+issueTrackerURL="https://github.com/Aruvelut-123/TrChat-Neoforge/issues"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+displayURL="https://github.com/Aruvelut-123/TrChat-Neoforge"
+authors="Aruvelut-123; original TrChat contributors"
+description='''
+A server-side chat control mod for NeoForge 1.21.1.
+Redis is the only cross-server transport and remains wire-compatible with TrChat Bukkit 2.4.9.
+'''
+
+[[dependencies.${mod_id}]]
+modId="neoforge"
+type="required"
+versionRange="${neo_version_range}"
+ordering="NONE"
+side="SERVER"
+
+[[dependencies.${mod_id}]]
+modId="minecraft"
+type="required"
+versionRange="${minecraft_version_range}"
+ordering="NONE"
+side="SERVER"
+
+[features.${mod_id}]
+javaVersion="[21,)"

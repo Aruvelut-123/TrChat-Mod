@@ -1,73 +1,30 @@
-name: 错误报告
-description: '注意: 未正确根据提示进行反馈错误可能会被忽略或关闭.'
+name: 问题报告
+description: 报告 TrChat NeoForge 的问题
 title: "[问题] "
-labels: ['Bug | 漏洞']
+labels: ["bug"]
 body:
   - type: checkboxes
-    id: latests
     attributes:
-      label: '是否已尝试最新的版本'
-      description: '你的问题也许已经被发现并被修复于[最新版](https://github.com/TrPlugins/TrChat/actions)'
+      label: 检查
       options:
-        - label: '我已更新 TrChat 至最新的版本, 并且同样复现该问题.'
+        - label: 我使用 Minecraft 1.21.1 和 NeoForge 21.1.233 或更高版本。
           required: true
-
-  - type: checkboxes
-    id: wikis
-    attributes:
-      label: '是否已查阅 Wiki'
-      description: '往往很多问题都是因为没有详细查阅 Wiki, 或是Wiki已经有解决方案, 你是否已阅读 [Wiki](https://trchat.trixey.cc/guide/known-issues)?'
-      options:
-        - label: '我已查阅 Wiki 对于该问题的相关内容, 并确定该问题是存在的.'
+        - label: 我已在最新提交上复现该问题。
           required: true
-
-  - type: checkboxes
-    id: proxy
+  - type: input
     attributes:
-      label: '如果使用跨服功能, 是否在代理端上安装了TrChat或使用redis转发?'
-      description: '如果没有, 你将不能正常使用跨服功能'
-      options:
-        - label: '我已在代理端上安装了TrChat或使用redis转发'
-          required: true
-
-  - type: textarea
-    id: description
-    attributes:
-      label: '详细描述'
-      description: '能够重现的动作及前提'
-      placeholder: |
-        1. ...
-        2. ...
-        3. ...
+      label: NeoForge 版本
+      placeholder: 21.1.244
     validations:
       required: true
-
   - type: textarea
-    id: configuration
     attributes:
-      label: '配置文件'
-      description: '发生错误的频道文件或settings.yml'
-      render: 'YAML'
+      label: 问题描述
+      description: 请提供复现步骤和预期行为。
     validations:
       required: true
-
   - type: textarea
-    id: logs
     attributes:
-      label: '日志'
-      description: '若发生错误时服务端/客户端后台出现信息/报错, 请提供'
-    validations:
-      required: false
-
-  - type: textarea
-    id: environments
-    attributes:
-      label: '服务器环境'
-      description: '在此处粘贴 /version 和 /plugins 的返回结果'
-      value: |
-        服务器版本:
-        ...
-        插件列表:
-        ...
-    validations:
-      required: true
+      label: 日志与配置
+      description: 粘贴日志或 trchat-neoforge.toml 前请删除 Redis 密码。
+      render: shell
