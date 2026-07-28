@@ -6,8 +6,11 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import me.arasple.mc.trchat.neoforge.channel.ChannelDefinition;
 import me.arasple.mc.trchat.neoforge.channel.ChannelManager;
 import me.arasple.mc.trchat.neoforge.chat.ChatService;
+import me.arasple.mc.trchat.neoforge.chat.LegacyText;
+import me.arasple.mc.trchat.neoforge.config.TrChatConfig;
 import me.arasple.mc.trchat.neoforge.moderation.ModerationService;
 import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
+import me.arasple.mc.trchat.neoforge.update.UpdateChecker;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
@@ -45,6 +48,7 @@ public final class TrChatServerEvents {
 
     private final ChannelManager channels = new ChannelManager();
     private ChatService service;
+    private UpdateChecker updateChecker;
     private CommandDispatcher<CommandSourceStack> commandDispatcher;
 
     @SubscribeEvent
@@ -55,12 +59,20 @@ public final class TrChatServerEvents {
     @SubscribeEvent
     public void onServerStarted(ServerStartedEvent event) {
         service = new ChatService(event.getServer(), channels);
+        if (TrChatConfig.UPDATE_CHECK_ENABLED.get()) {
+            updateChecker = new UpdateChecker(event.getServer(), service.languages(), modVersion());
+            updateChecker.start();
+        }
         TrChatNeoForge.LOGGER.info("{} started with {} channels (NeoForge 21.1.233+, Redis-only transport)",
             TrChatNeoForge.MOD_NAME, service.channelCount());
     }
 
     @SubscribeEvent
     public void onServerStopping(ServerStoppingEvent event) {
+        if (updateChecker != null) {
+            updateChecker.close();
+            updateChecker = null;
+        }
         if (service != null) {
             service.close();
             service = null;
@@ -80,6 +92,9 @@ public final class TrChatServerEvents {
     public void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
         if (service != null && event.getEntity() instanceof ServerPlayer player) {
             service.playerJoined(player);
+            if (updateChecker != null) {
+                updateChecker.notifyPlayer(player);
+            }
         }
     }
 
@@ -149,7 +164,16 @@ public final class TrChatServerEvents {
     private void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("trchat")
             .then(Commands.literal("status")
-                .executes(context -> status(context.getSource())))
+                .executes(context -> status(context.getSource()))
+                .then(Commands.argument("player", StringArgumentType.word())
+                    .requires(source -> canUsePermission(source, "trchat.admin"))
+                    .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                        context.getSource().getOnlinePlayerNames(), builder
+                    ))
+                    .executes(context -> playerStatus(
+                        context.getSource(),
+                        StringArgumentType.getString(context, "player")
+                    ))))
             .then(Commands.literal("reload")
                 .requires(source -> source.hasPermission(2))
                 .executes(context -> reload(context.getSource())))
@@ -158,7 +182,7 @@ public final class TrChatServerEvents {
                 .then(Commands.literal("reconnect")
                     .executes(context -> reconnect(context.getSource()))))
             .then(Commands.literal("mute")
-                .requires(source -> source.hasPermission(2))
+                .requires(source -> canUsePermission(source, "trchat.mute"))
                 .then(Commands.literal("on")
                     .executes(context -> mute(context.getSource(), true)))
                 .then(Commands.literal("off")
@@ -187,7 +211,7 @@ public final class TrChatServerEvents {
                                 ))))))
                 .executes(context -> mute(context.getSource(), service != null && !service.isGlobalMute())))
             .then(Commands.literal("unmute")
-                .requires(source -> source.hasPermission(2))
+                .requires(source -> canUsePermission(source, "trchat.mute"))
                 .then(Commands.argument("player", StringArgumentType.word())
                     .suggests((context, builder) -> SharedSuggestionProvider.suggest(
                         context.getSource().getOnlinePlayerNames(), builder
@@ -196,7 +220,7 @@ public final class TrChatServerEvents {
                         context.getSource(), StringArgumentType.getString(context, "player")
                     ))))
             .then(Commands.literal("shadowmute")
-                .requires(source -> source.hasPermission(2))
+                .requires(source -> canUsePermission(source, "trchat.shadowmute"))
                 .then(Commands.argument("player", StringArgumentType.word())
                     .suggests((context, builder) -> SharedSuggestionProvider.suggest(
                         context.getSource().getOnlinePlayerNames(), builder
@@ -297,7 +321,7 @@ public final class TrChatServerEvents {
 
     private int status(CommandSourceStack source) {
         if (service == null) {
-            source.sendFailure(Component.literal("TrChat NeoForge is not running."));
+            source.sendFailure(unavailable());
             return 0;
         }
         ServerPlayer viewer = source.getPlayer();
@@ -332,12 +356,63 @@ public final class TrChatServerEvents {
             .append(service.languages().component(viewer, "Status-Creator-Prefix"))
             .append(statusLink(viewer, "Status-Creator-Link", BILIBILI_PROFILE_URL, "Status-Creator-Link-Hover"))
             .append("\n")
+            .append(service.languages().component(viewer, "Status-Original-Author"))
+            .append("\n")
             .append(service.languages().component(viewer, "Status-Repository-Prefix"))
             .append(statusLink(viewer, "Status-Repository-Link", REPOSITORY_URL, "Status-Repository-Link-Hover"))
             .append("\n")
             .append(service.languages().component(viewer, "Status-Footer"));
         source.sendSuccess(() -> overview, false);
         return 1;
+    }
+
+    private int playerStatus(CommandSourceStack source, String playerName) {
+        if (service == null) {
+            source.sendFailure(unavailable());
+            return 0;
+        }
+        ServerPlayer target = source.getServer().getPlayerList().getPlayerByName(playerName);
+        ServerPlayer viewer = source.getPlayer();
+        if (target == null) {
+            source.sendFailure(service.languages().component(viewer, "General-Player-Not-Found", playerName));
+            return 0;
+        }
+        boolean muted = service.isMuted(target);
+        MutableComponent output = service.languages().component(
+            viewer,
+            "Player-Status-Overview",
+            target.getGameProfile().getName(),
+            service.activeChannel(target),
+            service.joinedChannelCount(target),
+            target.connection.latency(),
+            state(viewer, muted),
+            state(viewer, service.isShadowMuted(target)),
+            state(viewer, service.isPrivateSpy(target)),
+            state(viewer, target.hasPermissions(2)),
+            target.gameMode.getGameModeForPlayer().getName().toUpperCase(Locale.ROOT)
+        ).copy();
+        if (muted) {
+            String expiry = service.muteExpiry(target);
+            if (expiry.equals("permanent")) {
+                expiry = service.languages().text(viewer, "Player-Status-Permanent");
+            }
+            output
+                .append("\n")
+                .append(service.languages().component(
+                    viewer, "Player-Status-Mute-Detail", expiry, service.muteReason(target)
+                ));
+        }
+        output
+            .append("\n")
+            .append(service.languages().component(viewer, "Status-Footer"));
+        source.sendSuccess(() -> output, false);
+        return 1;
+    }
+
+    private String state(ServerPlayer viewer, boolean enabled) {
+        return service.languages().text(
+            viewer, enabled ? "Status-State-Enabled" : "Status-State-Disabled"
+        );
     }
 
     private MutableComponent statusLink(ServerPlayer viewer, String key, String url, String hoverKey) {
@@ -418,7 +493,9 @@ public final class TrChatServerEvents {
             return 0;
         }
         service.reconnectRedis();
-        source.sendSuccess(() -> Component.literal("TrChat Redis reconnect started."), true);
+        source.sendSuccess(() -> service.languages().component(
+            source.getPlayer(), "Redis-Reconnect-Started"
+        ), true);
         return 1;
     }
 
@@ -427,7 +504,6 @@ public final class TrChatServerEvents {
             return 0;
         }
         service.setGlobalMute(muted, true);
-        source.sendSuccess(() -> Component.literal("Global chat mute is now " + (muted ? "on." : "off.")), true);
         return 1;
     }
 
@@ -502,7 +578,7 @@ public final class TrChatServerEvents {
             );
             return 1;
         } catch (CommandSyntaxException exception) {
-            source.sendFailure(Component.literal("This command can only be used by a player."));
+            source.sendFailure(service.languages().component(null, "General-Player-Only"));
             return 0;
         }
     }
@@ -514,7 +590,7 @@ public final class TrChatServerEvents {
         try {
             return service.sendPrivate(source.getPlayerOrException(), target, message);
         } catch (CommandSyntaxException exception) {
-            source.sendFailure(Component.literal("This command can only be used by a player."));
+            source.sendFailure(service.languages().component(null, "General-Player-Only"));
             return 0;
         }
     }
@@ -526,7 +602,7 @@ public final class TrChatServerEvents {
         try {
             return service.reply(source.getPlayerOrException(), message);
         } catch (CommandSyntaxException exception) {
-            source.sendFailure(Component.literal("This command can only be used by a player."));
+            source.sendFailure(service.languages().component(null, "General-Player-Only"));
             return 0;
         }
     }
@@ -538,12 +614,14 @@ public final class TrChatServerEvents {
         try {
             ChannelDefinition channel = channels.byId(channelId).orElse(null);
             if (channel == null) {
-                source.sendFailure(Component.literal("Unknown channel: " + channelId));
+                source.sendFailure(service.languages().component(
+                    source.getPlayer(), "Channel-Unknown", channelId
+                ));
                 return 0;
             }
             return service.executeChannel(source.getPlayerOrException(), channel, "");
         } catch (CommandSyntaxException exception) {
-            source.sendFailure(Component.literal("This command can only be used by a player."));
+            source.sendFailure(service.languages().component(null, "General-Player-Only"));
             return 0;
         }
     }
@@ -562,7 +640,7 @@ public final class TrChatServerEvents {
         try {
             return service.openFunctionSnapshot(source.getPlayerOrException(), snapshot) ? 1 : 0;
         } catch (CommandSyntaxException exception) {
-            source.sendFailure(Component.literal("This command can only be used by a player."));
+            source.sendFailure(service.languages().component(null, "General-Player-Only"));
             return 0;
         }
     }
@@ -611,13 +689,34 @@ public final class TrChatServerEvents {
     }
 
     private void registerModerationAliases(CommandDispatcher<CommandSourceStack> dispatcher) {
-        dispatcher.register(Commands.literal("trmute")
-            .requires(source -> source.hasPermission(2))
+        registerMuteAlias(dispatcher, "trmute");
+        registerMuteAlias(dispatcher, "mute");
+        dispatcher.register(Commands.literal("trunmute")
+            .requires(source -> canUsePermission(source, "trchat.mute"))
+            .then(Commands.argument("player", StringArgumentType.word())
+                .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                    context.getSource().getOnlinePlayerNames(), builder
+                ))
+                .executes(context -> unmutePlayer(
+                    context.getSource(), StringArgumentType.getString(context, "player")
+                ))));
+        registerShadowMuteAlias(dispatcher, "trshadowmute");
+        registerShadowMuteAlias(dispatcher, "shadowmute");
+        dispatcher.register(Commands.literal("trspy")
+            .executes(context -> privateSpy(context.getSource(), null)));
+    }
+
+    private void registerMuteAlias(CommandDispatcher<CommandSourceStack> dispatcher, String alias) {
+        dispatcher.register(Commands.literal(alias)
+            .requires(source -> canUsePermission(source, "trchat.mute"))
             .then(Commands.argument("player", StringArgumentType.word())
                 .suggests((context, builder) -> SharedSuggestionProvider.suggest(
                     context.getSource().getOnlinePlayerNames(), builder
                 ))
                 .then(Commands.argument("duration", StringArgumentType.word())
+                    .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                        new String[]{"30s", "5m", "1h", "1d", "7d", "permanent"}, builder
+                    ))
                     .executes(context -> mutePlayer(
                         context.getSource(),
                         StringArgumentType.getString(context, "player"),
@@ -631,20 +730,26 @@ public final class TrChatServerEvents {
                             StringArgumentType.getString(context, "duration"),
                             StringArgumentType.getString(context, "reason")
                         ))))));
-        dispatcher.register(Commands.literal("trunmute")
-            .requires(source -> source.hasPermission(2))
+    }
+
+    private void registerShadowMuteAlias(CommandDispatcher<CommandSourceStack> dispatcher, String alias) {
+        dispatcher.register(Commands.literal(alias)
+            .requires(source -> canUsePermission(source, "trchat.shadowmute"))
             .then(Commands.argument("player", StringArgumentType.word())
-                .executes(context -> unmutePlayer(
-                    context.getSource(), StringArgumentType.getString(context, "player")
-                ))));
-        dispatcher.register(Commands.literal("trshadowmute")
-            .requires(source -> source.hasPermission(2))
-            .then(Commands.argument("player", StringArgumentType.word())
+                .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                    context.getSource().getOnlinePlayerNames(), builder
+                ))
                 .executes(context -> shadowMute(
                     context.getSource(), StringArgumentType.getString(context, "player"), null
-                ))));
-        dispatcher.register(Commands.literal("trspy")
-            .executes(context -> privateSpy(context.getSource(), null)));
+                ))
+                .then(Commands.literal("on")
+                    .executes(context -> shadowMute(
+                        context.getSource(), StringArgumentType.getString(context, "player"), true
+                    )))
+                .then(Commands.literal("off")
+                    .executes(context -> shadowMute(
+                        context.getSource(), StringArgumentType.getString(context, "player"), false
+                    )))));
     }
 
     private int executeBoundAlias(CommandSourceStack source, String alias, String arguments) {
@@ -675,9 +780,18 @@ public final class TrChatServerEvents {
             ChannelDefinition channel = channels.byId(channelId).orElse(null);
             return channel == null ? 0 : service.executeChannel(source.getPlayerOrException(), channel, message);
         } catch (CommandSyntaxException exception) {
-            source.sendFailure(Component.literal("This channel command can only be used by a player."));
+            source.sendFailure(service.languages().component(null, "General-Player-Only"));
             return 0;
         }
+    }
+
+    private static boolean canUsePermission(CommandSourceStack source, String permission) {
+        ServerPlayer player = source.getPlayer();
+        return source.hasPermission(2) || (player != null && TrChatPermissions.check(player, permission));
+    }
+
+    private static Component unavailable() {
+        return LegacyText.parse("&8[&3Tr&bChat&8] &cTrChat NeoForge is not running.");
     }
 
     private static String modVersion() {

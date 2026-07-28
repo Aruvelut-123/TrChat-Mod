@@ -21,6 +21,9 @@ public final class TrChatConfig {
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BLOCKED_WORDS;
     public static final ModConfigSpec.ConfigValue<String> FILTER_REPLACEMENT;
 
+    public static final ModConfigSpec.BooleanValue UPDATE_CHECK_ENABLED;
+    public static final ModConfigSpec.IntValue UPDATE_CHECK_INTERVAL_MINUTES;
+
     public static final ModConfigSpec.BooleanValue REDIS_ENABLED;
     public static final ModConfigSpec.ConfigValue<String> REDIS_HOST;
     public static final ModConfigSpec.IntValue REDIS_PORT;
@@ -64,6 +67,20 @@ public final class TrChatConfig {
             value -> value instanceof String
         );
         FILTER_REPLACEMENT = builder.define("filterReplacement", "*");
+        builder.pop();
+
+        builder.comment(
+            "GitHub release update checker. It only notifies and never downloads files.",
+            "GitHub Release 更新检查器：仅提醒，不会自动下载文件。"
+        ).push("updates");
+        UPDATE_CHECK_ENABLED = builder
+            .comment("Check for updates and notify the console and online TrChat administrators.",
+                "检查更新，并提醒后台及在线 TrChat 管理员。")
+            .define("enabled", true);
+        UPDATE_CHECK_INTERVAL_MINUTES = builder
+            .comment("Minutes between checks. The Bukkit upstream default is 15 minutes.",
+                "检查间隔（分钟）。Bukkit 上游默认值为 15 分钟。")
+            .defineInRange("intervalMinutes", 15, 1, 1440);
         builder.pop();
 
         builder.comment("Redis is the only supported cross-server transport.")

@@ -202,7 +202,11 @@ public final class ChatService implements AutoCloseable {
         if (publish && redis != null) {
             redis.publish(TrChatMessage.of("GlobalMute", muted ? "on" : "off"));
         }
-        broadcast(Component.literal("Global chat has been " + (muted ? "muted." : "unmuted.")));
+        String key = muted ? "Global-Mute-On" : "Global-Mute-Off";
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            player.sendSystemMessage(moderation.languages().component(player, key));
+        }
+        TrChatNeoForge.LOGGER.info(LegacyText.stripLegacyCodes(moderation.languages().text(null, key)));
     }
 
     public boolean isGlobalMute() {
@@ -280,6 +284,31 @@ public final class ChatService implements AutoCloseable {
 
     public boolean isShadowMuted(ServerPlayer player) {
         return moderation.shadowMuted(player);
+    }
+
+    public boolean isMuted(ServerPlayer player) {
+        return moderation.isMuted(player);
+    }
+
+    public String muteExpiry(ServerPlayer player) {
+        return moderation.muteExpiry(player);
+    }
+
+    public String muteReason(ServerPlayer player) {
+        return moderation.muteReason(player);
+    }
+
+    public boolean isPrivateSpy(ServerPlayer player) {
+        return moderation.privateSpy(player);
+    }
+
+    public String activeChannel(ServerPlayer player) {
+        String active = moderation.activeChannel(player);
+        return active.isBlank() ? "-" : active;
+    }
+
+    public int joinedChannelCount(ServerPlayer player) {
+        return moderation.joinedChannels(player).size();
     }
 
     public void setShadowMuted(ServerPlayer player, boolean value) {

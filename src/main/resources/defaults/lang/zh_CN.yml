@@ -4,11 +4,13 @@ General-No-Permission: '&8[&3Tr&bChat&8] &7你没有足够的权限。'
 General-Muted: '&8[&3Tr&bChat&8] &c你已被禁言，解除时间：{0}，原因：{1}'
 General-Global-Muting: '&8[&3Tr&bChat&8] &c当前正在全员禁言。'
 General-Player-Not-Found: '&8[&3Tr&bChat&8] &7找不到玩家：{0}'
+General-Player-Only: '&8[&3Tr&bChat&8] &c此命令只能由玩家执行。'
 Cooldowns-Chat: '&8[&3Tr&bChat&8] &7请等待 &6{0} ms &7后再发言。'
 Channel-Join: '&8[&3Tr&bChat&8] &a已加入 {0} 频道。'
 Channel-Quit: '&8[&3Tr&bChat&8] &7已离开 {0} 频道。'
 Channel-No-Speak-Permission: '&8[&3Tr&bChat&8] &c你没有该频道的发言权限。'
 Channel-Command-Unbound: '&8[&3Tr&bChat&8] &c频道命令 /{0} 已被移除或未绑定。'
+Channel-Unknown: '&8[&3Tr&bChat&8] &c未知频道：{0}'
 Reload-Success: '&8[&3Tr&bChat&8] &a重载完成：已加载 {0} 个频道，并刷新语言、function、filter、Redis 与频道命令。'
 Reload-Partial: '&8[&3Tr&bChat&8] &e已加载 {0} 个频道，但以下配置重载失败：{1}。请查看服务端日志。'
 Reload-Failed: '&8[&3Tr&bChat&8] &c重载失败：{0}。继续使用上一次有效的频道配置。'
@@ -17,37 +19,57 @@ Status-State-Disabled: '&c已禁用'
 Status-State-Connected: '&a已连接'
 Status-State-Reconnecting: '&e重连中'
 Status-Overview: |-
-  &8&m------------------&r &3&lTr&b&lChat NeoForge &8&m------------------
-  &8▪ &7版本: &b{0} &8| &7Minecraft: &b1.21.1
-  &8▪ &7频道数量: &a{1} &8| &7默认加入: &f{2}
-  &8▪ &7Redis: {3} &8| &7全服禁言: {4}
-  &8▪ &7Command-Controller: {5} &8(&f{6} 条规则&8)
-  &8▪ &7在线玩家: &a{7}&7/&2{8}
-  &8▪ &7局部重载: &f/trchat reload
-Status-Creator-Prefix: '&8▪ &7NeoForge 作者 / 维护者: &fBaymaxawa &8• '
-Status-Creator-Link: '&d&nBilibili 主页'
+  &8&m----------&r &3&lTr&b&lChat &8&m----------
+  &8▪ &7版本: &b{0} &8| &7MC: &b1.21.1
+  &8▪ &7频道: &a{1} &8| &7默认: &f{2}
+  &8▪ &7Redis: {3} &8| &7禁言: {4}
+  &8▪ &7命令控制: {5} &8(&f{6}&8)
+  &8▪ &7在线: &a{7}&7/&2{8} &8| &f/trchat reload
+Status-Creator-Prefix: '&8▪ &7作者: &fBaymaxawa &8• '
+Status-Creator-Link: '&d&nBilibili'
 Status-Creator-Link-Hover: '&7点击打开 Baymaxawa 的 Bilibili 主页'
-Status-Repository-Prefix: '&8▪ &7项目仓库: '
-Status-Repository-Link: '&b&nAruvelut-123/TrChat-Neoforge'
+Status-Original-Author: '&8▪ &7原作者: &fArasple'
+Status-Repository-Prefix: '&8▪ &7仓库: '
+Status-Repository-Link: '&b&nGitHub / Issue'
 Status-Repository-Link-Hover: '&7点击打开 NeoForge 项目仓库或提交 Issue'
-Status-Footer: '&8&m------------------------------------------------------'
+Status-Footer: '&8&m--------------------------------'
+Player-Status-Overview: |-
+  &8&m---------&r &3&l玩家状态 &8&m---------
+  &8▪ &7玩家: &f{0} &8| &7频道: &f{1}
+  &8▪ &7已加入: &f{2} &8| &7延迟: &f{3} ms
+  &8▪ &7禁言: {4} &8| &7Shadow: {5}
+  &8▪ &7监听: {6} &8| &7OP: {7}
+  &8▪ &7模式: &f{8}
+Player-Status-Mute-Detail: |-
+  &8▪ &7到期: &f{0}
+  &8▪ &7原因: &f{1}
+Player-Status-Permanent: '永久'
 Command-Controller-Disabled: '&8[&3Tr&bChat&8] &c命令 /{0} 未在已启用的 Command-Controller 中配置。'
 Command-About: |-
-  &8&m------------------&r &3&lTr&b&lChat NeoForge &8&m------------------
+  &8&m----------&r &3&lTr&b&lChat &8&m----------
   &8▪ &7版本: &b{0}
   &8▪ &7原作者: &fArasple
-  &8▪ &7NeoForge 作者 / 维护者: &fBaymaxawa
-  &8▪ &7平台: &fMinecraft 1.21.1 / NeoForge 21.1.233+
-  &8&m------------------------------------------------------
+  &8▪ &7NeoForge: &fBaymaxawa
+  &8▪ &7MC: &f1.21.1 &8| &7NF: &f21.1.233+
+  &8&m--------------------------------
 Command-Help: |-
-  &8&m--------------------&r &3&lTr&b&lChat 帮助 &8&m--------------------
-  &b/trchat status &8- &7查看模组运行状态
-  &b/trchat reload &8- &7局部重载全部 TrChat 配置
-  &b/trchat channel join <频道> &8- &7加入或切换频道
-  &b/trmsg <玩家> <消息> &8- &7发送私聊
-  &b/trreply <消息> &8- &7回复上一位私聊玩家
-  &b/trspy &8- &7切换私聊监听
-  &8&m------------------------------------------------------
+  &8&m----------&r &3&lTr&b&lChat 帮助 &8&m----------
+  &b/trchat status [玩家]
+  &b/trchat reload
+  &b/mute <玩家> <时长> [原因]
+  &b/shadowmute <玩家> [on|off]
+  &b/trmsg <玩家> <消息>
+  &b/trreply <消息> &8| &b/trspy
+  &8&m--------------------------------
+Redis-Reconnect-Started: '&8[&3Tr&bChat&8] &aRedis 重连已开始。'
+Global-Mute-On: '&8[&3Tr&bChat&8] &c全服聊天已禁言。'
+Global-Mute-Off: '&8[&3Tr&bChat&8] &a全服聊天已解除禁言。'
+Updater-Available: |-
+  &8&m----------&r &3&l发现更新 &8&m----------
+  &8▪ &7当前: &f{0} &8➜ &7最新: &a{1}
+Updater-Link-Prefix: '&8▪ &7下载: '
+Updater-Link: '&a&nGitHub Releases'
+Updater-Link-Hover: '&7点击打开 TrChat NeoForge 发布页面'
 Private-Message-No-Reply: '&8[&3Tr&bChat&8] &7当前没有可回复的玩家。'
 Private-Message-Spy-Format: '&8[&3监听&8] &6{0} &2-> &3{1}&f: &7{2}'
 Private-Message-Spy-On: '&c&l&k|&f &a&l开启监听私聊模式 &c&l&k|'
