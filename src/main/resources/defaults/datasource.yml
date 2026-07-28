@@ -1,0 +1,45 @@
+# TrChat data source / TrChat 数据源
+# Available types / 可用类型: SQLite, MySQL, MariaDB, JDBC
+# All three common drivers are bundled; no extra jar is needed.
+# SQLite、MySQL、MariaDB 驱动均已内嵌，不需要额外安装 jar。
+Type: SQLite
+
+SQLite:
+  # Relative to config/trchat-neoforge. Absolute paths are also accepted.
+  # 相对于 config/trchat-neoforge；也可填写绝对路径。
+  File: data.db
+
+# Set Type to MySQL to use this section.
+# 使用此处配置时请把 Type 改为 MySQL。
+MySQL:
+  Host: 127.0.0.1
+  Port: 3306
+  Database: trchat
+  User: root
+  Password: ''
+  # Common options: useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC
+  # 常用参数：Unicode、UTF-8、SSL 和时区设置。
+  Parameters: 'useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC'
+
+# Set Type to MariaDB to use this section.
+# 使用此处配置时请把 Type 改为 MariaDB。
+MariaDB:
+  Host: 127.0.0.1
+  Port: 3306
+  Database: trchat
+  User: root
+  Password: ''
+  # MariaDB Connector/J parameters, without the leading question mark.
+  # MariaDB Connector/J 参数，不要填写开头的问号。
+  Parameters: 'useUnicode=true&characterEncoding=utf8&useSsl=false'
+
+# Advanced/custom JDBC connection. Set Type to JDBC.
+# 高级/自定义 JDBC 连接：把 Type 改为 JDBC。
+# Driver may be empty when the driver supports JDBC auto-loading.
+# 若驱动支持 JDBC 自动发现，Driver 可以留空。
+JDBC:
+  Driver: ''
+  Url: ''
+  User: ''
+  Password: ''
+  Table-Prefix: trchat_

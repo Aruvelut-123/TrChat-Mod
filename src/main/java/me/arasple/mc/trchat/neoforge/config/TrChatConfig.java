@@ -10,6 +10,7 @@ public final class TrChatConfig {
 
     public static final ModConfigSpec.IntValue SERVER_ID;
     public static final ModConfigSpec.ConfigValue<String> SERVER_NAME;
+    public static final ModConfigSpec.ConfigValue<String> DEFAULT_LANGUAGE;
     public static final ModConfigSpec.ConfigValue<String> CHAT_FORMAT;
     public static final ModConfigSpec.ConfigValue<String> GLOBAL_FORMAT;
     public static final ModConfigSpec.ConfigValue<String> PRIVATE_FORMAT;
@@ -42,6 +43,9 @@ public final class TrChatConfig {
         SERVER_NAME = builder
             .comment("Value exposed by %server_name%.")
             .define("serverName", "A Minecraft Server");
+        DEFAULT_LANGUAGE = builder
+            .comment("Fallback language file name from config/trchat-neoforge/lang without .yml.")
+            .define("defaultLanguage", "zh_CN");
         CHAT_FORMAT = builder.define("format", "&7<%player%>&f %message%");
         GLOBAL_FORMAT = builder.define("globalFormat", "&8[&bGlobal&8] &7<%player%>&f %message%");
         PRIVATE_FORMAT = builder.define("privateFormat", "&8[&dPM&8] &7%player%&8: &f%message%");

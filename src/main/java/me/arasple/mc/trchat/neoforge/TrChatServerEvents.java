@@ -6,6 +6,7 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import me.arasple.mc.trchat.neoforge.channel.ChannelDefinition;
 import me.arasple.mc.trchat.neoforge.channel.ChannelManager;
 import me.arasple.mc.trchat.neoforge.chat.ChatService;
+import me.arasple.mc.trchat.neoforge.moderation.ModerationService;
 import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -29,6 +30,7 @@ import net.neoforged.neoforge.server.permission.events.PermissionGatherEvent;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.OptionalLong;
 
 public final class TrChatServerEvents {
 
@@ -150,7 +152,61 @@ public final class TrChatServerEvents {
                     .executes(context -> mute(context.getSource(), true)))
                 .then(Commands.literal("off")
                     .executes(context -> mute(context.getSource(), false)))
+                .then(Commands.literal("player")
+                    .then(Commands.argument("player", StringArgumentType.word())
+                        .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                            context.getSource().getOnlinePlayerNames(), builder
+                        ))
+                        .then(Commands.argument("duration", StringArgumentType.word())
+                            .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                                new String[]{"30s", "5m", "1h", "1d", "7d", "permanent"}, builder
+                            ))
+                            .executes(context -> mutePlayer(
+                                context.getSource(),
+                                StringArgumentType.getString(context, "player"),
+                                StringArgumentType.getString(context, "duration"),
+                                ""
+                            ))
+                            .then(Commands.argument("reason", StringArgumentType.greedyString())
+                                .executes(context -> mutePlayer(
+                                    context.getSource(),
+                                    StringArgumentType.getString(context, "player"),
+                                    StringArgumentType.getString(context, "duration"),
+                                    StringArgumentType.getString(context, "reason")
+                                ))))))
                 .executes(context -> mute(context.getSource(), service != null && !service.isGlobalMute())))
+            .then(Commands.literal("unmute")
+                .requires(source -> source.hasPermission(2))
+                .then(Commands.argument("player", StringArgumentType.word())
+                    .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                        context.getSource().getOnlinePlayerNames(), builder
+                    ))
+                    .executes(context -> unmutePlayer(
+                        context.getSource(), StringArgumentType.getString(context, "player")
+                    ))))
+            .then(Commands.literal("shadowmute")
+                .requires(source -> source.hasPermission(2))
+                .then(Commands.argument("player", StringArgumentType.word())
+                    .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                        context.getSource().getOnlinePlayerNames(), builder
+                    ))
+                    .executes(context -> shadowMute(
+                        context.getSource(), StringArgumentType.getString(context, "player"), null
+                    ))
+                    .then(Commands.literal("on")
+                        .executes(context -> shadowMute(
+                            context.getSource(), StringArgumentType.getString(context, "player"), true
+                        )))
+                    .then(Commands.literal("off")
+                        .executes(context -> shadowMute(
+                            context.getSource(), StringArgumentType.getString(context, "player"), false
+                        )))))
+            .then(Commands.literal("spy")
+                .executes(context -> privateSpy(context.getSource(), null))
+                .then(Commands.literal("on")
+                    .executes(context -> privateSpy(context.getSource(), true)))
+                .then(Commands.literal("off")
+                    .executes(context -> privateSpy(context.getSource(), false))))
             .then(Commands.literal("msg")
                 .then(Commands.argument("player", StringArgumentType.word())
                     .then(Commands.argument("message", StringArgumentType.greedyString())
@@ -193,6 +249,7 @@ public final class TrChatServerEvents {
                 .executes(context -> reply(context.getSource(), StringArgumentType.getString(context, "message")))));
         registerReplyAlias(dispatcher, "r");
         registerReplyAlias(dispatcher, "reply");
+        registerModerationAliases(dispatcher);
 
         Set<String> registered = new HashSet<>();
         for (ChannelDefinition channel : channels.all()) {
@@ -267,6 +324,76 @@ public final class TrChatServerEvents {
         service.setGlobalMute(muted, true);
         source.sendSuccess(() -> Component.literal("Global chat mute is now " + (muted ? "on." : "off.")), true);
         return 1;
+    }
+
+    private int mutePlayer(CommandSourceStack source, String playerName, String duration, String reason) {
+        if (service == null) return 0;
+        ServerPlayer target = source.getServer().getPlayerList().getPlayerByName(playerName);
+        if (target == null) {
+            source.sendFailure(service.languages().component(source.getPlayer(), "General-Player-Not-Found", playerName));
+            return 0;
+        }
+        OptionalLong parsed = ModerationService.parseDuration(duration);
+        if (parsed.isEmpty()) {
+            source.sendFailure(service.languages().component(source.getPlayer(), "Mute-Wrong-Format", duration));
+            return 0;
+        }
+        String actualReason = reason == null || reason.isBlank() ? "-" : reason.trim();
+        service.mutePlayer(target, parsed.getAsLong(), actualReason);
+        source.sendSuccess(() -> service.languages().component(
+            source.getPlayer(), "Mute-Muted-Player", target.getGameProfile().getName(),
+            ModerationService.describeDuration(parsed.getAsLong()), actualReason
+        ), true);
+        return 1;
+    }
+
+    private int unmutePlayer(CommandSourceStack source, String playerName) {
+        if (service == null) return 0;
+        ServerPlayer target = source.getServer().getPlayerList().getPlayerByName(playerName);
+        if (target == null) {
+            source.sendFailure(service.languages().component(source.getPlayer(), "General-Player-Not-Found", playerName));
+            return 0;
+        }
+        service.unmutePlayer(target);
+        source.sendSuccess(() -> service.languages().component(
+            source.getPlayer(), "Mute-Cancel-Muted-Player", target.getGameProfile().getName()
+        ), true);
+        return 1;
+    }
+
+    private int shadowMute(CommandSourceStack source, String playerName, Boolean requested) {
+        if (service == null) return 0;
+        ServerPlayer target = source.getServer().getPlayerList().getPlayerByName(playerName);
+        if (target == null) {
+            source.sendFailure(service.languages().component(source.getPlayer(), "General-Player-Not-Found", playerName));
+            return 0;
+        }
+        boolean enabled = requested == null ? !service.isShadowMuted(target) : requested;
+        service.setShadowMuted(target, enabled);
+        source.sendSuccess(() -> service.languages().component(
+            source.getPlayer(), enabled ? "Mute-Shadow-On" : "Mute-Shadow-Off",
+            target.getGameProfile().getName()
+        ), true);
+        return 1;
+    }
+
+    private int privateSpy(CommandSourceStack source, Boolean requested) {
+        if (service == null) return 0;
+        try {
+            ServerPlayer player = source.getPlayerOrException();
+            if (!player.hasPermissions(2) && !TrChatPermissions.check(player, "trchat.spy")) {
+                source.sendFailure(service.languages().component(player, "General-No-Permission"));
+                return 0;
+            }
+            boolean enabled = service.setPrivateSpy(player, requested);
+            source.sendSuccess(() -> service.languages().component(
+                player, enabled ? "Private-Message-Spy-On" : "Private-Message-Spy-Off"
+            ), false);
+            return 1;
+        } catch (CommandSyntaxException exception) {
+            source.sendFailure(Component.literal("This command can only be used by a player."));
+            return 0;
+        }
     }
 
     private int privateMessage(CommandSourceStack source, String target, String message) {
@@ -344,6 +471,43 @@ public final class TrChatServerEvents {
         dispatcher.register(Commands.literal(alias)
             .then(Commands.argument("message", StringArgumentType.greedyString())
                 .executes(context -> reply(context.getSource(), StringArgumentType.getString(context, "message")))));
+    }
+
+    private void registerModerationAliases(CommandDispatcher<CommandSourceStack> dispatcher) {
+        dispatcher.register(Commands.literal("trmute")
+            .requires(source -> source.hasPermission(2))
+            .then(Commands.argument("player", StringArgumentType.word())
+                .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                    context.getSource().getOnlinePlayerNames(), builder
+                ))
+                .then(Commands.argument("duration", StringArgumentType.word())
+                    .executes(context -> mutePlayer(
+                        context.getSource(),
+                        StringArgumentType.getString(context, "player"),
+                        StringArgumentType.getString(context, "duration"),
+                        ""
+                    ))
+                    .then(Commands.argument("reason", StringArgumentType.greedyString())
+                        .executes(context -> mutePlayer(
+                            context.getSource(),
+                            StringArgumentType.getString(context, "player"),
+                            StringArgumentType.getString(context, "duration"),
+                            StringArgumentType.getString(context, "reason")
+                        ))))));
+        dispatcher.register(Commands.literal("trunmute")
+            .requires(source -> source.hasPermission(2))
+            .then(Commands.argument("player", StringArgumentType.word())
+                .executes(context -> unmutePlayer(
+                    context.getSource(), StringArgumentType.getString(context, "player")
+                ))));
+        dispatcher.register(Commands.literal("trshadowmute")
+            .requires(source -> source.hasPermission(2))
+            .then(Commands.argument("player", StringArgumentType.word())
+                .executes(context -> shadowMute(
+                    context.getSource(), StringArgumentType.getString(context, "player"), null
+                ))));
+        dispatcher.register(Commands.literal("trspy")
+            .executes(context -> privateSpy(context.getSource(), null)));
     }
 
     private void registerChannelAlias(

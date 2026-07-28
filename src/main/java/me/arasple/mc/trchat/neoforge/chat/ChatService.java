@@ -8,6 +8,8 @@ import me.arasple.mc.trchat.neoforge.channel.ConditionEvaluator;
 import me.arasple.mc.trchat.neoforge.config.TrChatConfig;
 import me.arasple.mc.trchat.neoforge.function.ChatFunctionService;
 import me.arasple.mc.trchat.neoforge.filter.FilterService;
+import me.arasple.mc.trchat.neoforge.lang.LanguageService;
+import me.arasple.mc.trchat.neoforge.moderation.ModerationService;
 import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
 import me.arasple.mc.trchat.neoforge.placeholder.PlaceholderResolver;
 import me.arasple.mc.trchat.neoforge.placeholder.PlayerStatsTracker;
@@ -43,6 +45,7 @@ public final class ChatService implements AutoCloseable {
     private final ChannelRenderer renderer;
     private final ChatFunctionService functions;
     private final FilterService filters;
+    private final ModerationService moderation;
     private final Map<UUID, ChatState> chatStates = new HashMap<>();
     private final Map<UUID, String> activeChannels = new HashMap<>();
     private final Map<UUID, Set<String>> joinedChannels = new HashMap<>();
@@ -62,6 +65,7 @@ public final class ChatService implements AutoCloseable {
         this.functions.reload();
         this.filters = new FilterService(server);
         this.filters.reload();
+        this.moderation = new ModerationService();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             playerJoined(player);
         }
@@ -124,7 +128,7 @@ public final class ChatService implements AutoCloseable {
     public int sendPrivate(ServerPlayer sender, String targetName, String rawMessage) {
         ChannelDefinition channel = channels.byId("Private").orElse(null);
         if (channel == null || !canSpeak(sender, channel)) {
-            sender.sendSystemMessage(Component.literal("You cannot use the private channel."));
+            sendLang(sender, "Channel-No-Speak-Permission");
             return 0;
         }
         String message = guardMessage(sender, rawMessage);
@@ -135,7 +139,7 @@ public final class ChatService implements AutoCloseable {
         ServerPlayer localTarget = server.getPlayerList().getPlayerByName(targetName);
         String exactTarget = localTarget != null ? localTarget.getGameProfile().getName() : exactRemoteName(targetName);
         if (exactTarget == null) {
-            sender.sendSystemMessage(Component.literal("Player not found: " + targetName));
+            sendLang(sender, "General-Player-Not-Found", targetName);
             return 0;
         }
 
@@ -151,9 +155,15 @@ public final class ChatService implements AutoCloseable {
         );
         sender.sendSystemMessage(senderView.component());
 
+        if (moderation.shadowMuted(sender)) {
+            logToConsole(channel, sender, message, local);
+            return 1;
+        }
+
         if (localTarget != null) {
             localTarget.sendSystemMessage(receiverView.component());
             lastPrivateSender.put(localTarget.getUUID(), sender.getGameProfile().getName());
+            notifyPrivateSpies(sender, exactTarget, message, localTarget);
             logToConsole(channel, sender, message, local);
             return 1;
         }
@@ -170,6 +180,7 @@ public final class ChatService implements AutoCloseable {
             sender.sendSystemMessage(Component.literal("Redis is unavailable; private message was not delivered."));
             return 0;
         }
+        notifyPrivateSpies(sender, exactTarget, message, null);
         logToConsole(channel, sender, message, local);
         return 1;
     }
@@ -177,7 +188,7 @@ public final class ChatService implements AutoCloseable {
     public int reply(ServerPlayer sender, String message) {
         String target = lastPrivateSender.get(sender.getUUID());
         if (target == null) {
-            sender.sendSystemMessage(Component.literal("There is nobody to reply to."));
+            sendLang(sender, "Private-Message-No-Reply");
             return 0;
         }
         return sendPrivate(sender, target, message);
@@ -201,6 +212,7 @@ public final class ChatService implements AutoCloseable {
             activeChannels.replaceAll((uuid, current) -> channels.byId(current).isPresent() ? current : "Normal");
             functions.reload();
             filters.reload();
+            moderation.reloadLanguages();
         }
         return loaded;
     }
@@ -227,6 +239,30 @@ public final class ChatService implements AutoCloseable {
 
     public boolean checkAnvil(ServerPlayer player, String name) {
         return filters.checkAnvil(player, name);
+    }
+
+    public LanguageService languages() {
+        return moderation.languages();
+    }
+
+    public void mutePlayer(ServerPlayer player, long durationMillis, String reason) {
+        moderation.mute(player, durationMillis, reason);
+    }
+
+    public void unmutePlayer(ServerPlayer player) {
+        moderation.unmute(player);
+    }
+
+    public boolean isShadowMuted(ServerPlayer player) {
+        return moderation.shadowMuted(player);
+    }
+
+    public void setShadowMuted(ServerPlayer player, boolean value) {
+        moderation.setShadowMuted(player, value);
+    }
+
+    public boolean setPrivateSpy(ServerPlayer player, Boolean value) {
+        return value == null ? moderation.togglePrivateSpy(player) : moderation.setPrivateSpy(player, value);
     }
 
     public void reconnectRedis() {
@@ -260,6 +296,7 @@ public final class ChatService implements AutoCloseable {
     }
 
     public void playerJoined(ServerPlayer player) {
+        moderation.playerJoined(player);
         activeChannels.put(player.getUUID(), "Normal");
         Set<String> joined = joinedChannels.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>());
         joined.add("normal");
@@ -272,6 +309,7 @@ public final class ChatService implements AutoCloseable {
     }
 
     public void playerLeft(ServerPlayer player) {
+        moderation.playerLeft(player);
         playerStats.remove(player.getUUID());
         activeChannels.remove(player.getUUID());
         joinedChannels.remove(player.getUUID());
@@ -298,11 +336,12 @@ public final class ChatService implements AutoCloseable {
         joinedChannels.clear();
         remotePlayers.clear();
         lastPrivateSender.clear();
+        moderation.close();
     }
 
     private boolean sendPublic(ServerPlayer player, ChannelDefinition channel, String rawMessage) {
         if (!canSpeak(player, channel)) {
-            player.sendSystemMessage(Component.literal("You cannot speak in channel " + channel.id() + '.'));
+            sendLang(player, "Channel-No-Speak-Permission");
             return false;
         }
         String message = guardMessage(player, rawMessage);
@@ -321,6 +360,12 @@ public final class ChatService implements AutoCloseable {
             message,
             Map.of("message", message)
         );
+
+        if (moderation.shadowMuted(player)) {
+            player.sendSystemMessage(rendered.component());
+            logToConsole(channel, player, message, Map.of("message", message));
+            return true;
+        }
 
         if (channel.options().redis() && redis != null) {
             TrChatMessage packet = TrChatMessage.of(
@@ -354,12 +399,15 @@ public final class ChatService implements AutoCloseable {
             return null;
         }
         if (message.length() > TrChatConfig.MESSAGE_MAX_LENGTH.getAsInt()) {
-            player.sendSystemMessage(Component.literal("Message is too long (maximum "
-                + TrChatConfig.MESSAGE_MAX_LENGTH.getAsInt() + " characters)."));
+            sendLang(player, "General-Too-Long", message.length(), TrChatConfig.MESSAGE_MAX_LENGTH.getAsInt());
             return null;
         }
         if (globalMute && !player.hasPermissions(2)) {
-            player.sendSystemMessage(Component.literal("Global chat is currently muted."));
+            sendLang(player, "General-Global-Muting");
+            return null;
+        }
+        if (moderation.isMuted(player)) {
+            sendLang(player, "General-Muted", moderation.muteExpiry(player), moderation.muteReason(player));
             return null;
         }
 
@@ -368,12 +416,12 @@ public final class ChatService implements AutoCloseable {
         if (!player.hasPermissions(2) && previous != null) {
             long remaining = TrChatConfig.COOLDOWN_MILLIS.getAsInt() - (now - previous.sentAt());
             if (remaining > 0) {
-                player.sendSystemMessage(Component.literal("Please wait " + remaining + " ms before chatting again."));
+                sendLang(player, "Cooldowns-Chat", remaining);
                 return null;
             }
             double threshold = TrChatConfig.ANTI_REPEAT_SIMILARITY.get();
             if (threshold > 0 && MessageGuard.similarity(previous.message(), message) >= threshold) {
-                player.sendSystemMessage(Component.literal("Please do not repeat similar messages."));
+                sendLang(player, "General-Too-Similar");
                 return null;
             }
         }
@@ -391,7 +439,7 @@ public final class ChatService implements AutoCloseable {
             if (!channel.options().alwaysListen() && !channel.options().autoJoin()) {
                 joined.remove(id);
             }
-            player.sendSystemMessage(Component.literal("Left channel " + channel.id() + '.'));
+            sendLang(player, "Channel-Quit", channel.id());
             return 1;
         }
         if (!hasPermission(player, channel.options().joinPermission())) {
@@ -400,7 +448,7 @@ public final class ChatService implements AutoCloseable {
         }
         activeChannels.put(player.getUUID(), channel.id());
         joined.add(id);
-        player.sendSystemMessage(Component.literal("Joined channel " + channel.id() + '.'));
+        sendLang(player, "Channel-Join", channel.id());
         return 1;
     }
 
@@ -524,9 +572,28 @@ public final class ChatService implements AutoCloseable {
         }
         String from = data.get(2);
         String fallback = data.size() > 4 ? data.get(4) : "";
-        target.sendSystemMessage(ComponentJson.deserialize(data.get(3), fallback, server));
+        Component component = ComponentJson.deserialize(data.get(3), fallback, server);
+        target.sendSystemMessage(component);
         if (!from.isBlank()) {
             lastPrivateSender.put(target.getUUID(), from);
+            notifyPrivateSpies(null, target.getGameProfile().getName(), component.getString(), target);
+        }
+    }
+
+    private void notifyPrivateSpies(
+        ServerPlayer sender,
+        String targetName,
+        String message,
+        ServerPlayer target
+    ) {
+        String senderName = sender == null ? "Remote" : sender.getGameProfile().getName();
+        for (ServerPlayer observer : server.getPlayerList().getPlayers()) {
+            if (!moderation.privateSpy(observer)
+                || sender != null && observer.getUUID().equals(sender.getUUID())
+                || target != null && observer.getUUID().equals(target.getUUID())) {
+                continue;
+            }
+            sendLang(observer, "Private-Message-Spy-Format", senderName, targetName, message);
         }
     }
 
@@ -609,6 +676,10 @@ public final class ChatService implements AutoCloseable {
     private void broadcast(Component component) {
         server.getPlayerList().broadcastSystemMessage(component, false);
         TrChatNeoForge.LOGGER.info(component.getString());
+    }
+
+    private void sendLang(ServerPlayer player, String key, Object... arguments) {
+        player.sendSystemMessage(moderation.languages().component(player, key, arguments));
     }
 
     private static List<String> unwrap(List<String> data) {

@@ -21,12 +21,18 @@ public final class TrChatPermissions {
     public static final PermissionNode<Boolean> MENTION_ALL = restricted("function.mentionall");
     public static final PermissionNode<Boolean> INVENTORY_SHOW = restricted("function.inventoryshow");
     public static final PermissionNode<Boolean> ENDER_CHEST_SHOW = restricted("function.enderchestshow");
+    public static final PermissionNode<Boolean> MUTE = restricted("mute");
+    public static final PermissionNode<Boolean> SHADOW_MUTE = restricted("shadowmute");
+    public static final PermissionNode<Boolean> PRIVATE_SPY = restricted("spy");
 
     private TrChatPermissions() {
     }
 
     public static void register(PermissionGatherEvent.Nodes event) {
-        event.addNodes(GLOBAL, PRIVATE, ADMIN, MENTION_ALL, INVENTORY_SHOW, ENDER_CHEST_SHOW);
+        event.addNodes(
+            GLOBAL, PRIVATE, ADMIN, MENTION_ALL, INVENTORY_SHOW, ENDER_CHEST_SHOW,
+            MUTE, SHADOW_MUTE, PRIVATE_SPY
+        );
     }
 
     public static boolean check(ServerPlayer player, String permission) {

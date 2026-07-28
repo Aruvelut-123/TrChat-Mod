@@ -47,6 +47,27 @@ dependencies {
         }
     }
     additionalRuntimeClasspath 'org.yaml:snakeyaml:2.5'
+    jarJar(implementation('org.xerial:sqlite-jdbc:3.50.3.0')) {
+        version {
+            strictly '[3.45,4.0)'
+            prefer '3.50.3.0'
+        }
+    }
+    additionalRuntimeClasspath 'org.xerial:sqlite-jdbc:3.50.3.0'
+    jarJar(implementation('com.mysql:mysql-connector-j:9.7.0')) {
+        version {
+            strictly '[9.0,10.0)'
+            prefer '9.7.0'
+        }
+    }
+    additionalRuntimeClasspath 'com.mysql:mysql-connector-j:9.7.0'
+    jarJar(implementation('org.mariadb.jdbc:mariadb-java-client:3.5.9')) {
+        version {
+            strictly '[3.0,4.0)'
+            prefer '3.5.9'
+        }
+    }
+    additionalRuntimeClasspath 'org.mariadb.jdbc:mariadb-java-client:3.5.9'
 
     testImplementation platform('org.junit:junit-bom:5.13.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
