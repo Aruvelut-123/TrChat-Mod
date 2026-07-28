@@ -13,6 +13,8 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.ServerChatEvent;
@@ -386,9 +388,15 @@ public final class TrChatServerEvents {
                 return 0;
             }
             boolean enabled = service.setPrivateSpy(player, requested);
-            source.sendSuccess(() -> service.languages().component(
+            player.displayClientMessage(service.languages().component(
                 player, enabled ? "Private-Message-Spy-On" : "Private-Message-Spy-Off"
-            ), false);
+            ), true);
+            player.playNotifySound(
+                SoundEvents.ANVIL_LAND,
+                SoundSource.PLAYERS,
+                1.0F,
+                enabled ? 2.0F : 0.0F
+            );
             return 1;
         } catch (CommandSyntaxException exception) {
             source.sendFailure(Component.literal("This command can only be used by a player."));

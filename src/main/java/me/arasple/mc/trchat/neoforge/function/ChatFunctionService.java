@@ -10,6 +10,9 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
@@ -314,10 +317,7 @@ public final class ChatFunctionService {
         String name = target.getGameProfile().getName();
         mentioned.add(name);
         if (configuration.mention().notifyPlayer()) {
-            target.playNotifySound(SoundEvents.NOTE_BLOCK_PLING.value(), SoundSource.PLAYERS, 1.0F, 1.2F);
-            target.sendSystemMessage(languages.component(
-                target, "Function-Mention-Notify", sender.getGameProfile().getName()
-            ));
+            notifyMention(target, sender.getGameProfile().getName());
         }
         return Component.literal("@" + name)
             .withStyle(ChatFormatting.AQUA)
@@ -332,7 +332,7 @@ public final class ChatFunctionService {
             for (ServerPlayer target : server.getPlayerList().getPlayers()) {
                 if (!target.getUUID().equals(sender.getUUID())) {
                     mentioned.add(target.getGameProfile().getName());
-                    target.playNotifySound(SoundEvents.NOTE_BLOCK_PLING.value(), SoundSource.PLAYERS, 1.0F, 1.0F);
+                    notifyMention(target, sender.getGameProfile().getName());
                 }
             }
         }
@@ -342,6 +342,21 @@ public final class ChatFunctionService {
                 HoverEvent.Action.SHOW_TEXT,
                 languages.component(sender, "Function-Mention-All-Hover", sender.getGameProfile().getName())
             )));
+    }
+
+    private void notifyMention(ServerPlayer target, String senderName) {
+        target.playNotifySound(SoundEvents.ANVIL_LAND, SoundSource.PLAYERS, 1.0F, 2.0F);
+        target.displayClientMessage(
+            languages.component(target, "Function-Mention-Notify", senderName),
+            true
+        );
+        target.connection.send(new ClientboundSetTitlesAnimationPacket(10, 50, 10));
+        target.connection.send(new ClientboundSetTitleTextPacket(
+            languages.component(target, "Function-Mention-Title", senderName)
+        ));
+        target.connection.send(new ClientboundSetSubtitleTextPacket(
+            languages.component(target, "Function-Mention-Subtitle", senderName)
+        ));
     }
 
     private Component item(ServerPlayer sender, String slotArgument, FunctionSettings settings) {
