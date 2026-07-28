@@ -209,17 +209,21 @@ public final class ChatService implements AutoCloseable {
         return globalMute;
     }
 
-    public int reloadChannels() {
+    public ReloadResult reloadConfiguration() {
         int loaded = channels.reload();
-        if (loaded >= 0) {
-            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-                restoreChannelMembership(player);
-            }
-            functions.reload();
-            filters.reload();
-            moderation.reloadLanguages();
+        if (loaded < 0) {
+            return new ReloadResult(false, -1, List.of("channels"));
         }
-        return loaded;
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            restoreChannelMembership(player);
+        }
+
+        List<String> failed = new ArrayList<>();
+        if (!functions.reload()) failed.add("function.yml");
+        if (!filters.reload()) failed.add("filter.yml");
+        if (!moderation.reloadLanguages()) failed.add("lang");
+        reconnectRedis();
+        return new ReloadResult(failed.isEmpty(), loaded, List.copyOf(failed));
     }
 
     public int channelCount() {
@@ -780,5 +784,8 @@ public final class ChatService implements AutoCloseable {
     }
 
     private record RemoteServerPlayers(long updatedAtNanos, List<RemotePlayer> players) {
+    }
+
+    public record ReloadResult(boolean success, int channelCount, List<String> failedSections) {
     }
 }

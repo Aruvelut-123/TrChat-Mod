@@ -43,7 +43,7 @@ Options:
 Bindings:
   # Chat prefixes; longest match wins. / 聊天前缀；最长匹配优先。
   Prefix: ['#']
-  # Registered after restart or /reload. / 重启或执行 /reload 后注册。
+  # Refreshed immediately by /trchat reload. / 执行 /trchat reload 后立即刷新。
   Command: ['examplechat']
 
 # First matching format in descending priority is used.

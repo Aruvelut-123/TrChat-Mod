@@ -48,7 +48,7 @@ config/trchat-neoforge/
     └── Example.yml
 ```
 
-频道文件沿用 Bukkit 版的大部分结构。`Options.Proxy` 在本项目中仅表示“使用 Redis 互通”，不是 BungeeCord/Velocity 代理连接。新增或修改频道命令绑定后，需要重启或执行 Minecraft `/reload` 重新注册 Brigadier 命令；普通格式修改可执行 `/trchat reload`。
+频道文件沿用 Bukkit 版的大部分结构。`Options.Proxy` 在本项目中仅表示“使用 Redis 互通”，不是 BungeeCord/Velocity 代理连接。新增、修改或移除频道命令绑定后，执行 `/trchat reload` 即可即时刷新，无需使用 Minecraft 全局 `/reload`。
 
 完整配置项与中英文注释见自动生成的 `channels/Example.yml`。占位符参考链接：
 
@@ -135,7 +135,7 @@ NeoForge 1.21.1 的铁砧事件不能安全地只改写重命名文本而不替�
 | 命令 | 用途 |
 | --- | --- |
 | `/trchat status` | 查看频道、Redis 与全服禁言状态 |
-| `/trchat reload` | 重载频道格式、function、filter 和语言 |
+| `/trchat reload` | 局部重载频道、命令绑定、function、filter、语言和 Redis |
 | `/trchat redis reconnect` | 重新连接 Redis |
 | `/trchat mute on\|off` | 开关并同步全服禁言 |
 | `/trchat mute player <玩家> <时长> [原因]` | 普通禁言，支持 `30s`、`5m`、`1h30m`、`7d`、`permanent` |

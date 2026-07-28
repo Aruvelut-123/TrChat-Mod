@@ -37,8 +37,8 @@ public final class ModerationService implements AutoCloseable {
         return languages;
     }
 
-    public void reloadLanguages() {
-        languages.reload();
+    public boolean reloadLanguages() {
+        return languages.reload();
     }
 
     public void playerJoined(ServerPlayer player) {

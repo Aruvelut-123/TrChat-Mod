@@ -38,6 +38,7 @@ public final class TrChatServerEvents {
 
     private final ChannelManager channels = new ChannelManager();
     private ChatService service;
+    private CommandDispatcher<CommandSourceStack> commandDispatcher;
 
     @SubscribeEvent
     public void onPermissionNodes(PermissionGatherEvent.Nodes event) {
@@ -134,7 +135,8 @@ public final class TrChatServerEvents {
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
         channels.reload();
-        registerCommands(event.getDispatcher());
+        commandDispatcher = event.getDispatcher();
+        registerCommands(commandDispatcher);
     }
 
     private void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
@@ -253,6 +255,13 @@ public final class TrChatServerEvents {
         registerReplyAlias(dispatcher, "reply");
         registerModerationAliases(dispatcher);
 
+        registerDynamicCommands(dispatcher);
+    }
+
+    private void registerDynamicCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
+        if (dispatcher == null) {
+            return;
+        }
         Set<String> registered = new HashSet<>();
         for (ChannelDefinition channel : channels.all()) {
             if (channel.id().equalsIgnoreCase("Server")) {
@@ -263,11 +272,7 @@ public final class TrChatServerEvents {
                 if (!registered.add(key)) {
                     continue;
                 }
-                if (channel.options().privateChannel()) {
-                    registerPrivateAlias(dispatcher, alias);
-                } else {
-                    registerChannelAlias(dispatcher, alias, channel.id());
-                }
+                registerDynamicAlias(dispatcher, alias);
             }
         }
 
@@ -301,13 +306,30 @@ public final class TrChatServerEvents {
         if (service == null) {
             return 0;
         }
-        int loaded = service.reloadChannels();
-        if (loaded < 0) {
-            source.sendFailure(Component.literal("Channel reload failed; see the server log."));
+        ChatService.ReloadResult result = service.reloadConfiguration();
+        if (result.channelCount() < 0) {
+            source.sendFailure(service.languages().component(
+                source.getPlayer(), "Reload-Failed", String.join(", ", result.failedSections())
+            ));
             return 0;
         }
-        source.sendSuccess(() -> Component.literal("Reloaded " + loaded + " channels. Run /reload after changing command bindings."), true);
-        return loaded;
+        registerDynamicCommands(commandDispatcher);
+        for (ServerPlayer player : source.getServer().getPlayerList().getPlayers()) {
+            source.getServer().getCommands().sendCommands(player);
+        }
+        if (!result.success()) {
+            source.sendFailure(service.languages().component(
+                source.getPlayer(),
+                "Reload-Partial",
+                result.channelCount(),
+                String.join(", ", result.failedSections())
+            ));
+            return 0;
+        }
+        source.sendSuccess(() -> service.languages().component(
+            source.getPlayer(), "Reload-Success", result.channelCount()
+        ), true);
+        return result.channelCount();
     }
 
     private int reconnect(CommandSourceStack source) {
@@ -464,15 +486,15 @@ public final class TrChatServerEvents {
         }
     }
 
-    private void registerPrivateAlias(CommandDispatcher<CommandSourceStack> dispatcher, String alias) {
+    private void registerDynamicAlias(CommandDispatcher<CommandSourceStack> dispatcher, String alias) {
         dispatcher.register(Commands.literal(alias)
-            .then(Commands.argument("player", StringArgumentType.word())
-                .then(Commands.argument("message", StringArgumentType.greedyString())
-                    .executes(context -> privateMessage(
-                        context.getSource(),
-                        StringArgumentType.getString(context, "player"),
-                        StringArgumentType.getString(context, "message")
-                    )))));
+            .executes(context -> executeBoundAlias(context.getSource(), alias, ""))
+            .then(Commands.argument("arguments", StringArgumentType.greedyString())
+                .executes(context -> executeBoundAlias(
+                    context.getSource(),
+                    alias,
+                    StringArgumentType.getString(context, "arguments")
+                ))));
     }
 
     private void registerReplyAlias(CommandDispatcher<CommandSourceStack> dispatcher, String alias) {
@@ -518,19 +540,24 @@ public final class TrChatServerEvents {
             .executes(context -> privateSpy(context.getSource(), null)));
     }
 
-    private void registerChannelAlias(
-        CommandDispatcher<CommandSourceStack> dispatcher,
-        String alias,
-        String channelId
-    ) {
-        dispatcher.register(Commands.literal(alias)
-            .executes(context -> executeBoundChannel(context.getSource(), channelId, ""))
-            .then(Commands.argument("message", StringArgumentType.greedyString())
-                .executes(context -> executeBoundChannel(
-                    context.getSource(),
-                    channelId,
-                    StringArgumentType.getString(context, "message")
-                ))));
+    private int executeBoundAlias(CommandSourceStack source, String alias, String arguments) {
+        ChannelDefinition channel = channels.byCommand(alias).orElse(null);
+        if (channel == null) {
+            if (service != null) {
+                source.sendFailure(service.languages().component(
+                    source.getPlayer(), "Channel-Command-Unbound", alias
+                ));
+            }
+            return 0;
+        }
+        if (!channel.options().privateChannel()) {
+            return executeBoundChannel(source, channel.id(), arguments);
+        }
+        String[] privateArguments = arguments.trim().split("\\s+", 2);
+        if (privateArguments.length < 2 || privateArguments[1].isBlank()) {
+            return executeBoundChannel(source, channel.id(), "");
+        }
+        return privateMessage(source, privateArguments[0], privateArguments[1]);
     }
 
     private int executeBoundChannel(CommandSourceStack source, String channelId, String message) {
