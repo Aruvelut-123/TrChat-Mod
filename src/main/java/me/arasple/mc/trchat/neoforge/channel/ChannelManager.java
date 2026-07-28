@@ -23,7 +23,7 @@ import java.util.stream.Stream;
 public final class ChannelManager {
 
     private static final System.Logger LOGGER = System.getLogger(ChannelManager.class.getName());
-    public static final String[] DEFAULT_CHANNELS = {"Normal", "Global", "Staff", "Private"};
+    public static final String[] DEFAULT_CHANNELS = {"Normal", "Global", "Staff", "Private", "Server"};
 
     private final Path directory;
     private volatile Map<String, ChannelDefinition> channels = Map.of();

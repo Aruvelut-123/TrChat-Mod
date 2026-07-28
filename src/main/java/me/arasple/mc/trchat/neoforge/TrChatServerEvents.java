@@ -3,27 +3,44 @@ package me.arasple.mc.trchat.neoforge;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import me.arasple.mc.trchat.neoforge.channel.ChannelDefinition;
+import me.arasple.mc.trchat.neoforge.channel.ChannelManager;
 import me.arasple.mc.trchat.neoforge.chat.ChatService;
+import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.ServerChatEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.server.permission.events.PermissionGatherEvent;
+
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
 
 public final class TrChatServerEvents {
 
+    private final ChannelManager channels = new ChannelManager();
     private ChatService service;
 
     @SubscribeEvent
+    public void onPermissionNodes(PermissionGatherEvent.Nodes event) {
+        TrChatPermissions.register(event);
+    }
+
+    @SubscribeEvent
     public void onServerStarted(ServerStartedEvent event) {
-        service = new ChatService(event.getServer());
-        TrChatNeoForge.LOGGER.info("{} started (NeoForge 21.1.233+, Redis-only transport)", TrChatNeoForge.MOD_NAME);
+        service = new ChatService(event.getServer(), channels);
+        TrChatNeoForge.LOGGER.info("{} started with {} channels (NeoForge 21.1.233+, Redis-only transport)",
+            TrChatNeoForge.MOD_NAME, service.channelCount());
     }
 
     @SubscribeEvent
@@ -45,15 +62,22 @@ public final class TrChatServerEvents {
 
     @SubscribeEvent
     public void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
-        if (service != null && event.getEntity() instanceof ServerPlayer) {
-            service.playerListChanged();
+        if (service != null && event.getEntity() instanceof ServerPlayer player) {
+            service.playerJoined(player);
         }
     }
 
     @SubscribeEvent
     public void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
-        if (service != null && event.getEntity() instanceof ServerPlayer) {
-            service.playerListChanged();
+        if (service != null && event.getEntity() instanceof ServerPlayer player) {
+            service.playerLeft(player);
+        }
+    }
+
+    @SubscribeEvent
+    public void onDamage(LivingDamageEvent.Post event) {
+        if (service != null && event.getEntity() instanceof ServerPlayer player) {
+            service.recordDamage(player, event.getNewDamage());
         }
     }
 
@@ -66,6 +90,7 @@ public final class TrChatServerEvents {
 
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
+        channels.reload();
         registerCommands(event.getDispatcher());
     }
 
@@ -73,6 +98,9 @@ public final class TrChatServerEvents {
         dispatcher.register(Commands.literal("trchat")
             .then(Commands.literal("status")
                 .executes(context -> status(context.getSource())))
+            .then(Commands.literal("reload")
+                .requires(source -> source.hasPermission(2))
+                .executes(context -> reload(context.getSource())))
             .then(Commands.literal("redis")
                 .requires(source -> source.hasPermission(2))
                 .then(Commands.literal("reconnect")
@@ -91,6 +119,19 @@ public final class TrChatServerEvents {
                             context.getSource(),
                             StringArgumentType.getString(context, "player"),
                             StringArgumentType.getString(context, "message")
+                        )))))
+            .then(Commands.literal("channel")
+                .then(Commands.literal("join")
+                    .then(Commands.argument("channel", StringArgumentType.word())
+                        .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                            channels.all().stream()
+                                .filter(channel -> !channel.options().privateChannel() && !channel.id().equalsIgnoreCase("Server"))
+                                .map(ChannelDefinition::id),
+                            builder
+                        ))
+                        .executes(context -> selectChannel(
+                            context.getSource(),
+                            StringArgumentType.getString(context, "channel")
                         ))))));
 
         dispatcher.register(Commands.literal("trmsg")
@@ -104,21 +145,37 @@ public final class TrChatServerEvents {
 
         dispatcher.register(Commands.literal("trreply")
             .then(Commands.argument("message", StringArgumentType.greedyString())
-                .executes(context -> reply(
-                    context.getSource(),
-                    StringArgumentType.getString(context, "message")
-                ))));
-
-        registerPrivateAlias(dispatcher, "msg");
-        registerPrivateAlias(dispatcher, "message");
-        registerPrivateAlias(dispatcher, "tell");
-        registerPrivateAlias(dispatcher, "whisper");
-        registerPrivateAlias(dispatcher, "w");
+                .executes(context -> reply(context.getSource(), StringArgumentType.getString(context, "message")))));
         registerReplyAlias(dispatcher, "r");
         registerReplyAlias(dispatcher, "reply");
-        registerGlobalAlias(dispatcher, "global");
-        registerGlobalAlias(dispatcher, "all");
-        registerGlobalAlias(dispatcher, "shout");
+
+        Set<String> registered = new HashSet<>();
+        for (ChannelDefinition channel : channels.all()) {
+            if (channel.id().equalsIgnoreCase("Server")) {
+                continue;
+            }
+            for (String alias : channel.bindings().commands()) {
+                String key = alias.toLowerCase(Locale.ROOT);
+                if (!registered.add(key)) {
+                    continue;
+                }
+                if (channel.options().privateChannel()) {
+                    registerPrivateAlias(dispatcher, alias);
+                } else {
+                    registerChannelAlias(dispatcher, alias, channel.id());
+                }
+            }
+        }
+
+        if (channels.byId("Server").isPresent()) {
+            dispatcher.register(Commands.literal("say")
+                .requires(source -> source.hasPermission(2))
+                .then(Commands.argument("message", StringArgumentType.greedyString())
+                    .executes(context -> serverSay(
+                        context.getSource(),
+                        StringArgumentType.getString(context, "message")
+                    ))));
+        }
     }
 
     private int status(CommandSourceStack source) {
@@ -130,9 +187,23 @@ public final class TrChatServerEvents {
             ? "disabled"
             : service.isRedisConnected() ? "connected" : "reconnecting";
         source.sendSuccess(() -> Component.literal(
-            "TrChat NeoForge: Redis " + redis + ", global mute " + (service.isGlobalMute() ? "on" : "off")
+            "TrChat NeoForge: " + service.channelCount() + " channels, Redis " + redis
+                + ", global mute " + (service.isGlobalMute() ? "on" : "off")
         ), false);
         return 1;
+    }
+
+    private int reload(CommandSourceStack source) {
+        if (service == null) {
+            return 0;
+        }
+        int loaded = service.reloadChannels();
+        if (loaded < 0) {
+            source.sendFailure(Component.literal("Channel reload failed; see the server log."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Reloaded " + loaded + " channels. Run /reload after changing command bindings."), true);
+        return loaded;
     }
 
     private int reconnect(CommandSourceStack source) {
@@ -177,6 +248,30 @@ public final class TrChatServerEvents {
         }
     }
 
+    private int selectChannel(CommandSourceStack source, String channelId) {
+        if (service == null) {
+            return 0;
+        }
+        try {
+            ChannelDefinition channel = channels.byId(channelId).orElse(null);
+            if (channel == null) {
+                source.sendFailure(Component.literal("Unknown channel: " + channelId));
+                return 0;
+            }
+            return service.executeChannel(source.getPlayerOrException(), channel, "");
+        } catch (CommandSyntaxException exception) {
+            source.sendFailure(Component.literal("This command can only be used by a player."));
+            return 0;
+        }
+    }
+
+    private int serverSay(CommandSourceStack source, String message) {
+        if (service == null) {
+            return 0;
+        }
+        return service.sendServer(message, source.getPlayer());
+    }
+
     private void registerPrivateAlias(CommandDispatcher<CommandSourceStack> dispatcher, String alias) {
         dispatcher.register(Commands.literal(alias)
             .then(Commands.argument("player", StringArgumentType.word())
@@ -191,29 +286,33 @@ public final class TrChatServerEvents {
     private void registerReplyAlias(CommandDispatcher<CommandSourceStack> dispatcher, String alias) {
         dispatcher.register(Commands.literal(alias)
             .then(Commands.argument("message", StringArgumentType.greedyString())
-                .executes(context -> reply(
-                    context.getSource(),
-                    StringArgumentType.getString(context, "message")
-                ))));
+                .executes(context -> reply(context.getSource(), StringArgumentType.getString(context, "message")))));
     }
 
-    private void registerGlobalAlias(CommandDispatcher<CommandSourceStack> dispatcher, String alias) {
+    private void registerChannelAlias(
+        CommandDispatcher<CommandSourceStack> dispatcher,
+        String alias,
+        String channelId
+    ) {
         dispatcher.register(Commands.literal(alias)
+            .executes(context -> executeBoundChannel(context.getSource(), channelId, ""))
             .then(Commands.argument("message", StringArgumentType.greedyString())
-                .executes(context -> global(
+                .executes(context -> executeBoundChannel(
                     context.getSource(),
+                    channelId,
                     StringArgumentType.getString(context, "message")
                 ))));
     }
 
-    private int global(CommandSourceStack source, String message) {
+    private int executeBoundChannel(CommandSourceStack source, String channelId, String message) {
         if (service == null) {
             return 0;
         }
         try {
-            return service.sendGlobal(source.getPlayerOrException(), message);
+            ChannelDefinition channel = channels.byId(channelId).orElse(null);
+            return channel == null ? 0 : service.executeChannel(source.getPlayerOrException(), channel, message);
         } catch (CommandSyntaxException exception) {
-            source.sendFailure(Component.literal("This command can only be used by a player."));
+            source.sendFailure(Component.literal("This channel command can only be used by a player."));
             return 0;
         }
     }

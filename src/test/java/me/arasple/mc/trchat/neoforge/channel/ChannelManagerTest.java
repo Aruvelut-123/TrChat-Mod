@@ -19,11 +19,13 @@ class ChannelManagerTest {
     void createsAndLoadsBukkitStyleDefaults() {
         ChannelManager manager = new ChannelManager(directory.resolve("channels"));
 
-        assertEquals(4, manager.reload());
-        assertEquals(4, manager.all().size());
+        assertEquals(5, manager.reload());
+        assertEquals(5, manager.all().size());
         assertTrue(manager.byCommand("ALL").isPresent());
         assertEquals("Global", manager.byPrefix("!all hello").channel().id());
         assertTrue(manager.byId("private").orElseThrow().options().privateChannel());
+        assertTrue(manager.byId("server").isPresent());
+        assertFalse(manager.byId("server").orElseThrow().options().redis());
         assertFalse(manager.normal().formats().isEmpty());
         assertNotNull(manager.normal().formats().getFirst().message());
     }

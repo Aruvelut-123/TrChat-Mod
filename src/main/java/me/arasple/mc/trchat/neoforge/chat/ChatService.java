@@ -1,7 +1,15 @@
 package me.arasple.mc.trchat.neoforge.chat;
 
 import me.arasple.mc.trchat.neoforge.TrChatNeoForge;
+import me.arasple.mc.trchat.neoforge.channel.ChannelDefinition;
+import me.arasple.mc.trchat.neoforge.channel.ChannelManager;
+import me.arasple.mc.trchat.neoforge.channel.ChannelRenderer;
+import me.arasple.mc.trchat.neoforge.channel.ConditionEvaluator;
 import me.arasple.mc.trchat.neoforge.config.TrChatConfig;
+import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
+import me.arasple.mc.trchat.neoforge.placeholder.PlaceholderResolver;
+import me.arasple.mc.trchat.neoforge.placeholder.PlayerStatsTracker;
+import me.arasple.mc.trchat.neoforge.placeholder.ServerMetrics;
 import me.arasple.mc.trchat.neoforge.protocol.TrChatMessage;
 import me.arasple.mc.trchat.neoforge.redis.RedisBridge;
 import me.arasple.mc.trchat.neoforge.redis.RedisSettings;
@@ -12,9 +20,11 @@ import net.minecraft.server.level.ServerPlayer;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -23,15 +33,29 @@ public final class ChatService implements AutoCloseable {
     private static final Duration REMOTE_PLAYER_TTL = Duration.ofSeconds(35);
 
     private final MinecraftServer server;
+    private final ChannelManager channels;
+    private final ServerMetrics metrics = new ServerMetrics();
+    private final PlayerStatsTracker playerStats = new PlayerStatsTracker();
+    private final PlaceholderResolver placeholders;
+    private final ChannelRenderer renderer;
     private final Map<UUID, ChatState> chatStates = new HashMap<>();
+    private final Map<UUID, String> activeChannels = new HashMap<>();
+    private final Map<UUID, Set<String>> joinedChannels = new HashMap<>();
     private final Map<String, RemoteServerPlayers> remotePlayers = new ConcurrentHashMap<>();
     private final Map<UUID, String> lastPrivateSender = new HashMap<>();
     private RedisBridge redis;
     private boolean globalMute;
     private int tickCounter;
 
-    public ChatService(MinecraftServer server) {
+    public ChatService(MinecraftServer server, ChannelManager channels) {
         this.server = server;
+        this.channels = channels;
+        channels.reload();
+        this.placeholders = new PlaceholderResolver(server, metrics, playerStats);
+        this.renderer = new ChannelRenderer(placeholders);
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            playerJoined(player);
+        }
         reconnectRedis();
     }
 
@@ -40,85 +64,64 @@ public final class ChatService implements AutoCloseable {
         if (message.isEmpty()) {
             return;
         }
-        if (message.length() > TrChatConfig.MESSAGE_MAX_LENGTH.getAsInt()) {
-            player.sendSystemMessage(Component.literal("Message is too long (maximum "
-                + TrChatConfig.MESSAGE_MAX_LENGTH.getAsInt() + " characters)."));
+        ChannelDefinition channel;
+        ChannelManager.PrefixMatch match = channels.byPrefix(message);
+        if (match != null) {
+            channel = match.channel();
+            message = message.substring(match.prefix().length()).stripLeading();
+        } else {
+            channel = channels.byId(activeChannels.getOrDefault(player.getUUID(), "Normal"))
+                .orElseGet(channels::normal);
+        }
+        if (message.isEmpty() || channel.options().privateChannel() || channel.id().equalsIgnoreCase("Server")) {
             return;
         }
-        if (globalMute && !player.hasPermissions(2)) {
-            player.sendSystemMessage(Component.literal("Global chat is currently muted."));
-            return;
-        }
+        sendPublic(player, channel, message);
+    }
 
-        long now = System.currentTimeMillis();
-        ChatState previous = chatStates.get(player.getUUID());
-        if (!player.hasPermissions(2) && previous != null) {
-            long remaining = TrChatConfig.COOLDOWN_MILLIS.getAsInt() - (now - previous.sentAt());
-            if (remaining > 0) {
-                player.sendSystemMessage(Component.literal("Please wait " + remaining + " ms before chatting again."));
-                return;
-            }
-            double threshold = TrChatConfig.ANTI_REPEAT_SIMILARITY.get();
-            if (threshold > 0 && MessageGuard.similarity(previous.message(), message) >= threshold) {
-                player.sendSystemMessage(Component.literal("Please do not repeat similar messages."));
-                return;
-            }
+    public int executeChannel(ServerPlayer player, ChannelDefinition channel, String message) {
+        if (channel.options().privateChannel()) {
+            player.sendSystemMessage(Component.literal("Private channels require a target player."));
+            return 0;
         }
+        if (channel.id().equalsIgnoreCase("Server")) {
+            player.sendSystemMessage(Component.literal("The Server channel can only be used through /say."));
+            return 0;
+        }
+        if (message == null || message.isBlank()) {
+            return toggleChannel(player, channel);
+        }
+        return sendPublic(player, channel, message) ? 1 : 0;
+    }
 
-        message = MessageGuard.filter(
-            message,
-            TrChatConfig.BLOCKED_WORDS.get(),
-            TrChatConfig.FILTER_REPLACEMENT.get()
+    public int sendServer(String message, ServerPlayer sourcePlayer) {
+        ChannelDefinition channel = channels.byId("Server").orElse(null);
+        if (channel == null || message == null || message.isBlank()) {
+            return 0;
+        }
+        ChannelRenderer.Rendered rendered = renderer.render(
+            channel,
+            ChannelRenderer.Audience.CONSOLE,
+            sourcePlayer,
+            message.trim(),
+            Map.of("message", message.trim())
         );
-        chatStates.put(player.getUUID(), new ChatState(now, message));
-
-        String prefix = TrChatConfig.GLOBAL_PREFIX.get();
-        boolean global = !prefix.isEmpty() && message.startsWith(prefix);
-        if (global) {
-            message = message.substring(prefix.length()).stripLeading();
-            if (message.isEmpty()) {
-                return;
-            }
-        }
-
-        String format = global ? TrChatConfig.GLOBAL_FORMAT.get() : TrChatConfig.CHAT_FORMAT.get();
-        String rendered = LegacyText.render(
-            format,
-            player.getGameProfile().getName(),
-            player.getDisplayName().getString(),
-            message,
-            TrChatConfig.SERVER_ID.getAsInt()
-        );
-        Component component = LegacyText.parse(rendered);
-
-        if (global && redis != null) {
-            TrChatMessage packet = TrChatMessage.of(
-                "BroadcastRaw",
-                player.getUUID().toString(),
-                ComponentJson.serialize(component, server),
-                "",
-                "true",
-                "",
-                rendered
-            );
-            if (redis.publish(packet)) {
-                return;
-            }
-            player.sendSystemMessage(Component.literal("Redis is unavailable; sent to this server only."));
-        }
-        broadcast(component);
+        // Server is a deliberately local-only channel. Never publish it to Redis.
+        server.getPlayerList().broadcastSystemMessage(rendered.component(), false);
+        TrChatNeoForge.LOGGER.info("[Server] {}", rendered.component().getString());
+        return 1;
     }
 
     public int sendPrivate(ServerPlayer sender, String targetName, String rawMessage) {
-        String message = rawMessage.trim();
-        if (message.isEmpty()) {
+        ChannelDefinition channel = channels.byId("Private").orElse(null);
+        if (channel == null || !canSpeak(sender, channel)) {
+            sender.sendSystemMessage(Component.literal("You cannot use the private channel."));
             return 0;
         }
-        message = MessageGuard.filter(
-            message,
-            TrChatConfig.BLOCKED_WORDS.get(),
-            TrChatConfig.FILTER_REPLACEMENT.get()
-        );
+        String message = guardMessage(sender, rawMessage);
+        if (message == null) {
+            return 0;
+        }
 
         ServerPlayer localTarget = server.getPlayerList().getPlayerByName(targetName);
         String exactTarget = localTarget != null ? localTarget.getGameProfile().getName() : exactRemoteName(targetName);
@@ -127,39 +130,35 @@ public final class ChatService implements AutoCloseable {
             return 0;
         }
 
-        String rendered = LegacyText.render(
-            TrChatConfig.PRIVATE_FORMAT.get(),
-            sender.getGameProfile().getName(),
-            sender.getDisplayName().getString(),
-            message,
-            TrChatConfig.SERVER_ID.getAsInt()
+        Map<String, String> local = Map.of("trchat_toplayer", exactTarget, "message", message);
+        ChannelRenderer.Rendered senderView = renderer.render(
+            channel, ChannelRenderer.Audience.SENDER, sender, message, local
         );
-        Component component = LegacyText.parse(rendered);
-        sender.sendSystemMessage(LegacyText.parse("&8[&dPM -> " + exactTarget + "&8] &f" + message));
+        ChannelRenderer.Rendered receiverView = renderer.render(
+            channel, ChannelRenderer.Audience.RECEIVER, sender, message, local
+        );
+        sender.sendSystemMessage(senderView.component());
 
         if (localTarget != null) {
-            localTarget.sendSystemMessage(component);
+            localTarget.sendSystemMessage(receiverView.component());
             lastPrivateSender.put(localTarget.getUUID(), sender.getGameProfile().getName());
+            logToConsole(channel, sender, message, local);
             return 1;
         }
 
-        if (redis == null || !redis.publish(TrChatMessage.of(
+        if (!channel.options().redis() || redis == null || !redis.publish(TrChatMessage.of(
             "ForwardMessage",
             "SendPrivateRaw",
             exactTarget,
             sender.getGameProfile().getName(),
-            ComponentJson.serialize(component, server),
-            rendered,
+            ComponentJson.serialize(receiverView.component(), server),
+            receiverView.fallback(),
             ""
         ))) {
             sender.sendSystemMessage(Component.literal("Redis is unavailable; private message was not delivered."));
             return 0;
         }
-        return 1;
-    }
-
-    public int sendGlobal(ServerPlayer sender, String message) {
-        handleChat(sender, TrChatConfig.GLOBAL_PREFIX.get() + message);
+        logToConsole(channel, sender, message, local);
         return 1;
     }
 
@@ -184,6 +183,18 @@ public final class ChatService implements AutoCloseable {
         return globalMute;
     }
 
+    public int reloadChannels() {
+        int loaded = channels.reload();
+        if (loaded >= 0) {
+            activeChannels.replaceAll((uuid, current) -> channels.byId(current).isPresent() ? current : "Normal");
+        }
+        return loaded;
+    }
+
+    public int channelCount() {
+        return channels.all().size();
+    }
+
     public void reconnectRedis() {
         if (redis != null) {
             redis.close();
@@ -205,11 +216,35 @@ public final class ChatService implements AutoCloseable {
     }
 
     public void tick() {
+        metrics.tick();
         tickCounter++;
         if (tickCounter % 200 == 0) {
             publishPlayerNames();
             expireRemotePlayers();
         }
+    }
+
+    public void playerJoined(ServerPlayer player) {
+        activeChannels.put(player.getUUID(), "Normal");
+        Set<String> joined = joinedChannels.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>());
+        joined.add("normal");
+        for (ChannelDefinition channel : channels.all()) {
+            if (channel.options().autoJoin() && canListen(player, channel)) {
+                joined.add(channel.id().toLowerCase(Locale.ROOT));
+            }
+        }
+        playerListChanged();
+    }
+
+    public void playerLeft(ServerPlayer player) {
+        playerStats.remove(player.getUUID());
+        activeChannels.remove(player.getUUID());
+        joinedChannels.remove(player.getUUID());
+        playerListChanged();
+    }
+
+    public void recordDamage(ServerPlayer player, float damage) {
+        playerStats.recordDamage(player, damage);
     }
 
     public void playerListChanged() {
@@ -224,8 +259,173 @@ public final class ChatService implements AutoCloseable {
             redis = null;
         }
         chatStates.clear();
+        activeChannels.clear();
+        joinedChannels.clear();
         remotePlayers.clear();
         lastPrivateSender.clear();
+    }
+
+    private boolean sendPublic(ServerPlayer player, ChannelDefinition channel, String rawMessage) {
+        if (!canSpeak(player, channel)) {
+            player.sendSystemMessage(Component.literal("You cannot speak in channel " + channel.id() + '.'));
+            return false;
+        }
+        String message = guardMessage(player, rawMessage);
+        if (message == null) {
+            return false;
+        }
+
+        ChannelRenderer.Rendered rendered = renderer.render(
+            channel,
+            ChannelRenderer.Audience.CHAT,
+            player,
+            message,
+            Map.of("message", message)
+        );
+
+        if (channel.options().redis() && redis != null) {
+            TrChatMessage packet = TrChatMessage.of(
+                "BroadcastRaw",
+                player.getUUID().toString(),
+                ComponentJson.serialize(rendered.component(), server),
+                channel.options().listenPermission(),
+                Boolean.toString(channel.options().doubleTransfer()),
+                String.join(";", channel.options().ports()),
+                rendered.fallback()
+            );
+            if (redis.publish(packet)) {
+                logToConsole(channel, player, message, Map.of("message", message));
+                return true;
+            }
+            if (channel.options().forceRedis()) {
+                player.sendSystemMessage(Component.literal("Redis is unavailable; the message was not delivered."));
+                return false;
+            }
+            player.sendSystemMessage(Component.literal("Redis is unavailable; sent to this server only."));
+        }
+
+        broadcastLocal(channel, player, rendered.component());
+        logToConsole(channel, player, message, Map.of("message", message));
+        return true;
+    }
+
+    private String guardMessage(ServerPlayer player, String rawMessage) {
+        String message = rawMessage == null ? "" : rawMessage.trim();
+        if (message.isEmpty()) {
+            return null;
+        }
+        if (message.length() > TrChatConfig.MESSAGE_MAX_LENGTH.getAsInt()) {
+            player.sendSystemMessage(Component.literal("Message is too long (maximum "
+                + TrChatConfig.MESSAGE_MAX_LENGTH.getAsInt() + " characters)."));
+            return null;
+        }
+        if (globalMute && !player.hasPermissions(2)) {
+            player.sendSystemMessage(Component.literal("Global chat is currently muted."));
+            return null;
+        }
+
+        long now = System.currentTimeMillis();
+        ChatState previous = chatStates.get(player.getUUID());
+        if (!player.hasPermissions(2) && previous != null) {
+            long remaining = TrChatConfig.COOLDOWN_MILLIS.getAsInt() - (now - previous.sentAt());
+            if (remaining > 0) {
+                player.sendSystemMessage(Component.literal("Please wait " + remaining + " ms before chatting again."));
+                return null;
+            }
+            double threshold = TrChatConfig.ANTI_REPEAT_SIMILARITY.get();
+            if (threshold > 0 && MessageGuard.similarity(previous.message(), message) >= threshold) {
+                player.sendSystemMessage(Component.literal("Please do not repeat similar messages."));
+                return null;
+            }
+        }
+        message = MessageGuard.filter(message, TrChatConfig.BLOCKED_WORDS.get(), TrChatConfig.FILTER_REPLACEMENT.get());
+        chatStates.put(player.getUUID(), new ChatState(now, message));
+        return message;
+    }
+
+    private int toggleChannel(ServerPlayer player, ChannelDefinition channel) {
+        String id = channel.id().toLowerCase(Locale.ROOT);
+        Set<String> joined = joinedChannels.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>());
+        if (activeChannels.getOrDefault(player.getUUID(), "Normal").equalsIgnoreCase(channel.id())) {
+            activeChannels.put(player.getUUID(), "Normal");
+            if (!channel.options().alwaysListen() && !channel.options().autoJoin()) {
+                joined.remove(id);
+            }
+            player.sendSystemMessage(Component.literal("Left channel " + channel.id() + '.'));
+            return 1;
+        }
+        if (!hasPermission(player, channel.options().joinPermission())) {
+            player.sendSystemMessage(Component.literal("You cannot join channel " + channel.id() + '.'));
+            return 0;
+        }
+        activeChannels.put(player.getUUID(), channel.id());
+        joined.add(id);
+        player.sendSystemMessage(Component.literal("Joined channel " + channel.id() + '.'));
+        return 1;
+    }
+
+    private boolean canSpeak(ServerPlayer player, ChannelDefinition channel) {
+        String condition = channel.options().speakCondition();
+        return condition.isBlank()
+            ? hasPermission(player, channel.options().joinPermission())
+            : ConditionEvaluator.test(condition, player);
+    }
+
+    private boolean canListen(ServerPlayer player, ChannelDefinition channel) {
+        String permission = channel.options().listenPermission().isBlank()
+            ? channel.options().joinPermission()
+            : channel.options().listenPermission();
+        return hasPermission(player, permission);
+    }
+
+    private static boolean hasPermission(ServerPlayer player, String permission) {
+        return permission == null || permission.isBlank() || TrChatPermissions.check(player, permission);
+    }
+
+    private void broadcastLocal(ChannelDefinition channel, ServerPlayer sender, Component component) {
+        String id = channel.id().toLowerCase(Locale.ROOT);
+        String target = channel.options().target();
+        String[] range = target.split(";", 2);
+        int distance = range.length == 2 ? parsePositiveInt(range[1]) : -1;
+
+        for (ServerPlayer receiver : server.getPlayerList().getPlayers()) {
+            Set<String> joined = joinedChannels.getOrDefault(receiver.getUUID(), Set.of());
+            boolean listening = channel.options().alwaysListen()
+                || channel.options().autoJoin()
+                || joined.contains(id);
+            if (!listening || !canListen(receiver, channel)) {
+                continue;
+            }
+            boolean inRange = switch (range[0]) {
+                case "SELF" -> receiver.getUUID().equals(sender.getUUID());
+                case "SINGLE_WORLD", "WORLD" -> receiver.serverLevel() == sender.serverLevel();
+                case "DISTANCE" -> receiver.serverLevel() == sender.serverLevel()
+                    && distance >= 0
+                    && receiver.distanceToSqr(sender) <= (double) distance * distance;
+                default -> true;
+            };
+            if (inRange) {
+                receiver.sendSystemMessage(component);
+            }
+        }
+    }
+
+    private void logToConsole(
+        ChannelDefinition channel,
+        ServerPlayer player,
+        String message,
+        Map<String, String> local
+    ) {
+        if (channel.consoleFormats().isEmpty()) {
+            TrChatNeoForge.LOGGER.info("[{}] {}", channel.id(), renderer.render(
+                channel, ChannelRenderer.Audience.CHAT, player, message, local
+            ).component().getString());
+            return;
+        }
+        Component console = renderer.render(
+            channel, ChannelRenderer.Audience.CONSOLE, player, message, local
+        ).component();
+        TrChatNeoForge.LOGGER.info("[{}] {}", channel.id(), console.getString());
     }
 
     private void handleRedisMessage(TrChatMessage message) {
@@ -264,7 +464,14 @@ public final class ChatService implements AutoCloseable {
             }
         }
         String fallback = data.size() > 6 ? data.get(6) : "";
-        broadcast(ComponentJson.deserialize(data.get(2), fallback, server));
+        Component component = ComponentJson.deserialize(data.get(2), fallback, server);
+        String permission = data.size() > 3 ? data.get(3) : "";
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            if (hasPermission(player, permission)) {
+                player.sendSystemMessage(component);
+            }
+        }
+        TrChatNeoForge.LOGGER.info(component.getString());
     }
 
     private void receivePrivate(List<String> data) {
@@ -370,6 +577,14 @@ public final class ChatService implements AutoCloseable {
             current = current.subList(1, current.size());
         }
         return current;
+    }
+
+    private static int parsePositiveInt(String value) {
+        try {
+            return Math.max(0, Integer.parseInt(value));
+        } catch (NumberFormatException ignored) {
+            return -1;
+        }
     }
 
     private static String[] splitProtocolList(String value) {
