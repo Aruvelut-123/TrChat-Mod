@@ -56,7 +56,7 @@ jobs:
       - name: Generate notes from commits
         uses: orhun/git-cliff-action@v4
         with:
-          args: --latest --strip header --output RELEASE_NOTES.md
+          args: --current --strip header --output RELEASE_NOTES.md
 
       - name: Replace release notes and upload jar
         env:
