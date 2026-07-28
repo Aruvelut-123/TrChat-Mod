@@ -17,7 +17,7 @@ public final class TrChatNeoForge {
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_NAME);
 
     public TrChatNeoForge(IEventBus modBus, ModContainer container) {
-        container.registerConfig(ModConfig.Type.COMMON, TrChatConfig.SPEC, "trchat-neoforge.toml");
+        container.registerConfig(ModConfig.Type.COMMON, TrChatConfig.SPEC, "trchat-neoforge/settings.toml");
         NeoForge.EVENT_BUS.register(new TrChatServerEvents());
     }
 }

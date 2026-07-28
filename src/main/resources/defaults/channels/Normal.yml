@@ -1,0 +1,30 @@
+Options:
+  Target: ALL
+  Always-Listen: true
+  Auto-Join: true
+
+Formats:
+  - condition: ~
+    priority: 100
+    prefix:
+      world:
+        text: '&8[&3%player_world%&8]'
+        hover: |-
+          &8▪ &7位置: &3%player_world%&7, &2%player_x%/%player_y%/%player_z%
+          &6▶ &e点击发送传送请求
+        command: '/tpa %player_name%'
+      part-before-player:
+        text: ' '
+      player:
+        - condition: 'player op'
+          text: '&4%player_name%'
+          hover: '&7点击私聊 %player_name%'
+          suggest: '/tell %player_name% '
+        - text: '&7%player_name%'
+          hover: '&7点击私聊 %player_name%'
+          suggest: '/tell %player_name% '
+      part-before-msg:
+        text: '&7: '
+    msg:
+      default-color: '7'
+      hover: '&7时间: %server_time_HH:mm:ss%'

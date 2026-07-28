@@ -40,6 +40,14 @@ neoForge {
 }
 
 dependencies {
+    jarJar(implementation('org.yaml:snakeyaml:2.5')) {
+        version {
+            strictly '[2.0,3.0)'
+            prefer '2.5'
+        }
+    }
+    additionalRuntimeClasspath 'org.yaml:snakeyaml:2.5'
+
     testImplementation platform('org.junit:junit-bom:5.13.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

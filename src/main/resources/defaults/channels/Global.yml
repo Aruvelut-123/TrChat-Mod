@@ -1,0 +1,34 @@
+Options:
+  Speak-Condition: 'perm "trchat.global"'
+  Proxy: true
+  Force-Proxy: true
+  Double-Transfer: true
+  Always-Listen: true
+
+Bindings:
+  Prefix: ['!all']
+  Command: ['global', 'all', 'shout']
+
+Formats:
+  - condition: ~
+    prefix:
+      server:
+        text: '&8[&3%server_name%&8] '
+        hover: |-
+          &7服务器: &3%server_name%
+          &7版本: &6%server_version%
+          &7在线: &a%server_online%&7/&2%server_max_players%
+          &7TPS: &b%server_tps%
+      player:
+        text: '&e%player_name%&8: '
+    msg:
+      default-color: 'f'
+      hover: '&7时间: %server_time_HH:mm:ss%'
+
+Console:
+  - prefix:
+      server:
+        text: '&eServer&8: '
+    msg:
+      default-color: 'f'
+
