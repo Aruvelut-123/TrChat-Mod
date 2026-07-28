@@ -61,11 +61,11 @@ public final class ChatService implements AutoCloseable {
         channels.reload();
         this.placeholders = new PlaceholderResolver(server, metrics, playerStats);
         this.renderer = new ChannelRenderer(placeholders);
-        this.functions = new ChatFunctionService(server);
-        this.functions.reload();
-        this.filters = new FilterService(server);
-        this.filters.reload();
         this.moderation = new ModerationService();
+        this.functions = new ChatFunctionService(server, moderation.languages());
+        this.functions.reload();
+        this.filters = new FilterService(server, moderation.languages());
+        this.filters.reload();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             playerJoined(player);
         }
@@ -94,11 +94,11 @@ public final class ChatService implements AutoCloseable {
 
     public int executeChannel(ServerPlayer player, ChannelDefinition channel, String message) {
         if (channel.options().privateChannel()) {
-            player.sendSystemMessage(Component.literal("Private channels require a target player."));
+            sendLang(player, "Channel-Private-Target");
             return 0;
         }
         if (channel.id().equalsIgnoreCase("Server")) {
-            player.sendSystemMessage(Component.literal("The Server channel can only be used through /say."));
+            sendLang(player, "Channel-Server-Say-Only");
             return 0;
         }
         if (message == null || message.isBlank()) {
@@ -177,7 +177,7 @@ public final class ChatService implements AutoCloseable {
             receiverView.fallback(),
             ""
         ))) {
-            sender.sendSystemMessage(Component.literal("Redis is unavailable; private message was not delivered."));
+            sendLang(sender, "Redis-Private-Unavailable");
             return 0;
         }
         notifyPrivateSpies(sender, exactTarget, message, null);
@@ -382,10 +382,10 @@ public final class ChatService implements AutoCloseable {
                 return true;
             }
             if (channel.options().forceRedis()) {
-                player.sendSystemMessage(Component.literal("Redis is unavailable; the message was not delivered."));
+                sendLang(player, "Redis-Force-Unavailable");
                 return false;
             }
-            player.sendSystemMessage(Component.literal("Redis is unavailable; sent to this server only."));
+            sendLang(player, "Redis-Fallback");
         }
 
         broadcastLocal(channel, player, rendered.component());
@@ -443,7 +443,7 @@ public final class ChatService implements AutoCloseable {
             return 1;
         }
         if (!hasPermission(player, channel.options().joinPermission())) {
-            player.sendSystemMessage(Component.literal("You cannot join channel " + channel.id() + '.'));
+            sendLang(player, "Channel-No-Join-Permission", channel.id());
             return 0;
         }
         activeChannels.put(player.getUUID(), channel.id());

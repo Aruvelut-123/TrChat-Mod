@@ -2,6 +2,7 @@ package me.arasple.mc.trchat.neoforge.function;
 
 import me.arasple.mc.trchat.neoforge.channel.ConditionEvaluator;
 import me.arasple.mc.trchat.neoforge.chat.LegacyText;
+import me.arasple.mc.trchat.neoforge.lang.LanguageService;
 import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.ClickEvent;
@@ -57,16 +58,18 @@ public final class ChatFunctionService {
 
     private final MinecraftServer server;
     private final Path file;
+    private final LanguageService languages;
     private final Map<String, Long> cooldowns = new HashMap<>();
     private final Map<String, Snapshot> snapshots = new LinkedHashMap<>();
     private volatile Configuration configuration = Configuration.empty();
 
-    public ChatFunctionService(MinecraftServer server) {
-        this(server, FMLPaths.CONFIGDIR.get().resolve("trchat-neoforge").resolve("function.yml"));
+    public ChatFunctionService(MinecraftServer server, LanguageService languages) {
+        this(server, languages, FMLPaths.CONFIGDIR.get().resolve("trchat-neoforge").resolve("function.yml"));
     }
 
-    ChatFunctionService(MinecraftServer server, Path file) {
+    ChatFunctionService(MinecraftServer server, LanguageService languages, Path file) {
         this.server = server;
+        this.languages = languages;
         this.file = file;
     }
 
@@ -148,7 +151,7 @@ public final class ChatFunctionService {
         expireSnapshots();
         Snapshot snapshot = snapshots.get(id);
         if (snapshot == null) {
-            viewer.sendSystemMessage(Component.literal("This inventory snapshot has expired."));
+            viewer.sendSystemMessage(languages.component(viewer, "Function-Snapshot-Expired"));
             return false;
         }
         SimpleContainer container = new SimpleContainer(snapshot.size());
@@ -177,11 +180,11 @@ public final class ChatFunctionService {
                 : rule.pattern().matcher(label).matches();
             if (!matches) continue;
             if (!rule.condition().isBlank() && !ConditionEvaluator.test(rule.condition(), player)) {
-                player.sendSystemMessage(Component.literal("You cannot use this command."));
+                player.sendSystemMessage(languages.component(player, "Command-Controller-Deny"));
                 return false;
             }
             if (rule.cooldownMillis() > 0 && !cooldown(player, "command:" + rule.source(), rule.cooldownMillis())) {
-                player.sendSystemMessage(Component.literal("This command is on cooldown."));
+                player.sendSystemMessage(languages.component(player, "Command-Controller-Cooldown"));
                 return false;
             }
             return true;
@@ -312,13 +315,15 @@ public final class ChatFunctionService {
         mentioned.add(name);
         if (configuration.mention().notifyPlayer()) {
             target.playNotifySound(SoundEvents.NOTE_BLOCK_PLING.value(), SoundSource.PLAYERS, 1.0F, 1.2F);
-            target.sendSystemMessage(Component.literal(sender.getGameProfile().getName() + " mentioned you."));
+            target.sendSystemMessage(languages.component(
+                target, "Function-Mention-Notify", sender.getGameProfile().getName()
+            ));
         }
         return Component.literal("@" + name)
             .withStyle(ChatFormatting.AQUA)
             .withStyle(style -> style.withHoverEvent(new HoverEvent(
                 HoverEvent.Action.SHOW_TEXT,
-                Component.literal(sender.getGameProfile().getName() + " mentioned " + name)
+                languages.component(sender, "Function-Mention-Hover", sender.getGameProfile().getName(), name)
             )));
     }
 
@@ -335,7 +340,7 @@ public final class ChatFunctionService {
             .withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD)
             .withStyle(style -> style.withHoverEvent(new HoverEvent(
                 HoverEvent.Action.SHOW_TEXT,
-                Component.literal(sender.getGameProfile().getName() + " mentioned everyone")
+                languages.component(sender, "Function-Mention-All-Hover", sender.getGameProfile().getName())
             )));
     }
 
@@ -343,7 +348,7 @@ public final class ChatFunctionService {
         int slot = slotArgument.isBlank() ? sender.getInventory().selected : Integer.parseInt(slotArgument) - 1;
         ItemStack stack = sender.getInventory().getItem(slot);
         if (stack.isEmpty()) {
-            return Component.literal("[空气]").withStyle(ChatFormatting.GRAY);
+            return languages.component(sender, "Function-Item-Air").copy().withStyle(ChatFormatting.GRAY);
         }
         ItemStack hoverStack = settings.compatible() ? new ItemStack(Items.STONE, stack.getCount()) : stack;
         Component itemName = settings.originName()
@@ -366,12 +371,15 @@ public final class ChatFunctionService {
 
     private Component inventory(ServerPlayer sender, boolean enderChest) {
         String snapshotId = createSnapshot(sender, enderChest);
-        String label = enderChest ? "[末影箱: " : "[背包: ";
-        String hover = enderChest ? "点击查看末影箱快照" : "点击查看背包快照";
-        return Component.literal(label + sender.getGameProfile().getName() + "]")
+        String labelKey = enderChest ? "Function-EnderChest-Format" : "Function-Inventory-Format";
+        String hoverKey = enderChest ? "Function-EnderChest-Hover" : "Function-Inventory-Hover";
+        return languages.component(sender, labelKey, sender.getGameProfile().getName()).copy()
             .withStyle(ChatFormatting.AQUA)
             .withStyle(style -> style
-                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal(hover)))
+                .withHoverEvent(new HoverEvent(
+                    HoverEvent.Action.SHOW_TEXT,
+                    languages.component(sender, hoverKey)
+                ))
                 .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/trchat view " + snapshotId)));
     }
 
@@ -383,13 +391,13 @@ public final class ChatFunctionService {
         String title;
         if (enderChest) {
             size = 27;
-            title = player.getGameProfile().getName() + " - Ender Chest";
+            title = languages.text(player, "Function-EnderChest-Title", player.getGameProfile().getName());
             for (int index = 0; index < 27; index++) {
                 items.add(player.getEnderChestInventory().getItem(index).copy());
             }
         } else {
             size = 54;
-            title = player.getGameProfile().getName() + " - Inventory";
+            title = languages.text(player, "Function-Inventory-Title", player.getGameProfile().getName());
             for (int index = 0; index < 36; index++) {
                 items.add(player.getInventory().getItem(index).copy());
             }
@@ -423,7 +431,10 @@ public final class ChatFunctionService {
         }
         snapshots.put(id, new Snapshot(
             System.nanoTime(), 27,
-            player.getGameProfile().getName() + " - " + stack.getHoverName().getString(),
+            languages.text(
+                player, "Function-Item-Title",
+                player.getGameProfile().getName(), stack.getHoverName().getString()
+            ),
             List.copyOf(items)
         ));
         return id;

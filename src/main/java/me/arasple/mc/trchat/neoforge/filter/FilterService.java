@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import me.arasple.mc.trchat.neoforge.lang.LanguageService;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -42,13 +43,15 @@ public final class FilterService {
     private final MinecraftServer server;
     private final Path file;
     private final Path cacheDirectory;
+    private final LanguageService languages;
     private final Set<LevelChunk> loadedChunks = ConcurrentHashMap.newKeySet();
     private volatile Settings settings = Settings.empty();
     private volatile List<String> words = List.of();
     private int ticks;
 
-    public FilterService(MinecraftServer server) {
+    public FilterService(MinecraftServer server, LanguageService languages) {
         this.server = server;
+        this.languages = languages;
         Path folder = FMLPaths.CONFIGDIR.get().resolve("trchat-neoforge");
         this.file = folder.resolve("filter.yml");
         this.cacheDirectory = folder.resolve("filters");
@@ -92,7 +95,7 @@ public final class FilterService {
         if (!settings.anvil() || name == null || player.hasPermissions(2)) return true;
         TextFilter.Result result = filter(name);
         if (result.matches() == 0) return true;
-        player.sendSystemMessage(Component.literal("The item name contains blocked words."));
+        player.sendSystemMessage(languages.component(player, "Filter-Anvil-Blocked"));
         return false;
     }
 

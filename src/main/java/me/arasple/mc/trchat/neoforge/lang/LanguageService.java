@@ -11,6 +11,7 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -39,7 +40,10 @@ public final class LanguageService {
             Map<String, Map<String, String>> loaded = new HashMap<>();
             try (Stream<Path> files = Files.list(directory)) {
                 for (Path file : files.filter(path -> path.getFileName().toString().endsWith(".yml")).toList()) {
-                    loaded.put(stem(file).toLowerCase(Locale.ROOT), load(file));
+                    String name = stem(file);
+                    Map<String, String> merged = new HashMap<>(loadBundled(name));
+                    merged.putAll(load(file));
+                    loaded.put(name.toLowerCase(Locale.ROOT), Map.copyOf(merged));
                 }
             }
             languages = Map.copyOf(loaded);
@@ -72,14 +76,31 @@ public final class LanguageService {
     }
 
     private Map<String, String> load(Path file) throws IOException {
-        Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            Object value = yaml.load(reader);
-            if (!(value instanceof Map<?, ?> root)) throw new IOException("Language root must be a mapping: " + file);
-            Map<String, String> output = new HashMap<>();
-            root.forEach((key, entry) -> output.put(String.valueOf(key), flatten(entry)));
-            return Map.copyOf(output);
+            return load(reader, file.toString());
         }
+    }
+
+    private Map<String, String> loadBundled(String requested) throws IOException {
+        String bundled = java.util.Arrays.stream(DEFAULTS)
+            .filter(value -> value.equalsIgnoreCase(requested))
+            .findFirst()
+            .orElse(null);
+        if (bundled == null) return Map.of();
+        try (InputStream input = LanguageService.class.getResourceAsStream("/defaults/lang/" + bundled + ".yml")) {
+            if (input == null) return Map.of();
+            return load(new InputStreamReader(input, StandardCharsets.UTF_8), bundled);
+        }
+    }
+
+    private Map<String, String> load(Reader reader, String source) throws IOException {
+        Object value = new Yaml(new SafeConstructor(new LoaderOptions())).load(reader);
+        if (!(value instanceof Map<?, ?> root)) {
+            throw new IOException("Language root must be a mapping: " + source);
+        }
+        Map<String, String> output = new HashMap<>();
+        root.forEach((key, entry) -> output.put(String.valueOf(key), flatten(entry)));
+        return Map.copyOf(output);
     }
 
     private static String flatten(Object value) {
