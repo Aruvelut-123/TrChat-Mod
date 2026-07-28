@@ -16,11 +16,14 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.CommandEvent;
+import net.neoforged.neoforge.event.AnvilUpdateEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.event.level.ChunkEvent;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.neoforged.neoforge.server.permission.events.PermissionGatherEvent;
 
 import java.util.HashSet;
@@ -91,6 +94,29 @@ public final class TrChatServerEvents {
         if (source.getEntity() instanceof ServerPlayer player
             && !service.checkCommand(player, event.getParseResults().getReader().getString())) {
             event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
+    public void onAnvil(AnvilUpdateEvent event) {
+        if (service != null
+            && event.getPlayer() instanceof ServerPlayer player
+            && !service.checkAnvil(player, event.getName())) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
+    public void onChunkLoad(ChunkEvent.Load event) {
+        if (service != null && event.getChunk() instanceof LevelChunk chunk) {
+            service.chunkLoaded(chunk);
+        }
+    }
+
+    @SubscribeEvent
+    public void onChunkUnload(ChunkEvent.Unload event) {
+        if (service != null && event.getChunk() instanceof LevelChunk chunk) {
+            service.chunkUnloaded(chunk);
         }
     }
 

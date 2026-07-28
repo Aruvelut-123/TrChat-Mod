@@ -1,0 +1,19 @@
+Enable:
+  Chat: true
+  Sign: true
+  Anvil: true
+
+Cloud-Thesaurus:
+  Enabled: true
+  Ignored: ['nt']
+  Urls:
+    - 'https://raw.githubusercontent.com/Yurinann/Filter-Thesaurus-Cloud/main/database.json'
+
+Local:
+  - 'NMSL'
+  - 'fuck'
+  - 'shit'
+
+Ignored-Punctuations: ['!','.',',','#','$','%','&','*','(',')','|','?','/','@','"','\',';','[',']','{','}','+','~','-','_','=','^','<','>',' ','　','！','。','，','￥','（','）','？','、','“','‘','；','【','】','——','……','《','》','\\', '`']
+WhiteList: ['has been']
+Replacement: '*'

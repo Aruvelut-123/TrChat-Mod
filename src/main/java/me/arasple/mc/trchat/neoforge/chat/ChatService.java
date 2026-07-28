@@ -7,6 +7,7 @@ import me.arasple.mc.trchat.neoforge.channel.ChannelRenderer;
 import me.arasple.mc.trchat.neoforge.channel.ConditionEvaluator;
 import me.arasple.mc.trchat.neoforge.config.TrChatConfig;
 import me.arasple.mc.trchat.neoforge.function.ChatFunctionService;
+import me.arasple.mc.trchat.neoforge.filter.FilterService;
 import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
 import me.arasple.mc.trchat.neoforge.placeholder.PlaceholderResolver;
 import me.arasple.mc.trchat.neoforge.placeholder.PlayerStatsTracker;
@@ -17,6 +18,7 @@ import me.arasple.mc.trchat.neoforge.redis.RedisSettings;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.chunk.LevelChunk;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -40,6 +42,7 @@ public final class ChatService implements AutoCloseable {
     private final PlaceholderResolver placeholders;
     private final ChannelRenderer renderer;
     private final ChatFunctionService functions;
+    private final FilterService filters;
     private final Map<UUID, ChatState> chatStates = new HashMap<>();
     private final Map<UUID, String> activeChannels = new HashMap<>();
     private final Map<UUID, Set<String>> joinedChannels = new HashMap<>();
@@ -57,6 +60,8 @@ public final class ChatService implements AutoCloseable {
         this.renderer = new ChannelRenderer(placeholders);
         this.functions = new ChatFunctionService(server);
         this.functions.reload();
+        this.filters = new FilterService(server);
+        this.filters.reload();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             playerJoined(player);
         }
@@ -195,6 +200,7 @@ public final class ChatService implements AutoCloseable {
         if (loaded >= 0) {
             activeChannels.replaceAll((uuid, current) -> channels.byId(current).isPresent() ? current : "Normal");
             functions.reload();
+            filters.reload();
         }
         return loaded;
     }
@@ -209,6 +215,18 @@ public final class ChatService implements AutoCloseable {
 
     public boolean checkCommand(ServerPlayer player, String commandLine) {
         return functions.checkCommand(player, commandLine);
+    }
+
+    public void chunkLoaded(LevelChunk chunk) {
+        filters.chunkLoaded(chunk);
+    }
+
+    public void chunkUnloaded(LevelChunk chunk) {
+        filters.chunkUnloaded(chunk);
+    }
+
+    public boolean checkAnvil(ServerPlayer player, String name) {
+        return filters.checkAnvil(player, name);
     }
 
     public void reconnectRedis() {
@@ -233,6 +251,7 @@ public final class ChatService implements AutoCloseable {
 
     public void tick() {
         metrics.tick();
+        filters.tick();
         tickCounter++;
         if (tickCounter % 200 == 0) {
             publishPlayerNames();
@@ -358,6 +377,7 @@ public final class ChatService implements AutoCloseable {
                 return null;
             }
         }
+        message = filters.filterChat(player, message);
         message = MessageGuard.filter(message, TrChatConfig.BLOCKED_WORDS.get(), TrChatConfig.FILTER_REPLACEMENT.get());
         chatStates.put(player.getUUID(), new ChatState(now, message));
         return message;
