@@ -16,15 +16,18 @@ footer = ""
 trim = true
 
 [git]
-conventional_commits = false
+conventional_commits = true
 filter_unconventional = false
 split_commits = false
 commit_parsers = [
-  { message = "^[Aa]dd|^feat", group = "新增" },
-  { message = "^[Ff]ix", group = "修复" },
-  { message = "^[Uu]pdate|^[Cc]hange|^refactor", group = "调整" },
-  { message = "^[Dd]oc|README", group = "文档" },
-  { message = "^[Tt]est|^[Bb]uild|^[Cc][Ii]", group = "构建与测试" },
+  { message = "^feat", group = "新增" },
+  { message = "^fix", group = "修复" },
+  { message = "^perf", group = "性能" },
+  { message = "^refactor", group = "调整" },
+  { message = "^docs", group = "文档" },
+  { message = "^test", group = "测试" },
+  { message = "^(build|ci)", group = "构建与 CI" },
+  { message = "^(chore|revert)", group = "维护" },
   { message = ".*", group = "其他" },
 ]
 protect_breaking_commits = false
