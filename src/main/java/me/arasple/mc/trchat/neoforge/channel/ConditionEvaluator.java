@@ -26,7 +26,11 @@ public final class ConditionEvaluator {
         }
         Matcher permission = PERMISSION.matcher(normalized);
         if (permission.matches()) {
-            return player != null && TrChatPermissions.check(player, permission.group(1));
+            String node = permission.group(1);
+            if (node.startsWith("*")) {
+                node = node.substring(1);
+            }
+            return player != null && !node.isBlank() && TrChatPermissions.check(player, node);
         }
         if (normalized.startsWith("!")) {
             return !test(normalized.substring(1).trim(), player);

@@ -8,6 +8,10 @@
 
 General:
   Command-Controller:
+    # Controls matching commands with optional exact matching, condition/permission checks, and cooldowns.
+    # 使用可选的完整匹配、条件/权限检查和冷却控制匹配到的命令。
+    # Built-in compatibility commands: arasple, ver/vers/version/versions, help/helps.
+    # 内置兼容命令：arasple、ver/vers/version/versions、help/helps；shout 由 Global 频道绑定。
     Enabled: true
     List:
       - 'arasple{exact: true}{condition: perm "trchat.admin"}'

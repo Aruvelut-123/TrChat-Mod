@@ -238,6 +238,22 @@ public final class ChatService implements AutoCloseable {
         return functions.checkCommand(player, commandLine);
     }
 
+    public boolean isCommandManaged(String commandLine) {
+        return functions.isCommandManaged(commandLine);
+    }
+
+    public boolean isCommandControllerEnabled() {
+        return functions.commandControllerEnabled();
+    }
+
+    public int commandRuleCount() {
+        return functions.commandRuleCount();
+    }
+
+    public String autoJoinChannel() {
+        return channels.autoJoin().map(ChannelDefinition::id).orElse("-");
+    }
+
     public void chunkLoaded(LevelChunk chunk) {
         filters.chunkLoaded(chunk);
     }

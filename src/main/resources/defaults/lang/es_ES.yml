@@ -12,6 +12,42 @@ Channel-Command-Unbound: '&8[&3Tr&bChat&8] &cEl comando de canal /{0} fue elimin
 Reload-Success: '&8[&3Tr&bChat&8] &aRecarga completada: {0} canales, idiomas, function, filter, Redis y comandos.'
 Reload-Partial: '&8[&3Tr&bChat&8] &eSe cargaron {0} canales, pero fallaron estas secciones: {1}. Revisa el registro.'
 Reload-Failed: '&8[&3Tr&bChat&8] &cFalló la recarga de {0}. Se conserva la última configuración válida.'
+Status-State-Enabled: '&aactivado'
+Status-State-Disabled: '&cdesactivado'
+Status-State-Connected: '&aconectado'
+Status-State-Reconnecting: '&ereconectando'
+Status-Overview: |-
+  &8&m------------------&r &3&lTr&b&lChat NeoForge &8&m------------------
+  &8▪ &7Versión: &b{0} &8| &7Minecraft: &b1.21.1
+  &8▪ &7Canales: &a{1} &8| &7Auto-Join: &f{2}
+  &8▪ &7Redis: {3} &8| &7Silencio global: {4}
+  &8▪ &7Command-Controller: {5} &8(&f{6} reglas&8)
+  &8▪ &7Jugadores conectados: &a{7}&7/&2{8}
+  &8▪ &7Recarga local: &f/trchat reload
+Status-Creator-Prefix: '&8▪ &7Autor / responsable de NeoForge: &fBaymaxawa &8• '
+Status-Creator-Link: '&d&nPerfil de Bilibili'
+Status-Creator-Link-Hover: '&7Haz clic para abrir el perfil de Bilibili de Baymaxawa'
+Status-Repository-Prefix: '&8▪ &7Repositorio del proyecto: '
+Status-Repository-Link: '&b&nAruvelut-123/TrChat-Neoforge'
+Status-Repository-Link-Hover: '&7Haz clic para abrir el repositorio NeoForge o informar de un problema'
+Status-Footer: '&8&m------------------------------------------------------'
+Command-Controller-Disabled: '&8[&3Tr&bChat&8] &cEl comando /{0} no está configurado en Command-Controller activado.'
+Command-About: |-
+  &8&m------------------&r &3&lTr&b&lChat NeoForge &8&m------------------
+  &8▪ &7Versión: &b{0}
+  &8▪ &7Autor original: &fArasple
+  &8▪ &7Autor / responsable de NeoForge: &fBaymaxawa
+  &8▪ &7Plataforma: &fMinecraft 1.21.1 / NeoForge 21.1.233+
+  &8&m------------------------------------------------------
+Command-Help: |-
+  &8&m--------------------&r &3&lAyuda de Tr&b&lChat &8&m--------------------
+  &b/trchat status &8- &7Muestra el estado del mod
+  &b/trchat reload &8- &7Recarga localmente la configuración de TrChat
+  &b/trchat channel join <canal> &8- &7Entra o cambia de canal
+  &b/trmsg <jugador> <mensaje> &8- &7Envía un mensaje privado
+  &b/trreply <mensaje> &8- &7Responde al último mensaje privado
+  &b/trspy &8- &7Activa o desactiva la escucha privada
+  &8&m------------------------------------------------------
 Private-Message-No-Reply: '&8[&3Tr&bChat&8] &7No hay nadie a quien responder.'
 Private-Message-Spy-Format: '&8[&3Espía&8] &6{0} &2-> &3{1}&f: &7{2}'
 Private-Message-Spy-On: '&c&l&k|&f &a&lEscucha de mensajes privados activada &c&l&k|'

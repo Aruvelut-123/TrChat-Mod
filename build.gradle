@@ -114,11 +114,11 @@ tasks.named('jar', Jar) {
     manifest {
         attributes(
             'Specification-Title': mod_name,
-            'Specification-Vendor': 'Aruvelut-123',
+            'Specification-Vendor': 'Baymaxawa',
             'Specification-Version': mod_version,
             'Implementation-Title': project.name,
             'Implementation-Version': mod_version,
-            'Implementation-Vendor': 'Aruvelut-123'
+            'Implementation-Vendor': 'Baymaxawa'
         )
     }
 }

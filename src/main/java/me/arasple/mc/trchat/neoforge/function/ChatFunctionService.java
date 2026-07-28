@@ -54,7 +54,6 @@ public final class ChatFunctionService {
 
     private static final System.Logger LOGGER = System.getLogger(ChatFunctionService.class.getName());
     private static final Duration SNAPSHOT_TTL = Duration.ofMinutes(5);
-    private static final Pattern PROPERTY = Pattern.compile("\\{([^}:]+):\\s*([^}]*)}");
     private static final Pattern KETHER_COMMAND = Pattern.compile(
         "(?i)^command\\s+['\"](.+)['\"]\\s+as\\s+(console|player)$"
     );
@@ -175,24 +174,38 @@ public final class ChatFunctionService {
         if (!config.commandControllerEnabled()) {
             return true;
         }
-        String input = commandLine.startsWith("/") ? commandLine.substring(1) : commandLine;
-        String label = input.split("\\s+", 2)[0];
-        for (CommandRule rule : config.commandRules()) {
-            boolean matches = rule.exact()
-                ? rule.pattern().matcher(input).matches()
-                : rule.pattern().matcher(label).matches();
-            if (!matches) continue;
-            if (!rule.condition().isBlank() && !ConditionEvaluator.test(rule.condition(), player)) {
-                player.sendSystemMessage(languages.component(player, "Command-Controller-Deny"));
-                return false;
-            }
-            if (rule.cooldownMillis() > 0 && !cooldown(player, "command:" + rule.source(), rule.cooldownMillis())) {
-                player.sendSystemMessage(languages.component(player, "Command-Controller-Cooldown"));
-                return false;
-            }
+        CommandController.Rule rule = matchingRule(commandLine, config);
+        if (rule == null) {
             return true;
         }
+        if (!rule.condition().isBlank() && !ConditionEvaluator.test(rule.condition(), player)) {
+            player.sendSystemMessage(languages.component(player, "Command-Controller-Deny"));
+            return false;
+        }
+        if (rule.cooldownMillis() > 0
+            && !TrChatPermissions.check(player, "trchat.bypass.cmdcooldown")
+            && !cooldown(player, "command:" + rule.source(), rule.cooldownMillis())) {
+            player.sendSystemMessage(languages.component(player, "Command-Controller-Cooldown"));
+            return false;
+        }
         return true;
+    }
+
+    public boolean isCommandManaged(String commandLine) {
+        Configuration config = configuration;
+        return config.commandControllerEnabled() && matchingRule(commandLine, config) != null;
+    }
+
+    public boolean commandControllerEnabled() {
+        return configuration.commandControllerEnabled();
+    }
+
+    public int commandRuleCount() {
+        return configuration.commandRules().size();
+    }
+
+    private static CommandController.Rule matchingRule(String commandLine, Configuration config) {
+        return CommandController.matching(commandLine, config.commandRules());
     }
 
     private List<Token> collectTokens(ServerPlayer sender, String message, Set<String> disabled) {
@@ -647,18 +660,9 @@ public final class ChatFunctionService {
     ) {
     }
 
-    private record CommandRule(
-        String source,
-        Pattern pattern,
-        boolean exact,
-        String condition,
-        long cooldownMillis
-    ) {
-    }
-
     private record Configuration(
         boolean commandControllerEnabled,
-        List<CommandRule> commandRules,
+        List<CommandController.Rule> commandRules,
         FunctionSettings mention,
         FunctionSettings mentionAll,
         FunctionSettings item,
@@ -676,22 +680,7 @@ public final class ChatFunctionService {
         private static Configuration from(Map<?, ?> root) {
             Map<?, ?> general = map(root.get("General"));
             Map<?, ?> command = map(general.get("Command-Controller"));
-            List<CommandRule> rules = new ArrayList<>();
-            for (String source : strings(command.get("List"))) {
-                String expression = source.substring(0, source.indexOf('{') >= 0 ? source.indexOf('{') : source.length());
-                Map<String, String> properties = properties(source);
-                try {
-                    rules.add(new CommandRule(
-                        source,
-                        Pattern.compile(expression, Pattern.CASE_INSENSITIVE),
-                        Boolean.parseBoolean(properties.getOrDefault("exact", "false")),
-                        properties.getOrDefault("condition", ""),
-                        secondsMillis(properties.getOrDefault("cooldown", "0"))
-                    ));
-                } catch (PatternSyntaxException exception) {
-                    LOGGER.log(System.Logger.Level.WARNING, "Ignoring invalid command pattern: " + expression);
-                }
-            }
+            CommandController.Configuration controller = CommandController.from(command);
 
             List<CustomFunction> custom = new ArrayList<>();
             for (Map.Entry<?, ?> entry : map(root.get("Custom")).entrySet()) {
@@ -725,8 +714,8 @@ public final class ChatFunctionService {
             }
             custom.sort(Comparator.comparingInt(CustomFunction::priority).reversed());
             return new Configuration(
-                bool(command.get("Enabled"), bool(command.get("Enable"), true)),
-                List.copyOf(rules),
+                controller.enabled(),
+                controller.rules(),
                 FunctionSettings.from(map(general.get("Mention"))),
                 FunctionSettings.from(map(general.get("Mention-All"))),
                 FunctionSettings.from(map(general.get("Item-Show"))),
@@ -735,15 +724,6 @@ public final class ChatFunctionService {
                 List.copyOf(custom)
             );
         }
-    }
-
-    private static Map<String, String> properties(String value) {
-        Map<String, String> result = new HashMap<>();
-        Matcher matcher = PROPERTY.matcher(value);
-        while (matcher.find()) {
-            result.put(matcher.group(1).trim().toLowerCase(Locale.ROOT), matcher.group(2).trim());
-        }
-        return result;
     }
 
     private static long durationMillis(String value) {
@@ -759,14 +739,6 @@ public final class ChatFunctionService {
             case "d" -> number * 86_400_000L;
             default -> number;
         };
-    }
-
-    private static long secondsMillis(String value) {
-        try {
-            return Math.round(Double.parseDouble(value) * 1000.0D);
-        } catch (NumberFormatException ignored) {
-            return 0;
-        }
     }
 
     private static Map<?, ?> map(Object value) {

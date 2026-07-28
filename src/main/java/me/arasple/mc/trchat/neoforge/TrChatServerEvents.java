@@ -11,11 +11,15 @@ import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModList;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.CommandEvent;
@@ -35,6 +39,9 @@ import java.util.Set;
 import java.util.OptionalLong;
 
 public final class TrChatServerEvents {
+
+    private static final String REPOSITORY_URL = "https://github.com/Aruvelut-123/TrChat-Neoforge";
+    private static final String BILIBILI_PROFILE_URL = "https://space.bilibili.com/475655508";
 
     private final ChannelManager channels = new ChannelManager();
     private ChatService service;
@@ -254,6 +261,7 @@ public final class TrChatServerEvents {
         registerReplyAlias(dispatcher, "r");
         registerReplyAlias(dispatcher, "reply");
         registerModerationAliases(dispatcher);
+        registerControllerCommands(dispatcher);
 
         registerDynamicCommands(dispatcher);
     }
@@ -292,14 +300,87 @@ public final class TrChatServerEvents {
             source.sendFailure(Component.literal("TrChat NeoForge is not running."));
             return 0;
         }
-        String redis = !service.isRedisEnabled()
-            ? "disabled"
-            : service.isRedisConnected() ? "connected" : "reconnecting";
-        source.sendSuccess(() -> Component.literal(
-            "TrChat NeoForge: " + service.channelCount() + " channels, Redis " + redis
-                + ", global mute " + (service.isGlobalMute() ? "on" : "off")
-        ), false);
+        ServerPlayer viewer = source.getPlayer();
+        String redis = service.languages().text(
+            viewer,
+            !service.isRedisEnabled()
+                ? "Status-State-Disabled"
+                : service.isRedisConnected() ? "Status-State-Connected" : "Status-State-Reconnecting"
+        );
+        String globalMute = service.languages().text(
+            viewer, service.isGlobalMute() ? "Status-State-Enabled" : "Status-State-Disabled"
+        );
+        String controller = service.languages().text(
+            viewer,
+            service.isCommandControllerEnabled() ? "Status-State-Enabled" : "Status-State-Disabled"
+        );
+        MutableComponent overview = service.languages().component(
+            viewer,
+            "Status-Overview",
+            modVersion(),
+            service.channelCount(),
+            service.autoJoinChannel(),
+            redis,
+            globalMute,
+            controller,
+            service.commandRuleCount(),
+            source.getServer().getPlayerCount(),
+            source.getServer().getMaxPlayers()
+        ).copy();
+        overview
+            .append("\n")
+            .append(service.languages().component(viewer, "Status-Creator-Prefix"))
+            .append(statusLink(viewer, "Status-Creator-Link", BILIBILI_PROFILE_URL, "Status-Creator-Link-Hover"))
+            .append("\n")
+            .append(service.languages().component(viewer, "Status-Repository-Prefix"))
+            .append(statusLink(viewer, "Status-Repository-Link", REPOSITORY_URL, "Status-Repository-Link-Hover"))
+            .append("\n")
+            .append(service.languages().component(viewer, "Status-Footer"));
+        source.sendSuccess(() -> overview, false);
         return 1;
+    }
+
+    private MutableComponent statusLink(ServerPlayer viewer, String key, String url, String hoverKey) {
+        return service.languages().component(viewer, key).copy()
+            .withStyle(style -> style
+                .withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, url))
+                .withHoverEvent(new HoverEvent(
+                    HoverEvent.Action.SHOW_TEXT,
+                    service.languages().component(viewer, hoverKey)
+                )));
+    }
+
+    private int controlledCommand(
+        CommandSourceStack source,
+        String label,
+        String arguments,
+        ControlledCommand command
+    ) {
+        if (service == null) {
+            return 0;
+        }
+        String commandLine = arguments.isBlank() ? label : label + ' ' + arguments;
+        if (!service.isCommandManaged(commandLine)) {
+            source.sendFailure(service.languages().component(
+                source.getPlayer(), "Command-Controller-Disabled", label
+            ));
+            return 0;
+        }
+        return switch (command) {
+            case ABOUT -> {
+                source.sendSuccess(() -> service.languages().component(
+                    source.getPlayer(), "Command-About", modVersion()
+                ), false);
+                yield 1;
+            }
+            case STATUS -> status(source);
+            case HELP -> {
+                source.sendSuccess(() -> service.languages().component(
+                    source.getPlayer(), "Command-Help"
+                ), false);
+                yield 1;
+            }
+        };
     }
 
     private int reload(CommandSourceStack source) {
@@ -503,6 +584,32 @@ public final class TrChatServerEvents {
                 .executes(context -> reply(context.getSource(), StringArgumentType.getString(context, "message")))));
     }
 
+    private void registerControllerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
+        registerControllerCommand(dispatcher, "arasple", ControlledCommand.ABOUT);
+        for (String alias : Set.of("ver", "vers", "version", "versions")) {
+            registerControllerCommand(dispatcher, alias, ControlledCommand.STATUS);
+        }
+        for (String alias : Set.of("help", "helps")) {
+            registerControllerCommand(dispatcher, alias, ControlledCommand.HELP);
+        }
+    }
+
+    private void registerControllerCommand(
+        CommandDispatcher<CommandSourceStack> dispatcher,
+        String label,
+        ControlledCommand command
+    ) {
+        dispatcher.register(Commands.literal(label)
+            .executes(context -> controlledCommand(context.getSource(), label, "", command))
+            .then(Commands.argument("arguments", StringArgumentType.greedyString())
+                .executes(context -> controlledCommand(
+                    context.getSource(),
+                    label,
+                    StringArgumentType.getString(context, "arguments"),
+                    command
+                ))));
+    }
+
     private void registerModerationAliases(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("trmute")
             .requires(source -> source.hasPermission(2))
@@ -571,5 +678,18 @@ public final class TrChatServerEvents {
             source.sendFailure(Component.literal("This channel command can only be used by a player."));
             return 0;
         }
+    }
+
+    private static String modVersion() {
+        return ModList.get()
+            .getModContainerById(TrChatNeoForge.MOD_ID)
+            .map(container -> container.getModInfo().getVersion().toString())
+            .orElse("development");
+    }
+
+    private enum ControlledCommand {
+        ABOUT,
+        STATUS,
+        HELP
     }
 }
