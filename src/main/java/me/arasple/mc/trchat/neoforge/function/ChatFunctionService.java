@@ -18,6 +18,9 @@ import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.item.component.ItemContainerContents;
 import net.neoforged.fml.loading.FMLPaths;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
@@ -48,6 +51,9 @@ public final class ChatFunctionService {
     private static final System.Logger LOGGER = System.getLogger(ChatFunctionService.class.getName());
     private static final Duration SNAPSHOT_TTL = Duration.ofMinutes(5);
     private static final Pattern PROPERTY = Pattern.compile("\\{([^}:]+):\\s*([^}]*)}");
+    private static final Pattern KETHER_COMMAND = Pattern.compile(
+        "(?i)^command\\s+['\"](.+)['\"]\\s+as\\s+(console|player)$"
+    );
 
     private final MinecraftServer server;
     private final Path file;
@@ -114,13 +120,19 @@ public final class ChatFunctionService {
 
         MutableComponent output = Component.empty();
         List<String> mentioned = new ArrayList<>();
+        Set<String> cooldownGranted = new java.util.HashSet<>();
+        Set<String> actionsRun = new java.util.HashSet<>();
         cursor = 0;
         for (Token token : accepted) {
             if (token.start() < cursor) continue;
             output.append(Component.literal(message.substring(cursor, token.start())));
-            if (!canUse(sender, token)) {
+            if (!canUse(sender, token, cooldownGranted)) {
                 output.append(Component.literal(message.substring(token.start(), token.end())));
             } else {
+                String actionKey = token.custom() == null ? token.kind().name() : "custom:" + token.custom().id();
+                if (actionsRun.add(actionKey)) {
+                    runActions(sender, token.settings().actions(), message, token.argument());
+                }
                 Component replacement = renderToken(sender, token, mentioned);
                 output.append(replacement == null
                     ? Component.literal(message.substring(token.start(), token.end()))
@@ -256,14 +268,16 @@ public final class ChatFunctionService {
         }
     }
 
-    private boolean canUse(ServerPlayer sender, Token token) {
+    private boolean canUse(ServerPlayer sender, Token token, Set<String> cooldownGranted) {
         FunctionSettings settings = token.settings();
         if (!settings.permission().equalsIgnoreCase("none")
             && !TrChatPermissions.check(sender, settings.permission())) {
             return false;
         }
-        return settings.cooldownMillis() <= 0
-            || cooldown(sender, token.kind().name(), settings.cooldownMillis());
+        if (settings.cooldownMillis() <= 0) return true;
+        String key = token.custom() == null ? token.kind().name() : "custom:" + token.custom().id();
+        return cooldownGranted.contains(key)
+            || cooldown(sender, key, settings.cooldownMillis()) && cooldownGranted.add(key);
     }
 
     private boolean cooldown(ServerPlayer player, String function, long cooldownMillis) {
@@ -284,7 +298,7 @@ public final class ChatFunctionService {
         return switch (token.kind()) {
             case MENTION -> mention(sender, token.argument(), mentioned);
             case MENTION_ALL -> mentionAll(sender, mentioned);
-            case ITEM -> item(sender, token.argument());
+            case ITEM -> item(sender, token.argument(), token.settings());
             case INVENTORY -> inventory(sender, false);
             case ENDER_CHEST -> inventory(sender, true);
             case CUSTOM -> custom(token.custom(), token.argument());
@@ -325,18 +339,29 @@ public final class ChatFunctionService {
             )));
     }
 
-    private Component item(ServerPlayer sender, String slotArgument) {
+    private Component item(ServerPlayer sender, String slotArgument, FunctionSettings settings) {
         int slot = slotArgument.isBlank() ? sender.getInventory().selected : Integer.parseInt(slotArgument) - 1;
         ItemStack stack = sender.getInventory().getItem(slot);
         if (stack.isEmpty()) {
             return Component.literal("[空气]").withStyle(ChatFormatting.GRAY);
         }
+        ItemStack hoverStack = settings.compatible() ? new ItemStack(Items.STONE, stack.getCount()) : stack;
+        Component itemName = settings.originName()
+            ? Component.translatable(stack.getDescriptionId())
+            : stack.getHoverName();
         MutableComponent component = Component.literal("[")
-            .append(stack.getHoverName())
+            .append(itemName)
             .append(Component.literal(" x" + stack.getCount() + "]"));
-        return component.withStyle(style -> style
+        MutableComponent rendered = component.withStyle(style -> style
             .withColor(ChatFormatting.AQUA)
-            .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(stack))));
+            .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(hoverStack))));
+        if (settings.ui()) {
+            String snapshot = createItemSnapshot(sender, stack);
+            rendered.withStyle(style -> style.withClickEvent(
+                new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/trchat view " + snapshot)
+            ));
+        }
+        return rendered;
     }
 
     private Component inventory(ServerPlayer sender, boolean enderChest) {
@@ -381,6 +406,29 @@ public final class ChatFunctionService {
         return id;
     }
 
+    private String createItemSnapshot(ServerPlayer player, ItemStack stack) {
+        expireSnapshots();
+        String id = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        List<ItemStack> items = new ArrayList<>();
+        ItemContainerContents contents = stack.get(DataComponents.CONTAINER);
+        if (contents != null) {
+            for (ItemStack nested : contents.nonEmptyItems()) {
+                if (items.size() >= 27) break;
+                items.add(nested.copy());
+            }
+        }
+        if (items.isEmpty()) {
+            for (int index = 0; index < 13; index++) items.add(ItemStack.EMPTY);
+            items.add(stack.copy());
+        }
+        snapshots.put(id, new Snapshot(
+            System.nanoTime(), 27,
+            player.getGameProfile().getName() + " - " + stack.getHoverName().getString(),
+            List.copyOf(items)
+        ));
+        return id;
+    }
+
     private Component custom(CustomFunction function, String value) {
         if (function == null) return Component.literal(value);
         Display display = function.display();
@@ -402,6 +450,73 @@ public final class ChatFunctionService {
             style = style.withClickEvent(new ClickEvent(ClickEvent.Action.COPY_TO_CLIPBOARD, replace(display.copy(), value)));
         }
         return component.setStyle(style);
+    }
+
+    private void runActions(ServerPlayer sender, List<String> actions, String message, String argument) {
+        for (String configured : actions) {
+            String action = actionVariables(configured, sender, message, argument).trim();
+            if (action.isEmpty()) continue;
+            try {
+                Matcher ketherCommand = KETHER_COMMAND.matcher(action);
+                if (ketherCommand.matches()) {
+                    executeCommand(sender, ketherCommand.group(2), ketherCommand.group(1));
+                } else if (action.regionMatches(true, 0, "console:", 0, 8)) {
+                    executeCommand(sender, "console", action.substring(8));
+                } else if (action.regionMatches(true, 0, "[console]", 0, 9)) {
+                    executeCommand(sender, "console", action.substring(9));
+                } else if (action.regionMatches(true, 0, "player:", 0, 7)) {
+                    executeCommand(sender, "player", action.substring(7));
+                } else if (action.regionMatches(true, 0, "[player]", 0, 8)) {
+                    executeCommand(sender, "player", action.substring(8));
+                } else if (action.regionMatches(true, 0, "message:", 0, 8)) {
+                    sender.sendSystemMessage(LegacyText.parse(action.substring(8).trim()));
+                } else if (action.toLowerCase(Locale.ROOT).startsWith("tell ")) {
+                    sender.sendSystemMessage(LegacyText.parse(unquote(action.substring(5).trim())));
+                } else if (action.regionMatches(true, 0, "sound:", 0, 6)) {
+                    String sound = action.substring(6).trim();
+                    executeCommand(sender, "console", "playsound " + sound + " master "
+                        + sender.getGameProfile().getName() + " ~ ~ ~");
+                } else {
+                    LOGGER.log(System.Logger.Level.WARNING, "Unsupported function action: " + configured);
+                }
+            } catch (RuntimeException exception) {
+                LOGGER.log(System.Logger.Level.WARNING, "Unable to execute function action: " + configured);
+            }
+        }
+    }
+
+    private void executeCommand(ServerPlayer sender, String actor, String command) {
+        String normalized = unquote(command.trim());
+        if (normalized.startsWith("/")) normalized = normalized.substring(1);
+        if (normalized.isBlank()) return;
+        server.getCommands().performPrefixedCommand(
+            actor.equalsIgnoreCase("player")
+                ? sender.createCommandSourceStack()
+                : server.createCommandSourceStack(),
+            normalized
+        );
+    }
+
+    private static String actionVariables(
+        String action,
+        ServerPlayer sender,
+        String message,
+        String argument
+    ) {
+        return action
+            .replace("{player}", sender.getGameProfile().getName())
+            .replace("%player_name%", sender.getGameProfile().getName())
+            .replace("{message}", message)
+            .replace("{0}", argument);
+    }
+
+    private static String unquote(String value) {
+        if (value.length() >= 2
+            && (value.startsWith("\"") && value.endsWith("\"")
+            || value.startsWith("'") && value.endsWith("'"))) {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
     }
 
     private void expireSnapshots() {
@@ -450,9 +565,15 @@ public final class ChatFunctionService {
         boolean notifyPlayer,
         boolean selfMention,
         String pattern,
-        List<String> keys
+        List<String> keys,
+        List<String> actions,
+        boolean originName,
+        boolean compatible,
+        boolean ui
     ) {
         private static FunctionSettings from(Map<?, ?> map) {
+            List<String> actions = new ArrayList<>(strings(map.get("Action")));
+            actions.addAll(strings(map.get("Actions")));
             return new FunctionSettings(
                 bool(map.get("Enabled"), true),
                 string(map.get("Permission"), "none"),
@@ -460,7 +581,11 @@ public final class ChatFunctionService {
                 bool(map.get("Notify"), true),
                 bool(map.get("Self-Mention"), false),
                 string(map.get("Pattern"), "@? ?(names)"),
-                strings(map.get("Keys"))
+                strings(map.get("Keys")),
+                List.copyOf(actions),
+                bool(map.get("Origin-Name"), false),
+                bool(map.get("Compatible"), false),
+                bool(map.get("UI"), false)
             );
         }
     }
@@ -516,7 +641,9 @@ public final class ChatFunctionService {
         List<CustomFunction> customFunctions
     ) {
         private static Configuration empty() {
-            FunctionSettings disabled = new FunctionSettings(false, "none", 0, false, false, "", List.of());
+            FunctionSettings disabled = new FunctionSettings(
+                false, "none", 0, false, false, "", List.of(), List.of(), false, false, false
+            );
             return new Configuration(false, List.of(), disabled, disabled, disabled, disabled, disabled, List.of());
         }
 
@@ -558,7 +685,11 @@ public final class ChatFunctionService {
                             false,
                             false,
                             "",
-                            List.of()
+                            List.of(),
+                            actions(value),
+                            false,
+                            false,
+                            false
                         ),
                         Display.from(map(value.get("display")))
                     ));
@@ -621,6 +752,14 @@ public final class ChatFunctionService {
             return list.stream().map(String::valueOf).toList();
         }
         return value == null ? List.of() : List.of(String.valueOf(value));
+    }
+
+    private static List<String> actions(Map<?, ?> map) {
+        List<String> actions = new ArrayList<>(strings(map.get("action")));
+        actions.addAll(strings(map.get("actions")));
+        actions.addAll(strings(map.get("Action")));
+        actions.addAll(strings(map.get("Actions")));
+        return List.copyOf(actions);
     }
 
     private static String string(Object value, String fallback) {

@@ -1,6 +1,10 @@
 # TrChat NeoForge functions / 聊天功能
 # Compatible with the Bukkit TrChat function.yml layout.
 # 与 Bukkit TrChat 的 function.yml 层级和键名兼容。
+# Action/Actions compatibility supports:
+#   'console: command', 'player: command', 'message: text', 'sound: <sound> [volume] [pitch]'
+#   'command "..." as console/player' and 'tell "..."'
+# 可在动作中使用 {player}、{message} 与 {0}（匹配内容）。
 
 General:
   Command-Controller:
@@ -51,6 +55,7 @@ Custom:
   shareUrl:
     priority: 100
     pattern: '((https|http|ftp|rtsp|mms)?:\/\/)[^\s]+'
+    action: []
     display:
       text: '&8[&f&l网站&8]'
       hover:
