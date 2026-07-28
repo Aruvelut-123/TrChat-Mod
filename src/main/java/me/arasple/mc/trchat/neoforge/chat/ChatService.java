@@ -6,6 +6,7 @@ import me.arasple.mc.trchat.neoforge.channel.ChannelManager;
 import me.arasple.mc.trchat.neoforge.channel.ChannelRenderer;
 import me.arasple.mc.trchat.neoforge.channel.ConditionEvaluator;
 import me.arasple.mc.trchat.neoforge.config.TrChatConfig;
+import me.arasple.mc.trchat.neoforge.function.ChatFunctionService;
 import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
 import me.arasple.mc.trchat.neoforge.placeholder.PlaceholderResolver;
 import me.arasple.mc.trchat.neoforge.placeholder.PlayerStatsTracker;
@@ -38,6 +39,7 @@ public final class ChatService implements AutoCloseable {
     private final PlayerStatsTracker playerStats = new PlayerStatsTracker();
     private final PlaceholderResolver placeholders;
     private final ChannelRenderer renderer;
+    private final ChatFunctionService functions;
     private final Map<UUID, ChatState> chatStates = new HashMap<>();
     private final Map<UUID, String> activeChannels = new HashMap<>();
     private final Map<UUID, Set<String>> joinedChannels = new HashMap<>();
@@ -53,6 +55,8 @@ public final class ChatService implements AutoCloseable {
         channels.reload();
         this.placeholders = new PlaceholderResolver(server, metrics, playerStats);
         this.renderer = new ChannelRenderer(placeholders);
+        this.functions = new ChatFunctionService(server);
+        this.functions.reload();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             playerJoined(player);
         }
@@ -131,11 +135,14 @@ public final class ChatService implements AutoCloseable {
         }
 
         Map<String, String> local = Map.of("trchat_toplayer", exactTarget, "message", message);
+        ChatFunctionService.ProcessedMessage processed = functions.process(
+            sender, message, channel.options().disabledFunctions()
+        );
         ChannelRenderer.Rendered senderView = renderer.render(
-            channel, ChannelRenderer.Audience.SENDER, sender, message, local
+            channel, ChannelRenderer.Audience.SENDER, sender, processed.component(), message, local
         );
         ChannelRenderer.Rendered receiverView = renderer.render(
-            channel, ChannelRenderer.Audience.RECEIVER, sender, message, local
+            channel, ChannelRenderer.Audience.RECEIVER, sender, processed.component(), message, local
         );
         sender.sendSystemMessage(senderView.component());
 
@@ -187,12 +194,21 @@ public final class ChatService implements AutoCloseable {
         int loaded = channels.reload();
         if (loaded >= 0) {
             activeChannels.replaceAll((uuid, current) -> channels.byId(current).isPresent() ? current : "Normal");
+            functions.reload();
         }
         return loaded;
     }
 
     public int channelCount() {
         return channels.all().size();
+    }
+
+    public boolean openFunctionSnapshot(ServerPlayer player, String id) {
+        return functions.openSnapshot(player, id);
+    }
+
+    public boolean checkCommand(ServerPlayer player, String commandLine) {
+        return functions.checkCommand(player, commandLine);
     }
 
     public void reconnectRedis() {
@@ -275,10 +291,14 @@ public final class ChatService implements AutoCloseable {
             return false;
         }
 
+        ChatFunctionService.ProcessedMessage processed = functions.process(
+            player, message, channel.options().disabledFunctions()
+        );
         ChannelRenderer.Rendered rendered = renderer.render(
             channel,
             ChannelRenderer.Audience.CHAT,
             player,
+            processed.component(),
             message,
             Map.of("message", message)
         );

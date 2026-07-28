@@ -15,6 +15,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.ServerChatEvent;
+import net.neoforged.neoforge.event.CommandEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
@@ -82,6 +83,18 @@ public final class TrChatServerEvents {
     }
 
     @SubscribeEvent
+    public void onCommand(CommandEvent event) {
+        if (service == null) {
+            return;
+        }
+        CommandSourceStack source = event.getParseResults().getContext().getSource();
+        if (source.getEntity() instanceof ServerPlayer player
+            && !service.checkCommand(player, event.getParseResults().getReader().getString())) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
     public void onServerTick(ServerTickEvent.Post event) {
         if (service != null) {
             service.tick();
@@ -132,7 +145,13 @@ public final class TrChatServerEvents {
                         .executes(context -> selectChannel(
                             context.getSource(),
                             StringArgumentType.getString(context, "channel")
-                        ))))));
+                        )))))
+            .then(Commands.literal("view")
+                .then(Commands.argument("snapshot", StringArgumentType.word())
+                    .executes(context -> openSnapshot(
+                        context.getSource(),
+                        StringArgumentType.getString(context, "snapshot")
+                    )))));
 
         dispatcher.register(Commands.literal("trmsg")
             .then(Commands.argument("player", StringArgumentType.word())
@@ -270,6 +289,18 @@ public final class TrChatServerEvents {
             return 0;
         }
         return service.sendServer(message, source.getPlayer());
+    }
+
+    private int openSnapshot(CommandSourceStack source, String snapshot) {
+        if (service == null) {
+            return 0;
+        }
+        try {
+            return service.openFunctionSnapshot(source.getPlayerOrException(), snapshot) ? 1 : 0;
+        } catch (CommandSyntaxException exception) {
+            source.sendFailure(Component.literal("This command can only be used by a player."));
+            return 0;
+        }
     }
 
     private void registerPrivateAlias(CommandDispatcher<CommandSourceStack> dispatcher, String alias) {

@@ -29,6 +29,28 @@ public final class ChannelRenderer {
         String message,
         Map<String, String> local
     ) {
+        return render(channel, audience, player, message, local, null);
+    }
+
+    public Rendered render(
+        ChannelDefinition channel,
+        Audience audience,
+        ServerPlayer player,
+        Component messageComponent,
+        String rawMessage,
+        Map<String, String> local
+    ) {
+        return render(channel, audience, player, rawMessage, local, messageComponent);
+    }
+
+    private Rendered render(
+        ChannelDefinition channel,
+        Audience audience,
+        ServerPlayer player,
+        String message,
+        Map<String, String> local,
+        Component messageComponent
+    ) {
         List<ChannelDefinition.Format> candidates = switch (audience) {
             case SENDER -> channel.senderFormats();
             case RECEIVER -> channel.receiverFormats();
@@ -52,8 +74,21 @@ public final class ChannelRenderer {
         if (color.startsWith("&") || color.startsWith("§")) {
             color = color.substring(1);
         }
+        net.minecraft.ChatFormatting defaultFormatting = net.minecraft.ChatFormatting.getByCode(
+            color.isEmpty() ? 'f' : color.charAt(0)
+        );
+        if (defaultFormatting == null) {
+            defaultFormatting = net.minecraft.ChatFormatting.WHITE;
+        }
+        net.minecraft.ChatFormatting finalFormatting = defaultFormatting;
         String cleanMessage = LegacyText.stripLegacyCodes(placeholders.resolve(message, player, local));
-        MutableComponent body = LegacyText.parse("&" + color + cleanMessage).copy();
+        MutableComponent body = messageComponent == null
+            ? LegacyText.parse("&" + color + cleanMessage).copy()
+            : Component.empty()
+                .withStyle(style -> style.applyLegacyFormat(
+                    finalFormatting
+                ))
+                .append(messageComponent.copy());
         if (!messagePart.hover().isBlank()) {
             Component hover = LegacyText.parse(placeholders.resolve(messagePart.hover(), player, local));
             body.withStyle(style -> style.withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, hover)));

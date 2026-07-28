@@ -18,12 +18,15 @@ public final class TrChatPermissions {
         "trchat", "admin", PermissionTypes.BOOLEAN,
         (player, uuid, context) -> player != null && player.hasPermissions(2)
     );
+    public static final PermissionNode<Boolean> MENTION_ALL = restricted("function.mentionall");
+    public static final PermissionNode<Boolean> INVENTORY_SHOW = restricted("function.inventoryshow");
+    public static final PermissionNode<Boolean> ENDER_CHEST_SHOW = restricted("function.enderchestshow");
 
     private TrChatPermissions() {
     }
 
     public static void register(PermissionGatherEvent.Nodes event) {
-        event.addNodes(GLOBAL, PRIVATE, ADMIN);
+        event.addNodes(GLOBAL, PRIVATE, ADMIN, MENTION_ALL, INVENTORY_SHOW, ENDER_CHEST_SHOW);
     }
 
     public static boolean check(ServerPlayer player, String permission) {
@@ -38,5 +41,12 @@ public final class TrChatPermissions {
             }
         }
         return player.hasPermissions(2);
+    }
+
+    private static PermissionNode<Boolean> restricted(String name) {
+        return new PermissionNode<>(
+            "trchat", name, PermissionTypes.BOOLEAN,
+            (player, uuid, context) -> player != null && player.hasPermissions(2)
+        );
     }
 }
