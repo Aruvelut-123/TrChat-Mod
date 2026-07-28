@@ -26,5 +26,5 @@ body:
   - type: textarea
     attributes:
       label: 日志与配置
-      description: 粘贴日志或 trchat-neoforge.toml 前请删除 Redis 密码。
+      description: 粘贴日志或 config/trchat-neoforge 配置前请删除 Redis 与数据库密码。
       render: shell

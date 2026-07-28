@@ -1,16 +1,21 @@
 [CmdletBinding()]
 param(
     [switch]$AcceptEula,
-    [string]$JavaHome = 'C:\Program Files\Microsoft\jdk-21.0.10.7-hotspot'
+    [string]$JavaHome = $env:JAVA_HOME
 )
 
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 $runDirectory = Join-Path $repository 'run'
-$javaExecutable = Join-Path $JavaHome 'bin\java.exe'
+$javaExecutable = if ($JavaHome) {
+    Join-Path $JavaHome 'bin\java.exe'
+}
+else {
+    (Get-Command java -ErrorAction SilentlyContinue).Source
+}
 
-if (-not (Test-Path -LiteralPath $javaExecutable)) {
-    throw "Java 21 was not found at '$JavaHome'. Pass -JavaHome with a Java 21 JDK path."
+if (-not $javaExecutable -or -not (Test-Path -LiteralPath $javaExecutable)) {
+    throw 'Java 21 was not found. Set JAVA_HOME or pass -JavaHome with a Java 21 JDK path.'
 }
 
 if ($AcceptEula) {
@@ -20,7 +25,9 @@ if ($AcceptEula) {
 
 $previousJavaHome = $env:JAVA_HOME
 try {
-    $env:JAVA_HOME = $JavaHome
+    if ($JavaHome) {
+        $env:JAVA_HOME = $JavaHome
+    }
     & (Join-Path $repository 'gradlew.bat') 'runServer' '--no-configuration-cache' '--console=plain'
     exit $LASTEXITCODE
 }

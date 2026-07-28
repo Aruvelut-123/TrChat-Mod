@@ -33,5 +33,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: TrChat-NeoForge-1.21.1
-          path: build/libs/trchat_neoforge-*.jar
+          path: |
+            build/libs/trchat_neoforge-*.jar
+            !build/libs/*-sources.jar
           if-no-files-found: error

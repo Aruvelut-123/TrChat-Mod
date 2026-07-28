@@ -26,5 +26,5 @@ body:
   - type: textarea
     attributes:
       label: Logs and configuration
-      description: Remove Redis passwords before pasting logs or trchat-neoforge.toml.
+      description: Remove passwords before pasting logs or config/trchat-neoforge configuration files.
       render: shell
