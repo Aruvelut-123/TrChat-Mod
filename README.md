@@ -198,7 +198,7 @@ Set-Location D:\TrChat-Neoforge
 安装并登录 [GitHub CLI](https://cli.github.com/)，同时把 `git-cliff` 加入 PATH，然后运行：
 
 ```powershell
-.\scripts\release.ps1 -Tag v2.4.9.4
+.\scripts\release.ps1 -Tag v2.4.9.5
 ```
 
 脚本会检查干净工作区、完整构建、通过 `git-cliff` 从提交生成更新列表、创建并推送 tag，再用 `gh release create` 上传唯一的非 sources JAR。GitHub Release 发布事件也会触发工作流重新构建、更新提交列表并覆盖上传产物。
