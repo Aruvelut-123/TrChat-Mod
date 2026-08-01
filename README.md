@@ -22,7 +22,9 @@ NeoForge 作者与维护者：[Baymaxawa](https://space.bilibili.com/475655508)�
 - 完整实现用户所列的 Player 与 Server 占位符，包括动态权限、药水、附魔、世界在线人数、时间、倒计时和 TPS。
 - Bukkit 风格 `function.yml`：玩家/全体艾特、物品、背包、末影箱、命令控制、自定义正则组件与 Action/Actions。
 - Bukkit 风格 `filter.yml`：本地词库、云词库、白名单、忽略标点、聊天/告示牌/铁砧过滤。
-- 普通禁言、ShadowMute、私聊监听、全服禁言和回复关系。
+- 普通禁言、ShadowMute、私聊监听、全服禁言、回复关系，以及可持久化的本地/跨服玩家屏蔽。
+- 与上游一致的玩家聊天颜色选择（`trchat.color.<0-9a-f>` 权限）和管理员清屏命令。
+- 普通聊天与私聊按日写入纯文本日志，可配置格式和自动保留天数。
 - 按客户端语言自动选择 `lang/zh_CN.yml`、`en_US.yml`、`es_ES.yml`，并支持自行增加语言文件。
 - 语言文件的 `Placeholder-Translations` 可对预先列明的纯英文占位符结果做精确本地化；数字、混合文本、非英文结果及玩家名等动态值保持原样。
 - YAML 配置与语言文件加载时自动补齐缺失项、删除未知项，并保留所有已知项的用户值。
@@ -46,6 +48,8 @@ config/trchat-neoforge/
 │   ├── zh_CN.yml
 │   ├── en_US.yml
 │   └── es_ES.yml
+├── logs/
+│   └── yyyy-MM-dd.txt
 └── channels/
     ├── Normal.yml
     ├── Global.yml
@@ -106,7 +110,9 @@ SQLite:
 
 改为 `Type: MySQL` 或 `Type: MariaDB` 后，填写文件中对应的 Host、Port、Database、User、Password 与 Parameters。连接示例和中英文说明已写在默认配置里。自定义 JDBC 可填写 Driver 与 Url，但驱动必须能在运行环境中被加载。
 
-数据库保存玩家禁言截止时间、原因、ShadowMute 和私聊监听开关。SQLite 文件位于 `config/trchat-neoforge/data.db`。
+数据库保存玩家禁言截止时间、原因、ShadowMute、私聊监听开关、频道状态、屏蔽列表和聊天颜色。SQLite 文件位于 `config/trchat-neoforge/data.db`。
+
+聊天日志配置位于 `settings.toml` 的 `[logging]`：`normalFormat`、`privateFormat` 和 `retentionDays`。`retentionDays = 0` 表示不自动删除。
 
 ## function.yml
 
@@ -158,6 +164,10 @@ NeoForge 1.21.1 的铁砧事件不能安全地只改写重命名文本而不替�
 | `/trchat shadowmute <玩家> [on\|off]` | 切换影子禁言 |
 | `/shadowmute <玩家> [on\|off]` | ShadowMute 快捷命令 |
 | `/trchat spy [on\|off]` | 切换私聊监听 |
+| `/ignore <玩家> [on\|off]`、`/trignore` | 屏蔽或恢复接收本地/跨服玩家消息 |
+| `/ignorelist` | 查看已屏蔽玩家；离线后仍可按列表中的名字解除 |
+| `/trchat color <0-9a-f\|reset>` | 选择或重置聊天颜色 |
+| `/trchat clear <玩家\|*>` | 为一个玩家或全体玩家清屏 |
 | `/trchat msg <玩家> <内容>` | 发送私聊 |
 | `/tell`、`/msg` 等 Private 频道绑定 | 通过 Private 频道发送本服或跨服私聊 |
 | `/r <内容>`、`/reply <内容>` | 回复最后一个向你发送私聊的玩家 |
@@ -210,6 +220,8 @@ Set-Location D:\TrChat-Neoforge
 ```
 
 这样可持续同步上游行为，同时不会重新引入 Bukkit、代理端或 DiscordSRV。
+
+当前审计基线为 Bukkit TrChat `2.4.9`（`1428f01`）。CMI、DiscordSRV、PlaceholderAPI 等 Bukkit 插件钩子，以及依赖 Paper 客户端消息包重放的接收过滤开关和消息撤回，不属于纯 NeoForge 可等价移植的功能；其余聊天核心能力按 NeoForge API 实现。
 
 ## 许可证
 
