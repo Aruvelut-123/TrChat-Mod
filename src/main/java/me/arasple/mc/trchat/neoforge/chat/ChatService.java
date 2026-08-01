@@ -15,6 +15,7 @@ import me.arasple.mc.trchat.neoforge.placeholder.PlaceholderResolver;
 import me.arasple.mc.trchat.neoforge.placeholder.PlayerStatsTracker;
 import me.arasple.mc.trchat.neoforge.placeholder.ServerMetrics;
 import me.arasple.mc.trchat.neoforge.protocol.TrChatMessage;
+import me.arasple.mc.trchat.neoforge.protocol.TrChatProtocol;
 import me.arasple.mc.trchat.neoforge.redis.RedisBridge;
 import me.arasple.mc.trchat.neoforge.redis.RedisSettings;
 import net.minecraft.network.chat.Component;
@@ -59,9 +60,9 @@ public final class ChatService implements AutoCloseable {
         this.server = server;
         this.channels = channels;
         channels.reload();
-        this.placeholders = new PlaceholderResolver(server, metrics, playerStats);
-        this.renderer = new ChannelRenderer(placeholders);
         this.moderation = new ModerationService();
+        this.placeholders = new PlaceholderResolver(server, metrics, playerStats, moderation.languages());
+        this.renderer = new ChannelRenderer(placeholders);
         this.functions = new ChatFunctionService(server, moderation.languages());
         this.functions.reload();
         this.filters = new FilterService(server, moderation.languages());
@@ -153,10 +154,14 @@ public final class ChatService implements AutoCloseable {
         ChannelRenderer.Rendered receiverView = renderer.render(
             channel, ChannelRenderer.Audience.RECEIVER, sender, processed.component(), message, local
         );
+        boolean shadowMuted = moderation.shadowMuted(sender);
+        if (!shadowMuted && localTarget == null && !processed.crossServerSafe()) {
+            sendLang(sender, "Redis-Unsafe-Item");
+            return 0;
+        }
         sender.sendSystemMessage(senderView.component());
-        lastPrivateSender.put(sender.getUUID(), exactTarget);
 
-        if (moderation.shadowMuted(sender)) {
+        if (shadowMuted) {
             logToConsole(channel, sender, message, local);
             return 1;
         }
@@ -171,19 +176,16 @@ public final class ChatService implements AutoCloseable {
             return 1;
         }
 
-        if (!channel.options().redis() || redis == null || !redis.publish(TrChatMessage.of(
-            "ForwardMessage",
-            "SendPrivateRaw",
+        if (!channel.options().redis() || redis == null || !redis.publish(TrChatProtocol.forwardPrivate(
             exactTarget,
             sender.getGameProfile().getName(),
             ComponentJson.serialize(receiverView.component(), server),
             receiverView.fallback(),
-            ""
+            ComponentJson.serialize(processed.component(), server)
         ))) {
             sendLang(sender, "Redis-Private-Unavailable");
             return 0;
         }
-        notifyPrivateSpies(sender, sender.getGameProfile().getName(), exactTarget, message, null);
         logToConsole(channel, sender, message, local);
         return 1;
     }
@@ -418,10 +420,10 @@ public final class ChatService implements AutoCloseable {
             return true;
         }
 
-        if (channel.options().redis() && redis != null) {
+        if (channel.options().redis() && redis != null && processed.crossServerSafe()) {
             TrChatMessage packet = TrChatMessage.of(
                 "BroadcastRaw",
-                player.getUUID().toString(),
+                TrChatProtocol.formatUuid(player.getUUID()),
                 ComponentJson.serialize(rendered.component(), server),
                 channel.options().listenPermission(),
                 Boolean.toString(channel.options().doubleTransfer()),
@@ -483,6 +485,12 @@ public final class ChatService implements AutoCloseable {
     }
 
     private int toggleChannel(ServerPlayer player, ChannelDefinition channel) {
+        if (!channel.isJoinable()) {
+            sendLang(player, channel.options().privateChannel()
+                ? "Channel-Private-Target"
+                : "Channel-Server-Say-Only");
+            return 0;
+        }
         String id = channel.id().toLowerCase(Locale.ROOT);
         Set<String> joined = joinedChannels.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>());
         if (activeChannels.getOrDefault(player.getUUID(), "Normal").equalsIgnoreCase(channel.id())) {
@@ -555,7 +563,7 @@ public final class ChatService implements AutoCloseable {
     private void restoreChannelMembership(ServerPlayer player) {
         Set<String> joined = new HashSet<>(moderation.joinedChannels(player));
         joined.removeIf(id -> channels.byId(id)
-            .map(channel -> channel.options().privateChannel() || channel.id().equalsIgnoreCase("Server"))
+            .map(channel -> !channel.isJoinable())
             .orElse(true));
 
         if (joined.isEmpty()) {
@@ -586,8 +594,7 @@ public final class ChatService implements AutoCloseable {
             .sorted()
             .map(channels::byId)
             .flatMap(java.util.Optional::stream)
-            .filter(channel -> !channel.options().privateChannel())
-            .filter(channel -> !channel.id().equalsIgnoreCase("Server"))
+            .filter(ChannelDefinition::isJoinable)
             .filter(channel -> hasPermission(player, channel.options().joinPermission()))
             .map(ChannelDefinition::id)
             .findFirst()
@@ -670,17 +677,22 @@ public final class ChatService implements AutoCloseable {
         if (data.size() < 4) {
             return;
         }
-        ServerPlayer target = server.getPlayerList().getPlayerByName(data.get(1));
-        if (target == null) {
-            return;
-        }
+        String targetName = data.get(1);
+        ServerPlayer target = server.getPlayerList().getPlayerByName(targetName);
         String from = data.get(2);
         String fallback = data.size() > 4 ? data.get(4) : "";
         Component component = ComponentJson.deserialize(data.get(3), fallback, server);
-        target.sendSystemMessage(component);
+        if (target != null) {
+            target.sendSystemMessage(component);
+        }
         if (!from.isBlank()) {
-            lastPrivateSender.put(target.getUUID(), from);
-            notifyPrivateSpies(null, from, target.getGameProfile().getName(), component.getString(), target);
+            if (target != null) {
+                lastPrivateSender.put(target.getUUID(), from);
+            }
+            Component spyMessage = data.size() > 5 && !data.get(5).isBlank()
+                ? ComponentJson.deserialize(data.get(5), component.getString(), server)
+                : component;
+            notifyPrivateSpies(null, from, targetName, spyMessage.getString(), target);
         }
     }
 
@@ -694,7 +706,9 @@ public final class ChatService implements AutoCloseable {
         for (ServerPlayer observer : server.getPlayerList().getPlayers()) {
             if (!moderation.privateSpy(observer)
                 || sender != null && observer.getUUID().equals(sender.getUUID())
-                || target != null && observer.getUUID().equals(target.getUUID())) {
+                || target != null && observer.getUUID().equals(target.getUUID())
+                || observer.getGameProfile().getName().equalsIgnoreCase(senderName)
+                || observer.getGameProfile().getName().equalsIgnoreCase(targetName)) {
                 continue;
             }
             sendLang(observer, "Private-Message-Spy-Format", senderName, targetName, message);
@@ -720,7 +734,10 @@ public final class ChatService implements AutoCloseable {
             String displayName = index < displayNames.length && !"#".equals(displayNames[index])
                 ? displayNames[index]
                 : names[index];
-            UUID uuid = index < uuids.length ? parseUuid(uuids[index]) : new UUID(0, 0);
+            UUID uuid = index < uuids.length ? TrChatProtocol.parseUuid(uuids[index]) : null;
+            if (uuid == null) {
+                continue;
+            }
             players.add(new RemotePlayer(names[index], displayName, uuid));
         }
         remotePlayers.put(serverId, new RemoteServerPlayers(System.nanoTime(), players));
@@ -742,6 +759,15 @@ public final class ChatService implements AutoCloseable {
             return;
         }
         List<ServerPlayer> players = server.getPlayerList().getPlayers();
+        // Bukkit 2.4.x treats an empty names field as one blank entry and then
+        // parses the UUID at index zero. A nil UUID safely clears the previous
+        // server snapshot without producing FastUUID warnings or a real player.
+        if (players.isEmpty()) {
+            redis.publish(TrChatProtocol.emptyPlayerNames(
+                Integer.toString(TrChatConfig.SERVER_ID.getAsInt())
+            ));
+            return;
+        }
         String names = String.join(",", players.stream().map(player -> player.getGameProfile().getName()).toList());
         String displayNames = String.join(",", players.stream()
             .map(player -> {
@@ -749,7 +775,9 @@ public final class ChatService implements AutoCloseable {
                 return display.isBlank() ? "#" : display.replace(",", "");
             })
             .toList());
-        String uuids = String.join(",", players.stream().map(player -> player.getUUID().toString()).toList());
+        String uuids = String.join(",", players.stream()
+            .map(player -> TrChatProtocol.formatUuid(player.getUUID()))
+            .toList());
         redis.publish(TrChatMessage.of(
             "UpdateNames",
             Integer.toString(TrChatConfig.SERVER_ID.getAsInt()),
@@ -804,22 +832,6 @@ public final class ChatService implements AutoCloseable {
 
     private static String[] splitProtocolList(String value) {
         return value.isEmpty() ? new String[0] : value.split(",", -1);
-    }
-
-    private static UUID parseUuid(String value) {
-        try {
-            return UUID.fromString(value);
-        } catch (IllegalArgumentException ignored) {
-            if (value.length() == 32) {
-                String dashed = value.substring(0, 8) + '-'
-                    + value.substring(8, 12) + '-'
-                    + value.substring(12, 16) + '-'
-                    + value.substring(16, 20) + '-'
-                    + value.substring(20);
-                return UUID.fromString(dashed);
-            }
-            return new UUID(0, 0);
-        }
     }
 
     private record ChatState(long sentAt, String message) {

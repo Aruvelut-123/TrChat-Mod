@@ -47,6 +47,10 @@ public record ChannelDefinition(
         return id.equalsIgnoreCase("Normal");
     }
 
+    public boolean isJoinable() {
+        return !options.privateChannel() && !id.equalsIgnoreCase("Server");
+    }
+
     public record Options(
         String joinPermission,
         String listenPermission,

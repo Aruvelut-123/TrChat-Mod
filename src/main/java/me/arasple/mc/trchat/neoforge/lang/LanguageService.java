@@ -2,29 +2,29 @@ package me.arasple.mc.trchat.neoforge.lang;
 
 import me.arasple.mc.trchat.neoforge.chat.LegacyText;
 import me.arasple.mc.trchat.neoforge.config.TrChatConfig;
+import me.arasple.mc.trchat.neoforge.config.YamlConfigSynchronizer;
+import me.arasple.mc.trchat.neoforge.placeholder.PlaceholderCatalog;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.fml.loading.FMLPaths;
-import org.yaml.snakeyaml.LoaderOptions;
-import org.yaml.snakeyaml.Yaml;
-import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public final class LanguageService {
 
     private static final String[] DEFAULTS = {"zh_CN", "en_US", "es_ES"};
     private static final System.Logger LOGGER = System.getLogger(LanguageService.class.getName());
+    private static final Pattern ENGLISH_RESULT = Pattern.compile(
+        "[A-Za-z]+(?:[ _-][A-Za-z]+)*"
+    );
 
     private final Path directory;
     private volatile Map<String, Map<String, String>> languages = Map.of();
@@ -36,14 +36,15 @@ public final class LanguageService {
     public synchronized boolean reload() {
         try {
             Files.createDirectories(directory);
-            for (String language : DEFAULTS) copyDefault(language);
             Map<String, Map<String, String>> loaded = new HashMap<>();
+            for (String language : DEFAULTS) {
+                synchronizeLanguage(directory.resolve(language + ".yml"), language);
+            }
             try (Stream<Path> files = Files.list(directory)) {
                 for (Path file : files.filter(path -> path.getFileName().toString().endsWith(".yml")).toList()) {
                     String name = stem(file);
-                    Map<String, String> merged = new HashMap<>(loadBundled(name));
-                    merged.putAll(load(file));
-                    loaded.put(name.toLowerCase(Locale.ROOT), Map.copyOf(merged));
+                    Map<String, Object> repaired = synchronizeLanguage(file, name);
+                    loaded.put(name.toLowerCase(Locale.ROOT), flatten(repaired));
                 }
             }
             languages = Map.copyOf(loaded);
@@ -59,14 +60,8 @@ public final class LanguageService {
     }
 
     public String text(ServerPlayer player, String key, Object... arguments) {
-        String requested = player == null
-            ? TrChatConfig.DEFAULT_LANGUAGE.get()
-            : player.clientInformation().language();
-        Map<String, String> selected = languages.get(requested.toLowerCase(Locale.ROOT));
-        Map<String, String> fallback = languages.getOrDefault(
-            TrChatConfig.DEFAULT_LANGUAGE.get().toLowerCase(Locale.ROOT),
-            languages.getOrDefault("en_us", Map.of())
-        );
+        Map<String, String> selected = selected(player);
+        Map<String, String> fallback = fallback();
         String value = selected == null ? null : selected.get(key);
         if (value == null) value = fallback.getOrDefault(key, key);
         for (int index = 0; index < arguments.length; index++) {
@@ -75,35 +70,55 @@ public final class LanguageService {
         return value;
     }
 
-    private Map<String, String> load(Path file) throws IOException {
-        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            return load(reader, file.toString());
-        }
+    public String translatePlaceholder(ServerPlayer player, String token, String value) {
+        return translatePlaceholderValue(token, value, selected(player), fallback());
     }
 
-    private Map<String, String> loadBundled(String requested) throws IOException {
-        String bundled = java.util.Arrays.stream(DEFAULTS)
-            .filter(value -> value.equalsIgnoreCase(requested))
-            .findFirst()
-            .orElse(null);
-        if (bundled == null) return Map.of();
-        try (InputStream input = LanguageService.class.getResourceAsStream("/defaults/lang/" + bundled + ".yml")) {
-            if (input == null) return Map.of();
-            return load(new InputStreamReader(input, StandardCharsets.UTF_8), bundled);
+    static String translatePlaceholderValue(
+        String token,
+        String value,
+        Map<String, String> selected,
+        Map<String, String> fallback
+    ) {
+        if (!PlaceholderCatalog.isLocalizable(token)
+            || value == null
+            || !ENGLISH_RESULT.matcher(value).matches()) {
+            return value;
         }
+        String key = "Placeholder-Translations." + value.toLowerCase(Locale.ROOT);
+        String translated = selected == null ? null : selected.get(key);
+        return translated == null ? fallback.getOrDefault(key, value) : translated;
     }
 
-    private Map<String, String> load(Reader reader, String source) throws IOException {
-        Object value = new Yaml(new SafeConstructor(new LoaderOptions())).load(reader);
-        if (!(value instanceof Map<?, ?> root)) {
-            throw new IOException("Language root must be a mapping: " + source);
-        }
+    private Map<String, String> selected(ServerPlayer player) {
+        String requested = player == null
+            ? TrChatConfig.DEFAULT_LANGUAGE.get()
+            : player.clientInformation().language();
+        return languages.get(requested.toLowerCase(Locale.ROOT));
+    }
+
+    private Map<String, String> fallback() {
+        return languages.getOrDefault(
+            TrChatConfig.DEFAULT_LANGUAGE.get().toLowerCase(Locale.ROOT),
+            languages.getOrDefault("en_us", Map.of())
+        );
+    }
+
+    private static Map<String, String> flatten(Map<String, Object> root) {
         Map<String, String> output = new HashMap<>();
-        root.forEach((key, entry) -> output.put(String.valueOf(key), flatten(entry)));
+        root.forEach((key, entry) -> {
+            if ("Placeholder-Translations".equals(key) && entry instanceof Map<?, ?> translations) {
+                translations.forEach((english, translated) -> output.put(
+                    key + '.' + String.valueOf(english).toLowerCase(Locale.ROOT), flattenValue(translated)
+                ));
+            } else {
+                output.put(key, flattenValue(entry));
+            }
+        });
         return Map.copyOf(output);
     }
 
-    private static String flatten(Object value) {
+    private static String flattenValue(Object value) {
         if (value instanceof String string) return string;
         if (value instanceof java.util.List<?> list) {
             for (Object entry : list) {
@@ -115,13 +130,14 @@ public final class LanguageService {
         return value == null ? "" : String.valueOf(value);
     }
 
-    private void copyDefault(String language) throws IOException {
-        Path target = directory.resolve(language + ".yml");
-        if (Files.exists(target)) return;
-        try (InputStream input = LanguageService.class.getResourceAsStream("/defaults/lang/" + language + ".yml")) {
-            if (input == null) throw new IOException("Missing bundled language " + language);
-            Files.copy(input, target);
-        }
+    private Map<String, Object> synchronizeLanguage(Path file, String requested) throws IOException {
+        String bundled = java.util.Arrays.stream(DEFAULTS)
+            .filter(value -> value.equalsIgnoreCase(requested))
+            .findFirst()
+            .orElse("en_US");
+        return YamlConfigSynchronizer.synchronize(
+            file, "/defaults/lang/" + bundled + ".yml", Set.of()
+        );
     }
 
     private static String stem(Path file) {

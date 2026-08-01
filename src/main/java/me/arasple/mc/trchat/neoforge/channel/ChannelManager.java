@@ -1,12 +1,12 @@
 package me.arasple.mc.trchat.neoforge.channel;
 
+import me.arasple.mc.trchat.neoforge.config.YamlConfigSynchronizer;
 import net.neoforged.fml.loading.FMLPaths;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -41,9 +41,9 @@ public final class ChannelManager {
         try {
             Files.createDirectories(directory);
             for (String channel : DEFAULT_CHANNELS) {
-                copyDefault(channel);
+                synchronizeChannel(directory.resolve(channel + ".yml"), channel);
             }
-            copyDefault(EXAMPLE_CHANNEL);
+            synchronizeChannel(directory.resolve(EXAMPLE_CHANNEL + ".yml"), EXAMPLE_CHANNEL);
 
             LinkedHashMap<String, ChannelDefinition> loaded = new LinkedHashMap<>();
             try (Stream<Path> files = Files.walk(directory)) {
@@ -53,6 +53,7 @@ public final class ChannelManager {
                     .filter(path -> !path.getFileName().toString().equalsIgnoreCase(EXAMPLE_CHANNEL + ".yml"))
                     .sorted()
                     .toList()) {
+                    synchronizeChannel(file, stem(file));
                     ChannelDefinition definition = load(file);
                     loaded.put(definition.id().toLowerCase(Locale.ROOT), definition);
                 }
@@ -149,18 +150,19 @@ public final class ChannelManager {
         }
     }
 
-    private void copyDefault(String channel) throws IOException {
-        Path target = directory.resolve(channel + ".yml");
-        if (Files.exists(target)) {
-            return;
-        }
-        String resource = "/defaults/channels/" + channel + ".yml";
-        try (InputStream input = ChannelManager.class.getResourceAsStream(resource)) {
-            if (input == null) {
-                throw new IOException("Missing bundled channel " + resource);
-            }
-            Files.copy(input, target);
-        }
+    private void synchronizeChannel(Path file, String channel) throws IOException {
+        String bundled = java.util.Arrays.stream(DEFAULT_CHANNELS)
+            .filter(value -> value.equalsIgnoreCase(channel))
+            .findFirst()
+            .orElseGet(() -> EXAMPLE_CHANNEL.equalsIgnoreCase(channel) ? EXAMPLE_CHANNEL : "Schema");
+        YamlConfigSynchronizer.synchronize(
+            file, "/defaults/channels/" + bundled + ".yml", java.util.Set.of()
+        );
+    }
+
+    private static String stem(Path file) {
+        String name = file.getFileName().toString();
+        return name.substring(0, name.length() - 4);
     }
 
     public record PrefixMatch(ChannelDefinition channel, String prefix) {

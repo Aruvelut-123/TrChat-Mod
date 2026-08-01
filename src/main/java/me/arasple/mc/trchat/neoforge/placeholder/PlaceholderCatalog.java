@@ -39,6 +39,27 @@ public final class PlaceholderCatalog {
         "world_time_12", "world_time_24", "x", "y", "z", "yaw", "pitch", "absorption"
     );
 
+    private static final Set<String> LOCALIZABLE = Set.of(
+        "server_has_whitelist",
+        "player_allow_flight",
+        "player_can_pickup_items",
+        "player_gamemode",
+        "player_has_empty_slot",
+        "player_has_played_before",
+        "player_has_health_boost",
+        "player_online",
+        "player_is_whitelisted",
+        "player_is_banned",
+        "player_is_flying",
+        "player_is_sneaking",
+        "player_is_sprinting",
+        "player_is_sleeping",
+        "player_is_inside_vehicle",
+        "player_is_op",
+        "player_direction",
+        "player_world_type"
+    );
+
     private PlaceholderCatalog() {
     }
 
@@ -60,5 +81,18 @@ public final class PlaceholderCatalog {
                 || key.startsWith("item_in_offhand_level_");
         }
         return false;
+    }
+
+    public static boolean isLocalizable(String token) {
+        if (token == null) {
+            return false;
+        }
+        if (token.startsWith("server_countdown_")) {
+            return true;
+        }
+        if (token.startsWith("player_has_permission_") || token.startsWith("player_has_potioneffect_")) {
+            return true;
+        }
+        return LOCALIZABLE.contains(token);
     }
 }

@@ -60,6 +60,15 @@ class PlaceholderCatalogTest {
             """);
     }
 
+    @Test
+    void localizesOnlyPredefinedTextualPlaceholders() {
+        assertTrue(PlaceholderCatalog.isLocalizable("player_gamemode"));
+        assertTrue(PlaceholderCatalog.isLocalizable("player_has_permission_trchat.global"));
+        assertTrue(PlaceholderCatalog.isLocalizable("server_countdown_dd.MM.yyyy_01.01.2030"));
+        org.junit.jupiter.api.Assertions.assertFalse(PlaceholderCatalog.isLocalizable("player_name"));
+        org.junit.jupiter.api.Assertions.assertFalse(PlaceholderCatalog.isLocalizable("player_item_in_hand"));
+    }
+
     private static void assertSupported(String placeholders) {
         Arrays.stream(placeholders.split("\\s+"))
             .filter(value -> !value.isBlank())

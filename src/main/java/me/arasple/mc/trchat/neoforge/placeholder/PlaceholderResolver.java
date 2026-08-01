@@ -21,6 +21,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.storage.ServerLevelData;
 import me.arasple.mc.trchat.neoforge.config.TrChatConfig;
+import me.arasple.mc.trchat.neoforge.lang.LanguageService;
 import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
 
 import java.io.IOException;
@@ -53,11 +54,18 @@ public final class PlaceholderResolver {
     private final MinecraftServer server;
     private final ServerMetrics metrics;
     private final PlayerStatsTracker playerStats;
+    private final LanguageService languages;
 
-    public PlaceholderResolver(MinecraftServer server, ServerMetrics metrics, PlayerStatsTracker playerStats) {
+    public PlaceholderResolver(
+        MinecraftServer server,
+        ServerMetrics metrics,
+        PlayerStatsTracker playerStats,
+        LanguageService languages
+    ) {
         this.server = server;
         this.metrics = metrics;
         this.playerStats = playerStats;
+        this.languages = languages;
     }
 
     public String resolve(String input, ServerPlayer player) {
@@ -75,6 +83,7 @@ public final class PlaceholderResolver {
             String value = local.get(token);
             if (value == null) {
                 value = resolveToken(token, player);
+                value = languages.translatePlaceholder(player, token, value);
             }
             matcher.appendReplacement(output, Matcher.quoteReplacement(value == null ? "" : value));
         }

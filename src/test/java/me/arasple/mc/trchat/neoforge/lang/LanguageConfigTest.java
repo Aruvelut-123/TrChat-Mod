@@ -27,8 +27,17 @@ class LanguageConfigTest {
             "Mute-Shadow-On",
             "Function-Inventory-Format",
             "Filter-Anvil-Blocked",
-            "Redis-Private-Unavailable"
+            "Redis-Private-Unavailable",
+            "Redis-Unsafe-Item"
         )));
+        assertEquals(
+            ((Map<?, ?>) chinese.get("Placeholder-Translations")).keySet(),
+            ((Map<?, ?>) load("en_US").get("Placeholder-Translations")).keySet()
+        );
+        assertEquals(
+            ((Map<?, ?>) chinese.get("Placeholder-Translations")).keySet(),
+            ((Map<?, ?>) load("es_ES").get("Placeholder-Translations")).keySet()
+        );
     }
 
     @Test

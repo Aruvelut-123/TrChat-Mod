@@ -2,9 +2,12 @@ package me.arasple.mc.trchat.neoforge.function;
 
 import me.arasple.mc.trchat.neoforge.channel.ConditionEvaluator;
 import me.arasple.mc.trchat.neoforge.chat.LegacyText;
+import me.arasple.mc.trchat.neoforge.config.YamlConfigSynchronizer;
 import me.arasple.mc.trchat.neoforge.lang.LanguageService;
 import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
+import me.arasple.mc.trchat.neoforge.protocol.TrChatProtocol;
 import net.minecraft.ChatFormatting;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
@@ -26,14 +29,8 @@ import net.minecraft.world.item.Items;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.neoforged.fml.loading.FMLPaths;
-import org.yaml.snakeyaml.LoaderOptions;
-import org.yaml.snakeyaml.Yaml;
-import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.Reader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -78,22 +75,10 @@ public final class ChatFunctionService {
     public synchronized boolean reload() {
         try {
             Files.createDirectories(file.getParent());
-            if (!Files.exists(file)) {
-                try (InputStream input = ChatFunctionService.class.getResourceAsStream("/defaults/function.yml")) {
-                    if (input == null) throw new IOException("Missing bundled function.yml");
-                    Files.copy(input, file);
-                }
-            }
-            LoaderOptions loaderOptions = new LoaderOptions();
-            loaderOptions.setAllowDuplicateKeys(false);
-            Yaml yaml = new Yaml(new SafeConstructor(loaderOptions));
-            try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-                Object loaded = yaml.load(reader);
-                if (!(loaded instanceof Map<?, ?> root)) {
-                    throw new IOException("function.yml root must be a mapping");
-                }
-                configuration = Configuration.from(root);
-            }
+            Map<String, Object> root = YamlConfigSynchronizer.synchronize(
+                file, "/defaults/function.yml", Set.of("Custom")
+            );
+            configuration = Configuration.from(root);
             cooldowns.clear();
             LOGGER.log(System.Logger.Level.INFO, "Loaded chat functions from {0}", file);
             return true;
@@ -111,7 +96,7 @@ public final class ChatFunctionService {
 
         List<Token> tokens = collectTokens(sender, message, disabled);
         if (tokens.isEmpty()) {
-            return new ProcessedMessage(Component.literal(message), List.of());
+            return new ProcessedMessage(Component.literal(message), List.of(), true);
         }
         tokens.sort(Comparator.comparingInt(Token::start).thenComparing(Comparator.comparingInt(Token::priority).reversed()));
         List<Token> accepted = new ArrayList<>();
@@ -125,6 +110,7 @@ public final class ChatFunctionService {
 
         MutableComponent output = Component.empty();
         List<String> mentioned = new ArrayList<>();
+        boolean crossServerSafe = true;
         Set<String> cooldownGranted = new java.util.HashSet<>();
         Set<String> actionsRun = new java.util.HashSet<>();
         cursor = 0;
@@ -139,6 +125,11 @@ public final class ChatFunctionService {
                     runActions(sender, token.settings().actions(), message, token.argument());
                 }
                 Component replacement = renderToken(sender, token, mentioned);
+                if (replacement != null
+                    && token.kind() == Kind.ITEM
+                    && !isVanillaDisplayedItem(sender, token.argument())) {
+                    crossServerSafe = false;
+                }
                 output.append(replacement == null
                     ? Component.literal(message.substring(token.start(), token.end()))
                     : replacement);
@@ -146,7 +137,7 @@ public final class ChatFunctionService {
             cursor = token.end();
         }
         output.append(Component.literal(message.substring(cursor)));
-        return new ProcessedMessage(output, List.copyOf(mentioned));
+        return new ProcessedMessage(output, List.copyOf(mentioned), crossServerSafe);
     }
 
     public boolean openSnapshot(ServerPlayer viewer, String id) {
@@ -397,6 +388,16 @@ public final class ChatFunctionService {
         return rendered;
     }
 
+    private static boolean isVanillaDisplayedItem(ServerPlayer sender, String slotArgument) {
+        int slot = slotArgument.isBlank() ? sender.getInventory().selected : Integer.parseInt(slotArgument) - 1;
+        ItemStack stack = sender.getInventory().getItem(slot);
+        if (stack.isEmpty()) {
+            return true;
+        }
+        var key = BuiltInRegistries.ITEM.getKey(stack.getItem());
+        return key != null && TrChatProtocol.isCrossServerSafeItemNamespace(key.getNamespace());
+    }
+
     private Component inventory(ServerPlayer sender, boolean enderChest) {
         String snapshotId = createSnapshot(sender, enderChest);
         String labelKey = enderChest ? "Function-EnderChest-Format" : "Function-Inventory-Format";
@@ -594,7 +595,11 @@ public final class ChatFunctionService {
     private record Snapshot(long createdAtNanos, int size, String title, List<ItemStack> items) {
     }
 
-    public record ProcessedMessage(Component component, List<String> mentionedPlayers) {
+    public record ProcessedMessage(
+        Component component,
+        List<String> mentionedPlayers,
+        boolean crossServerSafe
+    ) {
     }
 
     private record FunctionSettings(

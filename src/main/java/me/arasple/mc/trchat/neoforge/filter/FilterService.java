@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import me.arasple.mc.trchat.neoforge.config.YamlConfigSynchronizer;
 import me.arasple.mc.trchat.neoforge.lang.LanguageService;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -13,13 +14,8 @@ import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.neoforged.fml.loading.FMLPaths;
-import org.yaml.snakeyaml.LoaderOptions;
-import org.yaml.snakeyaml.Yaml;
-import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.Reader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -60,19 +56,11 @@ public final class FilterService {
     public synchronized boolean reload() {
         try {
             Files.createDirectories(file.getParent());
-            if (!Files.exists(file)) {
-                try (InputStream input = FilterService.class.getResourceAsStream("/defaults/filter.yml")) {
-                    if (input == null) throw new IOException("Missing bundled filter.yml");
-                    Files.copy(input, file);
-                }
-            }
-            Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
-            try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-                Object loaded = yaml.load(reader);
-                if (!(loaded instanceof Map<?, ?> root)) throw new IOException("filter.yml root must be a mapping");
-                settings = Settings.from(root);
-                words = settings.localWords();
-            }
+            Map<?, ?> root = YamlConfigSynchronizer.synchronize(
+                file, "/defaults/filter.yml", Set.of()
+            );
+            settings = Settings.from(root);
+            words = settings.localWords();
             refreshCloudAsync();
             return true;
         } catch (IOException | RuntimeException exception) {

@@ -6,6 +6,7 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import me.arasple.mc.trchat.neoforge.channel.ChannelDefinition;
 import me.arasple.mc.trchat.neoforge.channel.ChannelManager;
 import me.arasple.mc.trchat.neoforge.chat.ChatService;
+import me.arasple.mc.trchat.neoforge.chat.CommandInvocation;
 import me.arasple.mc.trchat.neoforge.chat.LegacyText;
 import me.arasple.mc.trchat.neoforge.config.TrChatConfig;
 import me.arasple.mc.trchat.neoforge.moderation.ModerationService;
@@ -120,6 +121,10 @@ public final class TrChatServerEvents {
         CommandSourceStack source = event.getParseResults().getContext().getSource();
         if (source.getEntity() instanceof ServerPlayer player
             && !service.checkCommand(player, event.getParseResults().getReader().getString())) {
+            event.setCanceled(true);
+            return;
+        }
+        if (routePrivateAlias(source, event.getParseResults().getReader().getString())) {
             event.setCanceled(true);
         }
     }
@@ -255,7 +260,7 @@ public final class TrChatServerEvents {
                     .then(Commands.argument("channel", StringArgumentType.word())
                         .suggests((context, builder) -> SharedSuggestionProvider.suggest(
                             channels.all().stream()
-                                .filter(channel -> !channel.options().privateChannel() && !channel.id().equalsIgnoreCase("Server"))
+                                .filter(ChannelDefinition::isJoinable)
                                 .map(ChannelDefinition::id),
                             builder
                         ))
@@ -770,6 +775,16 @@ public final class TrChatServerEvents {
             return executeBoundChannel(source, channel.id(), "");
         }
         return privateMessage(source, privateArguments[0], privateArguments[1]);
+    }
+
+    private boolean routePrivateAlias(CommandSourceStack source, String commandLine) {
+        CommandInvocation invocation = CommandInvocation.parse(commandLine);
+        ChannelDefinition channel = channels.byCommand(invocation.alias()).orElse(null);
+        if (channel == null || !channel.options().privateChannel()) {
+            return false;
+        }
+        executeBoundAlias(source, invocation.alias(), invocation.arguments());
+        return true;
     }
 
     private int executeBoundChannel(CommandSourceStack source, String channelId, String message) {

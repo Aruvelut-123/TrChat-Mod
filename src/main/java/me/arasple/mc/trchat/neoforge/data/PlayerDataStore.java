@@ -1,14 +1,9 @@
 package me.arasple.mc.trchat.neoforge.data;
 
+import me.arasple.mc.trchat.neoforge.config.YamlConfigSynchronizer;
 import net.neoforged.fml.loading.FMLPaths;
-import org.yaml.snakeyaml.LoaderOptions;
-import org.yaml.snakeyaml.Yaml;
-import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.Reader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -53,16 +48,9 @@ public final class PlayerDataStore implements AutoCloseable {
         Path config = folder.resolve("datasource.yml");
         try {
             Files.createDirectories(folder);
-            if (!Files.exists(config)) {
-                try (InputStream input = PlayerDataStore.class.getResourceAsStream("/defaults/datasource.yml")) {
-                    if (input == null) throw new IOException("Missing bundled datasource.yml");
-                    Files.copy(input, config);
-                }
-            }
-            Map<?, ?> root;
-            try (Reader reader = Files.newBufferedReader(config, StandardCharsets.UTF_8)) {
-                root = new Yaml(new SafeConstructor(new LoaderOptions())).load(reader);
-            }
+            Map<?, ?> root = YamlConfigSynchronizer.synchronize(
+                config, "/defaults/datasource.yml", Set.of()
+            );
             String type = string(root.get("Type"), "SQLite");
             if (type.equalsIgnoreCase("SQLite") || type.equalsIgnoreCase("Local")) {
                 Map<?, ?> sqlite = map(root.get("SQLite"));

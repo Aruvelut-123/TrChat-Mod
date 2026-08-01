@@ -26,7 +26,10 @@ class ChannelManagerTest {
         assertTrue(manager.byCommand("ALL").isPresent());
         assertEquals("Global", manager.byPrefix("!all hello").channel().id());
         assertTrue(manager.byId("private").orElseThrow().options().privateChannel());
+        assertEquals("Private", manager.byCommand("tell").orElseThrow().id());
+        assertFalse(manager.byId("private").orElseThrow().isJoinable());
         assertTrue(manager.byId("server").isPresent());
+        assertFalse(manager.byId("server").orElseThrow().isJoinable());
         assertFalse(manager.byId("server").orElseThrow().options().redis());
         assertFalse(manager.byId("server").orElseThrow().options().autoJoin());
         assertEquals("Normal", manager.autoJoin().orElseThrow().id());
@@ -35,6 +38,7 @@ class ChannelManagerTest {
         assertTrue(java.nio.file.Files.exists(directory.resolve("channels").resolve("Example.yml")));
         assertFalse(manager.byId("Example").isPresent());
         assertTrue(manager.byCommand("examplechat").isEmpty());
+        assertTrue(manager.normal().isJoinable());
     }
 
     @Test
