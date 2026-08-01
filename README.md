@@ -24,6 +24,8 @@ NeoForge 作者与维护者：[Baymaxawa](https://space.bilibili.com/475655508)�
 - Bukkit 风格 `filter.yml`：本地词库、云词库、白名单、忽略标点、聊天/告示牌/铁砧过滤。
 - 普通禁言、ShadowMute、私聊监听、全服禁言和回复关系。
 - 按客户端语言自动选择 `lang/zh_CN.yml`、`en_US.yml`、`es_ES.yml`，并支持自行增加语言文件。
+- 语言文件的 `Placeholder-Translations` 可对预先列明的纯英文占位符结果做精确本地化；数字、混合文本、非英文结果及玩家名等动态值保持原样。
+- YAML 配置与语言文件加载时自动补齐缺失项、删除未知项，并保留所有已知项的用户值。
 - 本地 `data.db` 持久化；`datasource.yml` 可切换 SQLite、MySQL、MariaDB 或自定义 JDBC。三种常用驱动均已内嵌。
 - Redis 自动重连，以及与 Bukkit 版的广播、私聊、在线玩家列表和全服禁言协议互通。
 - 内置 GitHub Release 更新检查器：启动后检查、默认每 15 分钟复查，并向后台与 `trchat.admin` 管理员发送短版可点击提醒。
@@ -62,6 +64,8 @@ config/trchat-neoforge/
 
 除这两组原生占位符外，还支持 `%message%` 与私聊中的 `%trchat_toplayer%`。其他 Bukkit 插件扩展变量在纯 NeoForge 环境中无法解析，会替换为空文本。
 
+只有代码预先标记为可本地化的布尔状态、游戏模式、方向、世界类型及倒计时错误等占位符，且完整结果全部由英文字母、空格、下划线或连字符组成时，才会查找当前语言文件的 `Placeholder-Translations`。三份默认语言文件已列出允许修改的完整映射；该节点不是动态扩展区，未知键会被配置检查器删除。
+
 ## Redis 与 Bukkit 互通
 
 编辑 `settings.toml`：
@@ -88,7 +92,7 @@ channel = "trchat-message"
 
 每台服务端的 `serverId` 必须唯一，建议直接使用服务端端口。Bukkit TrChat 端应连接同一 Redis 数据库，并保留 `trchat-message` 频道。修改连接参数后重启，或执行 `/trchat redis reconnect`。
 
-普通/全服聊天、私聊、在线玩家列表与全服禁言可以跨 Bukkit/NeoForge 互通。`Server` 频道以及物品、背包和末影箱快照始终只在本 NeoForge 服务端处理，避免把平台专属物品数据发送给 Bukkit。
+普通/全服聊天、私聊、私聊监听、在线玩家列表与全服禁言可以跨 Bukkit/NeoForge 互通。`Server` 频道以及物品、背包和末影箱快照始终只在本 NeoForge 服务端处理；聊天中展示原版物品时可以跨服，展示模组物品时消息会限制在本服，避免 Paper 反序列化未知注册键时报错。跨服私聊若包含模组物品则拒绝发送并提示发送者。
 
 ## 数据库
 
@@ -155,6 +159,8 @@ NeoForge 1.21.1 的铁砧事件不能安全地只改写重命名文本而不替�
 | `/shadowmute <玩家> [on\|off]` | ShadowMute 快捷命令 |
 | `/trchat spy [on\|off]` | 切换私聊监听 |
 | `/trchat msg <玩家> <内容>` | 发送私聊 |
+| `/tell`、`/msg` 等 Private 频道绑定 | 通过 Private 频道发送本服或跨服私聊 |
+| `/r <内容>`、`/reply <内容>` | 回复最后一个向你发送私聊的玩家 |
 | `/trchat channel join <频道>` | 加入或离开频道 |
 | `/say <内容>` | 通过本地 `Server` 频道格式化发送 |
 
