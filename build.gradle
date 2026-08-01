@@ -40,13 +40,13 @@ neoForge {
 }
 
 dependencies {
-    jarJar(implementation('org.yaml:snakeyaml:2.5')) {
+    jarJar(implementation('org.yaml:snakeyaml:2.6')) {
         version {
             strictly '[2.0,3.0)'
             prefer '2.5'
         }
     }
-    additionalRuntimeClasspath 'org.yaml:snakeyaml:2.5'
+    additionalRuntimeClasspath 'org.yaml:snakeyaml:2.6'
     jarJar(implementation('org.xerial:sqlite-jdbc:3.50.3.0')) {
         version {
             strictly '[3.45,4.0)'
