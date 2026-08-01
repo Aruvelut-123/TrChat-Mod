@@ -278,6 +278,19 @@ public final class TrChatServerEvents {
                     .executes(context -> selectChatColor(
                         context.getSource(), StringArgumentType.getString(context, "color")
                     ))))
+            .then(Commands.literal("clear")
+                .requires(source -> canUsePermission(source, "trchat.command.clear"))
+                .then(Commands.argument("player", StringArgumentType.word())
+                    .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                        java.util.stream.Stream.concat(
+                            context.getSource().getOnlinePlayerNames().stream(),
+                            java.util.stream.Stream.of("*")
+                        ),
+                        builder
+                    ))
+                    .executes(context -> clearChat(
+                        context.getSource(), StringArgumentType.getString(context, "player")
+                    ))))
             .then(Commands.literal("view")
                 .then(Commands.argument("snapshot", StringArgumentType.word())
                     .executes(context -> openSnapshot(
@@ -661,6 +674,34 @@ public final class TrChatServerEvents {
         java.util.List<String> colors = new java.util.ArrayList<>(service.availableChatColors(source.getPlayer()));
         colors.add("reset");
         return colors;
+    }
+
+    private int clearChat(CommandSourceStack source, String targetName) {
+        if (service == null) {
+            return 0;
+        }
+        java.util.List<ServerPlayer> targets;
+        if ("*".equals(targetName)) {
+            targets = source.getServer().getPlayerList().getPlayers();
+        } else {
+            ServerPlayer target = source.getServer().getPlayerList().getPlayerByName(targetName);
+            if (target == null) {
+                source.sendFailure(service.languages().component(
+                    source.getPlayer(), "General-Player-Not-Found", targetName
+                ));
+                return 0;
+            }
+            targets = java.util.List.of(target);
+        }
+        for (ServerPlayer target : targets) {
+            for (int line = 0; line < 80; line++) {
+                target.sendSystemMessage(Component.empty());
+            }
+        }
+        source.sendSuccess(() -> service.languages().component(
+            source.getPlayer(), "Clear-Success", "*".equals(targetName) ? "*" : targets.getFirst().getGameProfile().getName()
+        ), true);
+        return targets.size();
     }
 
     private int serverSay(CommandSourceStack source, String message) {
