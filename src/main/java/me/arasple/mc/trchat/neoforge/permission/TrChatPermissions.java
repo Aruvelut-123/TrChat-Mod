@@ -24,6 +24,9 @@ public final class TrChatPermissions {
     public static final PermissionNode<Boolean> MUTE = restricted("mute");
     public static final PermissionNode<Boolean> SHADOW_MUTE = restricted("shadowmute");
     public static final PermissionNode<Boolean> PRIVATE_SPY = restricted("spy");
+    public static final PermissionNode<Boolean> IGNORE = new PermissionNode<>(
+        "trchat", "command.ignore", PermissionTypes.BOOLEAN, (player, uuid, context) -> true
+    );
     public static final PermissionNode<Boolean> COMMAND_COOLDOWN_BYPASS = restricted("bypass.cmdcooldown");
 
     private TrChatPermissions() {
@@ -32,7 +35,7 @@ public final class TrChatPermissions {
     public static void register(PermissionGatherEvent.Nodes event) {
         event.addNodes(
             GLOBAL, PRIVATE, ADMIN, MENTION_ALL, INVENTORY_SHOW, ENDER_CHEST_SHOW,
-            MUTE, SHADOW_MUTE, PRIVATE_SPY, COMMAND_COOLDOWN_BYPASS
+            MUTE, SHADOW_MUTE, PRIVATE_SPY, IGNORE, COMMAND_COOLDOWN_BYPASS
         );
     }
 

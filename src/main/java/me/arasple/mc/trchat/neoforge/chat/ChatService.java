@@ -6,6 +6,7 @@ import me.arasple.mc.trchat.neoforge.channel.ChannelManager;
 import me.arasple.mc.trchat.neoforge.channel.ChannelRenderer;
 import me.arasple.mc.trchat.neoforge.channel.ConditionEvaluator;
 import me.arasple.mc.trchat.neoforge.config.TrChatConfig;
+import me.arasple.mc.trchat.neoforge.data.PlayerDataStore;
 import me.arasple.mc.trchat.neoforge.function.ChatFunctionService;
 import me.arasple.mc.trchat.neoforge.filter.FilterService;
 import me.arasple.mc.trchat.neoforge.lang.LanguageService;
@@ -167,8 +168,10 @@ public final class ChatService implements AutoCloseable {
         }
 
         if (localTarget != null) {
-            localTarget.sendSystemMessage(receiverView.component());
-            lastPrivateSender.put(localTarget.getUUID(), sender.getGameProfile().getName());
+            if (!moderation.hasIgnored(localTarget, sender.getUUID())) {
+                localTarget.sendSystemMessage(receiverView.component());
+                lastPrivateSender.put(localTarget.getUUID(), sender.getGameProfile().getName());
+            }
             notifyPrivateSpies(
                 sender, sender.getGameProfile().getName(), exactTarget, message, localTarget
             );
@@ -197,6 +200,50 @@ public final class ChatService implements AutoCloseable {
             return 0;
         }
         return sendPrivate(sender, target, message);
+    }
+
+    public int setIgnored(ServerPlayer player, String targetName, Boolean requested) {
+        PlayerIdentity target = findKnownPlayer(targetName);
+        if (target == null) {
+            target = moderation.ignoredPlayers(player).stream()
+                .filter(ignored -> ignored.name().equalsIgnoreCase(targetName))
+                .map(ignored -> new PlayerIdentity(ignored.uuid(), ignored.name()))
+                .findFirst()
+                .orElse(null);
+        }
+        if (target == null) {
+            sendLang(player, "General-Player-Not-Found", targetName);
+            return 0;
+        }
+        if (target.uuid().equals(player.getUUID())) {
+            sendLang(player, "Ignore-Self");
+            return 0;
+        }
+        boolean ignored = requested == null
+            ? moderation.toggleIgnored(player, target.uuid(), target.name())
+            : moderation.setIgnored(player, target.uuid(), target.name(), requested);
+        sendLang(player, ignored ? "Ignore-Ignored-Player" : "Ignore-Cancel-Player", target.name());
+        return 1;
+    }
+
+    public List<String> ignoredPlayerNames(ServerPlayer player) {
+        return moderation.ignoredPlayers(player).stream()
+            .map(PlayerDataStore.IgnoredPlayer::name)
+            .sorted(String.CASE_INSENSITIVE_ORDER)
+            .toList();
+    }
+
+    public List<String> knownPlayerNames() {
+        expireRemotePlayers();
+        List<String> names = new ArrayList<>(server.getPlayerList().getPlayers().stream()
+            .map(player -> player.getGameProfile().getName())
+            .toList());
+        remotePlayers.values().stream()
+            .flatMap(snapshot -> snapshot.players().stream())
+            .map(RemotePlayer::name)
+            .filter(name -> names.stream().noneMatch(existing -> existing.equalsIgnoreCase(name)))
+            .forEach(names::add);
+        return names.stream().sorted(String.CASE_INSENSITIVE_ORDER).toList();
     }
 
     public void setGlobalMute(boolean muted, boolean publish) {
@@ -540,6 +587,9 @@ public final class ChatService implements AutoCloseable {
         int distance = range.length == 2 ? parsePositiveInt(range[1]) : -1;
 
         for (ServerPlayer receiver : server.getPlayerList().getPlayers()) {
+            if (moderation.hasIgnored(receiver, sender.getUUID())) {
+                continue;
+            }
             Set<String> joined = joinedChannels.getOrDefault(receiver.getUUID(), Set.of());
             boolean listening = channel.options().alwaysListen()
                 || joined.contains(id);
@@ -665,8 +715,9 @@ public final class ChatService implements AutoCloseable {
         String fallback = data.size() > 6 ? data.get(6) : "";
         Component component = ComponentJson.deserialize(data.get(2), fallback, server);
         String permission = data.size() > 3 ? data.get(3) : "";
+        UUID senderUuid = TrChatProtocol.parseUuid(data.get(1));
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            if (hasPermission(player, permission)) {
+            if (hasPermission(player, permission) && !moderation.hasIgnored(player, senderUuid)) {
                 player.sendSystemMessage(component);
             }
         }
@@ -682,11 +733,14 @@ public final class ChatService implements AutoCloseable {
         String from = data.get(2);
         String fallback = data.size() > 4 ? data.get(4) : "";
         Component component = ComponentJson.deserialize(data.get(3), fallback, server);
-        if (target != null) {
+        RemotePlayer remoteSender = findRemotePlayer(from);
+        boolean ignored = target != null && remoteSender != null
+            && moderation.hasIgnored(target, remoteSender.uuid());
+        if (target != null && !ignored) {
             target.sendSystemMessage(component);
         }
         if (!from.isBlank()) {
-            if (target != null) {
+            if (target != null && !ignored) {
                 lastPrivateSender.put(target.getUUID(), from);
             }
             Component spyMessage = data.size() > 5 && !data.get(5).isBlank()
@@ -788,16 +842,30 @@ public final class ChatService implements AutoCloseable {
     }
 
     private String exactRemoteName(String requested) {
+        RemotePlayer player = findRemotePlayer(requested);
+        return player == null ? null : player.name();
+    }
+
+    private RemotePlayer findRemotePlayer(String requested) {
         expireRemotePlayers();
         for (RemoteServerPlayers serverPlayers : remotePlayers.values()) {
             for (RemotePlayer player : serverPlayers.players()) {
                 if (player.name().equalsIgnoreCase(requested)
                     || player.displayName().equalsIgnoreCase(requested)) {
-                    return player.name();
+                    return player;
                 }
             }
         }
         return null;
+    }
+
+    private PlayerIdentity findKnownPlayer(String requested) {
+        ServerPlayer local = server.getPlayerList().getPlayerByName(requested);
+        if (local != null) {
+            return new PlayerIdentity(local.getUUID(), local.getGameProfile().getName());
+        }
+        RemotePlayer remote = findRemotePlayer(requested);
+        return remote == null ? null : new PlayerIdentity(remote.uuid(), remote.name());
     }
 
     private void expireRemotePlayers() {
@@ -838,6 +906,9 @@ public final class ChatService implements AutoCloseable {
     }
 
     private record RemotePlayer(String name, String displayName, UUID uuid) {
+    }
+
+    private record PlayerIdentity(UUID uuid, String name) {
     }
 
     private record RemoteServerPlayers(long updatedAtNanos, List<RemotePlayer> players) {

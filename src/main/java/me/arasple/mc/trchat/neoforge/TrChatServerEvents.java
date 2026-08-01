@@ -290,6 +290,7 @@ public final class TrChatServerEvents {
         registerReplyAlias(dispatcher, "r");
         registerReplyAlias(dispatcher, "reply");
         registerModerationAliases(dispatcher);
+        registerIgnoreCommands(dispatcher);
         registerControllerCommands(dispatcher);
 
         registerDynamicCommands(dispatcher);
@@ -709,6 +710,64 @@ public final class TrChatServerEvents {
         registerShadowMuteAlias(dispatcher, "shadowmute");
         dispatcher.register(Commands.literal("trspy")
             .executes(context -> privateSpy(context.getSource(), null)));
+    }
+
+    private void registerIgnoreCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
+        registerIgnoreCommand(dispatcher, "ignore");
+        registerIgnoreCommand(dispatcher, "trignore");
+        dispatcher.register(Commands.literal("ignorelist")
+            .requires(source -> canUsePermission(source, "trchat.command.ignore"))
+            .executes(context -> ignoredPlayers(context.getSource())));
+    }
+
+    private void registerIgnoreCommand(CommandDispatcher<CommandSourceStack> dispatcher, String alias) {
+        dispatcher.register(Commands.literal(alias)
+            .requires(source -> canUsePermission(source, "trchat.command.ignore"))
+            .then(Commands.argument("player", StringArgumentType.word())
+                .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                    service == null ? context.getSource().getOnlinePlayerNames() : service.knownPlayerNames(),
+                    builder
+                ))
+                .executes(context -> ignorePlayer(
+                    context.getSource(), StringArgumentType.getString(context, "player"), null
+                ))
+                .then(Commands.literal("on")
+                    .executes(context -> ignorePlayer(
+                        context.getSource(), StringArgumentType.getString(context, "player"), true
+                    )))
+                .then(Commands.literal("off")
+                    .executes(context -> ignorePlayer(
+                        context.getSource(), StringArgumentType.getString(context, "player"), false
+                    )))));
+    }
+
+    private int ignorePlayer(CommandSourceStack source, String playerName, Boolean ignored) {
+        if (service == null) {
+            return 0;
+        }
+        try {
+            return service.setIgnored(source.getPlayerOrException(), playerName, ignored);
+        } catch (CommandSyntaxException exception) {
+            source.sendFailure(service.languages().component(null, "General-Player-Only"));
+            return 0;
+        }
+    }
+
+    private int ignoredPlayers(CommandSourceStack source) {
+        if (service == null) {
+            return 0;
+        }
+        try {
+            ServerPlayer player = source.getPlayerOrException();
+            String names = String.join(", ", service.ignoredPlayerNames(player));
+            player.sendSystemMessage(service.languages().component(
+                player, "Ignore-List", names.isBlank() ? "-" : names
+            ));
+            return 1;
+        } catch (CommandSyntaxException exception) {
+            source.sendFailure(service.languages().component(null, "General-Player-Only"));
+            return 0;
+        }
     }
 
     private void registerMuteAlias(CommandDispatcher<CommandSourceStack> dispatcher, String alias) {

@@ -56,4 +56,25 @@ class PlayerDataStoreTest {
             assertTrue(loaded.privateSpy());
         }
     }
+
+    @Test
+    void persistsIgnoredPlayers() {
+        UUID uuid = UUID.randomUUID();
+        UUID ignoredUuid = UUID.randomUUID();
+        try (PlayerDataStore store = new PlayerDataStore(directory)) {
+            store.initialize();
+            store.save(PlayerDataStore.PlayerState.empty(uuid, "Listener")
+                .withIgnoredPlayers(Set.of(new PlayerDataStore.IgnoredPlayer(ignoredUuid, "NoisyPlayer"))));
+        }
+
+        try (PlayerDataStore store = new PlayerDataStore(directory)) {
+            store.initialize();
+            PlayerDataStore.PlayerState loaded = store.load(uuid, "Listener");
+
+            assertEquals(
+                Set.of(new PlayerDataStore.IgnoredPlayer(ignoredUuid, "NoisyPlayer")),
+                loaded.ignoredPlayers()
+            );
+        }
+    }
 }

@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.OptionalLong;
 import java.util.Set;
@@ -110,6 +111,30 @@ public final class ModerationService implements AutoCloseable {
 
     public void setChannels(ServerPlayer player, String activeChannel, Set<String> joinedChannels) {
         update(state(player).withChannels(activeChannel, joinedChannels));
+    }
+
+    public Set<PlayerDataStore.IgnoredPlayer> ignoredPlayers(ServerPlayer player) {
+        return state(player).ignoredPlayers();
+    }
+
+    public boolean hasIgnored(ServerPlayer player, UUID senderUuid) {
+        return senderUuid != null && state(player).ignoredPlayers().stream()
+            .anyMatch(ignored -> ignored.uuid().equals(senderUuid));
+    }
+
+    public boolean setIgnored(ServerPlayer player, UUID targetUuid, String targetName, boolean ignored) {
+        PlayerDataStore.PlayerState current = state(player);
+        LinkedHashSet<PlayerDataStore.IgnoredPlayer> players = new LinkedHashSet<>(current.ignoredPlayers());
+        players.removeIf(entry -> entry.uuid().equals(targetUuid));
+        if (ignored) {
+            players.add(new PlayerDataStore.IgnoredPlayer(targetUuid, targetName));
+        }
+        update(current.withIgnoredPlayers(players));
+        return ignored;
+    }
+
+    public boolean toggleIgnored(ServerPlayer player, UUID targetUuid, String targetName) {
+        return setIgnored(player, targetUuid, targetName, !hasIgnored(player, targetUuid));
     }
 
     public static OptionalLong parseDuration(String input) {

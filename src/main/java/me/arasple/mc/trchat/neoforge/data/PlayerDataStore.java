@@ -30,6 +30,7 @@ public final class PlayerDataStore implements AutoCloseable {
     private String password;
     private String table;
     private String channelTable;
+    private String ignoredTable;
     private String driver;
     private final ExecutorService saveExecutor;
 
@@ -62,6 +63,7 @@ public final class PlayerDataStore implements AutoCloseable {
                 password = "";
                 table = "trchat_player_state";
                 channelTable = "trchat_player_channels";
+                ignoredTable = "trchat_player_ignored";
                 driver = "org.sqlite.JDBC";
             } else if (type.equalsIgnoreCase("MySQL")) {
                 configureNetworkDatabase(root, "MySQL", "jdbc:mysql", 3306, "com.mysql.cj.jdbc.Driver");
@@ -98,6 +100,14 @@ public final class PlayerDataStore implements AutoCloseable {
                       PRIMARY KEY (uuid, channel_id)
                     )
                     """.formatted(channelTable));
+                statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS %s (
+                      uuid VARCHAR(36) NOT NULL,
+                      ignored_uuid VARCHAR(36) NOT NULL,
+                      ignored_name VARCHAR(64) NOT NULL,
+                      PRIMARY KEY (uuid, ignored_uuid)
+                    )
+                    """.formatted(ignoredTable));
             }
         } catch (IOException | SQLException | ClassNotFoundException exception) {
             throw new IllegalStateException("Unable to initialize player data storage", exception);
@@ -124,6 +134,7 @@ public final class PlayerDataStore implements AutoCloseable {
         String prefix = string(jdbc.get("Table-Prefix"), "trchat_");
         table = safeIdentifier(prefix + "player_state");
         channelTable = safeIdentifier(prefix + "player_channels");
+        ignoredTable = safeIdentifier(prefix + "player_ignored");
         driver = driverClass;
     }
 
@@ -142,7 +153,8 @@ public final class PlayerDataStore implements AutoCloseable {
                         result.getInt(3) != 0,
                         result.getInt(4) != 0,
                         membership.activeChannel(),
-                        membership.joinedChannels()
+                        membership.joinedChannels(),
+                        loadIgnoredPlayers(connection, uuid)
                     );
                 }
             }
@@ -186,6 +198,7 @@ public final class PlayerDataStore implements AutoCloseable {
                     }
                 }
                 saveMembership(connection, state);
+                saveIgnoredPlayers(connection, state);
                 connection.commit();
             } catch (SQLException exception) {
                 connection.rollback();
@@ -239,6 +252,45 @@ public final class PlayerDataStore implements AutoCloseable {
         }
     }
 
+    private Set<IgnoredPlayer> loadIgnoredPlayers(Connection connection, UUID uuid) throws SQLException {
+        String sql = "SELECT ignored_uuid,ignored_name FROM " + ignoredTable + " WHERE uuid=?";
+        LinkedHashSet<IgnoredPlayer> ignored = new LinkedHashSet<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, uuid.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    try {
+                        ignored.add(new IgnoredPlayer(UUID.fromString(result.getString(1)), result.getString(2)));
+                    } catch (IllegalArgumentException exception) {
+                        LOGGER.log(System.Logger.Level.WARNING, "Ignoring invalid stored UUID for " + uuid);
+                    }
+                }
+            }
+        }
+        return Set.copyOf(ignored);
+    }
+
+    private void saveIgnoredPlayers(Connection connection, PlayerState state) throws SQLException {
+        String delete = "DELETE FROM " + ignoredTable + " WHERE uuid=?";
+        try (PreparedStatement statement = connection.prepareStatement(delete)) {
+            statement.setString(1, state.uuid().toString());
+            statement.executeUpdate();
+        }
+        if (state.ignoredPlayers().isEmpty()) {
+            return;
+        }
+        String insert = "INSERT INTO " + ignoredTable + " (uuid,ignored_uuid,ignored_name) VALUES (?,?,?)";
+        try (PreparedStatement statement = connection.prepareStatement(insert)) {
+            for (IgnoredPlayer ignored : state.ignoredPlayers()) {
+                statement.setString(1, state.uuid().toString());
+                statement.setString(2, ignored.uuid().toString());
+                statement.setString(3, ignored.name());
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
     private Connection connection() throws SQLException {
         return user.isBlank()
             ? DriverManager.getConnection(jdbcUrl)
@@ -279,7 +331,8 @@ public final class PlayerDataStore implements AutoCloseable {
         boolean shadowMuted,
         boolean privateSpy,
         String activeChannel,
-        Set<String> joinedChannels
+        Set<String> joinedChannels,
+        Set<IgnoredPlayer> ignoredPlayers
     ) {
         public PlayerState {
             activeChannel = normalizeChannel(activeChannel);
@@ -294,38 +347,55 @@ public final class PlayerDataStore implements AutoCloseable {
                 normalized.add(activeChannel);
                 joinedChannels = Set.copyOf(normalized);
             }
+            ignoredPlayers = ignoredPlayers == null ? Set.of() : Set.copyOf(ignoredPlayers);
         }
 
         public static PlayerState empty(UUID uuid, String name) {
-            return new PlayerState(uuid, name, 0L, "", false, false, "", Set.of());
+            return new PlayerState(uuid, name, 0L, "", false, false, "", Set.of(), Set.of());
         }
 
         public PlayerState withMute(long until, String reason) {
             return new PlayerState(
-                uuid, playerName, until, reason, shadowMuted, privateSpy, activeChannel, joinedChannels
+                uuid, playerName, until, reason, shadowMuted, privateSpy, activeChannel, joinedChannels, ignoredPlayers
             );
         }
 
         public PlayerState withShadowMuted(boolean value) {
             return new PlayerState(
-                uuid, playerName, muteUntil, muteReason, value, privateSpy, activeChannel, joinedChannels
+                uuid, playerName, muteUntil, muteReason, value, privateSpy, activeChannel, joinedChannels, ignoredPlayers
             );
         }
 
         public PlayerState withPrivateSpy(boolean value) {
             return new PlayerState(
-                uuid, playerName, muteUntil, muteReason, shadowMuted, value, activeChannel, joinedChannels
+                uuid, playerName, muteUntil, muteReason, shadowMuted, value, activeChannel, joinedChannels, ignoredPlayers
             );
         }
 
         public PlayerState withChannels(String active, Set<String> joined) {
             return new PlayerState(
-                uuid, playerName, muteUntil, muteReason, shadowMuted, privateSpy, active, joined
+                uuid, playerName, muteUntil, muteReason, shadowMuted, privateSpy, active, joined, ignoredPlayers
+            );
+        }
+
+        public PlayerState withIgnoredPlayers(Set<IgnoredPlayer> ignored) {
+            return new PlayerState(
+                uuid, playerName, muteUntil, muteReason, shadowMuted, privateSpy,
+                activeChannel, joinedChannels, ignored
             );
         }
 
         private static String normalizeChannel(String channel) {
             return channel == null ? "" : channel.trim().toLowerCase(java.util.Locale.ROOT);
+        }
+    }
+
+    public record IgnoredPlayer(UUID uuid, String name) {
+        public IgnoredPlayer {
+            if (uuid == null) {
+                throw new IllegalArgumentException("Ignored player UUID cannot be null");
+            }
+            name = name == null || name.isBlank() ? uuid.toString() : name.trim();
         }
     }
 
