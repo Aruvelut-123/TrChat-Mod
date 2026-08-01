@@ -16,6 +16,8 @@ import java.util.Map;
 
 public final class ChannelRenderer {
 
+    public static final String MESSAGE_COLOR = "trchat_message_color";
+
     private final PlaceholderResolver placeholders;
 
     public ChannelRenderer(PlaceholderResolver placeholders) {
@@ -70,7 +72,7 @@ public final class ChannelRenderer {
         appendGroups(result, format.prefix(), player, local);
 
         ChannelDefinition.MessagePart messagePart = format.message();
-        String color = messagePart.defaultColor();
+        String color = local.getOrDefault(MESSAGE_COLOR, messagePart.defaultColor());
         if (color.startsWith("&") || color.startsWith("§")) {
             color = color.substring(1);
         }

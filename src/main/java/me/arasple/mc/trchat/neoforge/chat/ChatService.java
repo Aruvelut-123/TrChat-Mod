@@ -145,7 +145,8 @@ public final class ChatService implements AutoCloseable {
             return 0;
         }
 
-        Map<String, String> local = Map.of("trchat_toplayer", exactTarget, "message", message);
+        Map<String, String> local = messageContext(sender, message);
+        local.put("trchat_toplayer", exactTarget);
         ChatFunctionService.ProcessedMessage processed = functions.process(
             sender, message, channel.options().disabledFunctions()
         );
@@ -244,6 +245,33 @@ public final class ChatService implements AutoCloseable {
             .filter(name -> names.stream().noneMatch(existing -> existing.equalsIgnoreCase(name)))
             .forEach(names::add);
         return names.stream().sorted(String.CASE_INSENSITIVE_ORDER).toList();
+    }
+
+    public List<String> availableChatColors(ServerPlayer player) {
+        return "0123456789abcdef".chars()
+            .mapToObj(code -> Character.toString((char) code))
+            .filter(code -> player.hasPermissions(2) || hasPermission(player, "trchat.color." + code))
+            .toList();
+    }
+
+    public int setChatColor(ServerPlayer player, String requested) {
+        String color = requested == null ? "" : requested.trim().toLowerCase(Locale.ROOT);
+        if (color.equals("reset") || color.equals("null") || color.equals("default")) {
+            moderation.setChatColor(player, "");
+            sendLang(player, "Color-Reset");
+            return 1;
+        }
+        if (!color.matches("[0-9a-f]")) {
+            sendLang(player, "Color-Invalid", requested);
+            return 0;
+        }
+        if (!player.hasPermissions(2) && !hasPermission(player, "trchat.color." + color)) {
+            sendLang(player, "General-No-Permission");
+            return 0;
+        }
+        moderation.setChatColor(player, color);
+        sendLang(player, "Color-Selected", "&" + color + color);
+        return 1;
     }
 
     public void setGlobalMute(boolean muted, boolean publish) {
@@ -452,18 +480,19 @@ public final class ChatService implements AutoCloseable {
         ChatFunctionService.ProcessedMessage processed = functions.process(
             player, message, channel.options().disabledFunctions()
         );
+        Map<String, String> local = messageContext(player, message);
         ChannelRenderer.Rendered rendered = renderer.render(
             channel,
             ChannelRenderer.Audience.CHAT,
             player,
             processed.component(),
             message,
-            Map.of("message", message)
+            local
         );
 
         if (moderation.shadowMuted(player)) {
             player.sendSystemMessage(rendered.component());
-            logToConsole(channel, player, message, Map.of("message", message));
+            logToConsole(channel, player, message, local);
             return true;
         }
 
@@ -478,7 +507,7 @@ public final class ChatService implements AutoCloseable {
                 rendered.fallback()
             );
             if (redis.publish(packet)) {
-                logToConsole(channel, player, message, Map.of("message", message));
+                logToConsole(channel, player, message, local);
                 return true;
             }
             if (channel.options().forceRedis()) {
@@ -489,8 +518,19 @@ public final class ChatService implements AutoCloseable {
         }
 
         broadcastLocal(channel, player, rendered.component());
-        logToConsole(channel, player, message, Map.of("message", message));
+        logToConsole(channel, player, message, local);
         return true;
+    }
+
+    private Map<String, String> messageContext(ServerPlayer player, String message) {
+        Map<String, String> local = new HashMap<>();
+        local.put("message", message);
+        String selected = moderation.chatColor(player);
+        if (!selected.isBlank()
+            && (player.hasPermissions(2) || hasPermission(player, "trchat.color." + selected))) {
+            local.put(ChannelRenderer.MESSAGE_COLOR, selected);
+        }
+        return local;
     }
 
     private String guardMessage(ServerPlayer player, String rawMessage) {

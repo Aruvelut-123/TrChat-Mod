@@ -6,6 +6,8 @@ import net.neoforged.neoforge.server.permission.events.PermissionGatherEvent;
 import net.neoforged.neoforge.server.permission.nodes.PermissionNode;
 import net.neoforged.neoforge.server.permission.nodes.PermissionTypes;
 
+import java.util.List;
+
 public final class TrChatPermissions {
 
     public static final PermissionNode<Boolean> GLOBAL = new PermissionNode<>(
@@ -27,7 +29,14 @@ public final class TrChatPermissions {
     public static final PermissionNode<Boolean> IGNORE = new PermissionNode<>(
         "trchat", "command.ignore", PermissionTypes.BOOLEAN, (player, uuid, context) -> true
     );
+    public static final PermissionNode<Boolean> CHAT_COLOR_COMMAND = restricted("command.color");
     public static final PermissionNode<Boolean> COMMAND_COOLDOWN_BYPASS = restricted("bypass.cmdcooldown");
+    private static final List<PermissionNode<Boolean>> CHAT_COLORS = "0123456789abcdef".chars()
+        .mapToObj(code -> new PermissionNode<>(
+            "trchat", "color." + (char) code, PermissionTypes.BOOLEAN,
+            (player, uuid, context) -> player != null && player.hasPermissions(2)
+        ))
+        .toList();
 
     private TrChatPermissions() {
     }
@@ -35,8 +44,9 @@ public final class TrChatPermissions {
     public static void register(PermissionGatherEvent.Nodes event) {
         event.addNodes(
             GLOBAL, PRIVATE, ADMIN, MENTION_ALL, INVENTORY_SHOW, ENDER_CHEST_SHOW,
-            MUTE, SHADOW_MUTE, PRIVATE_SPY, IGNORE, COMMAND_COOLDOWN_BYPASS
+            MUTE, SHADOW_MUTE, PRIVATE_SPY, IGNORE, CHAT_COLOR_COMMAND, COMMAND_COOLDOWN_BYPASS
         );
+        CHAT_COLORS.forEach(event::addNodes);
     }
 
     public static boolean check(ServerPlayer player, String permission) {

@@ -137,6 +137,14 @@ public final class ModerationService implements AutoCloseable {
         return setIgnored(player, targetUuid, targetName, !hasIgnored(player, targetUuid));
     }
 
+    public String chatColor(ServerPlayer player) {
+        return state(player).chatColor();
+    }
+
+    public void setChatColor(ServerPlayer player, String color) {
+        update(state(player).withChatColor(color));
+    }
+
     public static OptionalLong parseDuration(String input) {
         if (input == null) return OptionalLong.empty();
         String normalized = input.trim().toLowerCase(Locale.ROOT);

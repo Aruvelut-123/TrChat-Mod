@@ -31,6 +31,7 @@ public final class PlayerDataStore implements AutoCloseable {
     private String table;
     private String channelTable;
     private String ignoredTable;
+    private String preferenceTable;
     private String driver;
     private final ExecutorService saveExecutor;
 
@@ -64,6 +65,7 @@ public final class PlayerDataStore implements AutoCloseable {
                 table = "trchat_player_state";
                 channelTable = "trchat_player_channels";
                 ignoredTable = "trchat_player_ignored";
+                preferenceTable = "trchat_player_preferences";
                 driver = "org.sqlite.JDBC";
             } else if (type.equalsIgnoreCase("MySQL")) {
                 configureNetworkDatabase(root, "MySQL", "jdbc:mysql", 3306, "com.mysql.cj.jdbc.Driver");
@@ -108,6 +110,12 @@ public final class PlayerDataStore implements AutoCloseable {
                       PRIMARY KEY (uuid, ignored_uuid)
                     )
                     """.formatted(ignoredTable));
+                statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS %s (
+                      uuid VARCHAR(36) PRIMARY KEY,
+                      chat_color VARCHAR(32) NOT NULL DEFAULT ''
+                    )
+                    """.formatted(preferenceTable));
             }
         } catch (IOException | SQLException | ClassNotFoundException exception) {
             throw new IllegalStateException("Unable to initialize player data storage", exception);
@@ -135,6 +143,7 @@ public final class PlayerDataStore implements AutoCloseable {
         table = safeIdentifier(prefix + "player_state");
         channelTable = safeIdentifier(prefix + "player_channels");
         ignoredTable = safeIdentifier(prefix + "player_ignored");
+        preferenceTable = safeIdentifier(prefix + "player_preferences");
         driver = driverClass;
     }
 
@@ -154,7 +163,8 @@ public final class PlayerDataStore implements AutoCloseable {
                         result.getInt(4) != 0,
                         membership.activeChannel(),
                         membership.joinedChannels(),
-                        loadIgnoredPlayers(connection, uuid)
+                        loadIgnoredPlayers(connection, uuid),
+                        loadChatColor(connection, uuid)
                     );
                 }
             }
@@ -199,6 +209,7 @@ public final class PlayerDataStore implements AutoCloseable {
                 }
                 saveMembership(connection, state);
                 saveIgnoredPlayers(connection, state);
+                savePreferences(connection, state);
                 connection.commit();
             } catch (SQLException exception) {
                 connection.rollback();
@@ -291,6 +302,33 @@ public final class PlayerDataStore implements AutoCloseable {
         }
     }
 
+    private String loadChatColor(Connection connection, UUID uuid) throws SQLException {
+        String sql = "SELECT chat_color FROM " + preferenceTable + " WHERE uuid=?";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, uuid.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? string(result.getString(1), "") : "";
+            }
+        }
+    }
+
+    private void savePreferences(Connection connection, PlayerState state) throws SQLException {
+        String update = "UPDATE " + preferenceTable + " SET chat_color=? WHERE uuid=?";
+        try (PreparedStatement statement = connection.prepareStatement(update)) {
+            statement.setString(1, state.chatColor());
+            statement.setString(2, state.uuid().toString());
+            if (statement.executeUpdate() != 0) {
+                return;
+            }
+        }
+        String insert = "INSERT INTO " + preferenceTable + " (uuid,chat_color) VALUES (?,?)";
+        try (PreparedStatement statement = connection.prepareStatement(insert)) {
+            statement.setString(1, state.uuid().toString());
+            statement.setString(2, state.chatColor());
+            statement.executeUpdate();
+        }
+    }
+
     private Connection connection() throws SQLException {
         return user.isBlank()
             ? DriverManager.getConnection(jdbcUrl)
@@ -332,7 +370,8 @@ public final class PlayerDataStore implements AutoCloseable {
         boolean privateSpy,
         String activeChannel,
         Set<String> joinedChannels,
-        Set<IgnoredPlayer> ignoredPlayers
+        Set<IgnoredPlayer> ignoredPlayers,
+        String chatColor
     ) {
         public PlayerState {
             activeChannel = normalizeChannel(activeChannel);
@@ -348,45 +387,58 @@ public final class PlayerDataStore implements AutoCloseable {
                 joinedChannels = Set.copyOf(normalized);
             }
             ignoredPlayers = ignoredPlayers == null ? Set.of() : Set.copyOf(ignoredPlayers);
+            chatColor = normalizeColor(chatColor);
         }
 
         public static PlayerState empty(UUID uuid, String name) {
-            return new PlayerState(uuid, name, 0L, "", false, false, "", Set.of(), Set.of());
+            return new PlayerState(uuid, name, 0L, "", false, false, "", Set.of(), Set.of(), "");
         }
 
         public PlayerState withMute(long until, String reason) {
             return new PlayerState(
-                uuid, playerName, until, reason, shadowMuted, privateSpy, activeChannel, joinedChannels, ignoredPlayers
+                uuid, playerName, until, reason, shadowMuted, privateSpy, activeChannel, joinedChannels, ignoredPlayers, chatColor
             );
         }
 
         public PlayerState withShadowMuted(boolean value) {
             return new PlayerState(
-                uuid, playerName, muteUntil, muteReason, value, privateSpy, activeChannel, joinedChannels, ignoredPlayers
+                uuid, playerName, muteUntil, muteReason, value, privateSpy, activeChannel, joinedChannels, ignoredPlayers, chatColor
             );
         }
 
         public PlayerState withPrivateSpy(boolean value) {
             return new PlayerState(
-                uuid, playerName, muteUntil, muteReason, shadowMuted, value, activeChannel, joinedChannels, ignoredPlayers
+                uuid, playerName, muteUntil, muteReason, shadowMuted, value, activeChannel, joinedChannels, ignoredPlayers, chatColor
             );
         }
 
         public PlayerState withChannels(String active, Set<String> joined) {
             return new PlayerState(
-                uuid, playerName, muteUntil, muteReason, shadowMuted, privateSpy, active, joined, ignoredPlayers
+                uuid, playerName, muteUntil, muteReason, shadowMuted, privateSpy, active, joined, ignoredPlayers, chatColor
             );
         }
 
         public PlayerState withIgnoredPlayers(Set<IgnoredPlayer> ignored) {
             return new PlayerState(
                 uuid, playerName, muteUntil, muteReason, shadowMuted, privateSpy,
-                activeChannel, joinedChannels, ignored
+                activeChannel, joinedChannels, ignored, chatColor
+            );
+        }
+
+        public PlayerState withChatColor(String color) {
+            return new PlayerState(
+                uuid, playerName, muteUntil, muteReason, shadowMuted, privateSpy,
+                activeChannel, joinedChannels, ignoredPlayers, color
             );
         }
 
         private static String normalizeChannel(String channel) {
             return channel == null ? "" : channel.trim().toLowerCase(java.util.Locale.ROOT);
+        }
+
+        private static String normalizeColor(String color) {
+            String normalized = color == null ? "" : color.trim().toLowerCase(java.util.Locale.ROOT);
+            return normalized.matches("[0-9a-f]") ? normalized : "";
         }
     }
 

@@ -43,7 +43,8 @@ class PlayerDataStoreTest {
             store.save(PlayerDataStore.PlayerState.empty(uuid, "MutedPlayer")
                 .withMute(muteUntil, "Repeated spam")
                 .withShadowMuted(true)
-                .withPrivateSpy(true));
+                .withPrivateSpy(true)
+                .withChatColor("A"));
         }
 
         try (PlayerDataStore store = new PlayerDataStore(directory)) {
@@ -54,6 +55,7 @@ class PlayerDataStoreTest {
             assertEquals("Repeated spam", loaded.muteReason());
             assertTrue(loaded.shadowMuted());
             assertTrue(loaded.privateSpy());
+            assertEquals("a", loaded.chatColor());
         }
     }
 

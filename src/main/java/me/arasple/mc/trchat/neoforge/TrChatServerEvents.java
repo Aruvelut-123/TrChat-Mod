@@ -268,6 +268,16 @@ public final class TrChatServerEvents {
                             context.getSource(),
                             StringArgumentType.getString(context, "channel")
                         )))))
+            .then(Commands.literal("color")
+                .requires(source -> canUsePermission(source, "trchat.command.color"))
+                .then(Commands.argument("color", StringArgumentType.word())
+                    .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                        chatColorSuggestions(context.getSource()),
+                        builder
+                    ))
+                    .executes(context -> selectChatColor(
+                        context.getSource(), StringArgumentType.getString(context, "color")
+                    ))))
             .then(Commands.literal("view")
                 .then(Commands.argument("snapshot", StringArgumentType.word())
                     .executes(context -> openSnapshot(
@@ -630,6 +640,27 @@ public final class TrChatServerEvents {
             source.sendFailure(service.languages().component(null, "General-Player-Only"));
             return 0;
         }
+    }
+
+    private int selectChatColor(CommandSourceStack source, String color) {
+        if (service == null) {
+            return 0;
+        }
+        try {
+            return service.setChatColor(source.getPlayerOrException(), color);
+        } catch (CommandSyntaxException exception) {
+            source.sendFailure(service.languages().component(null, "General-Player-Only"));
+            return 0;
+        }
+    }
+
+    private java.util.List<String> chatColorSuggestions(CommandSourceStack source) {
+        if (service == null || source.getPlayer() == null) {
+            return java.util.List.of("reset");
+        }
+        java.util.List<String> colors = new java.util.ArrayList<>(service.availableChatColors(source.getPlayer()));
+        colors.add("reset");
+        return colors;
     }
 
     private int serverSay(CommandSourceStack source, String message) {
