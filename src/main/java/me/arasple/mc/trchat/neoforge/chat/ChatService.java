@@ -7,6 +7,7 @@ import me.arasple.mc.trchat.neoforge.channel.ChannelRenderer;
 import me.arasple.mc.trchat.neoforge.channel.ConditionEvaluator;
 import me.arasple.mc.trchat.neoforge.config.TrChatConfig;
 import me.arasple.mc.trchat.neoforge.data.PlayerDataStore;
+import me.arasple.mc.trchat.neoforge.data.ChatLogService;
 import me.arasple.mc.trchat.neoforge.function.ChatFunctionService;
 import me.arasple.mc.trchat.neoforge.filter.FilterService;
 import me.arasple.mc.trchat.neoforge.lang.LanguageService;
@@ -48,6 +49,7 @@ public final class ChatService implements AutoCloseable {
     private final ChatFunctionService functions;
     private final FilterService filters;
     private final ModerationService moderation;
+    private final ChatLogService chatLogs = new ChatLogService();
     private final Map<UUID, ChatState> chatStates = new HashMap<>();
     private final Map<UUID, String> activeChannels = new HashMap<>();
     private final Map<UUID, Set<String>> joinedChannels = new HashMap<>();
@@ -419,6 +421,7 @@ public final class ChatService implements AutoCloseable {
     public void tick() {
         metrics.tick();
         filters.tick();
+        chatLogs.tick();
         tickCounter++;
         if (tickCounter % 200 == 0) {
             publishPlayerNames();
@@ -464,6 +467,7 @@ public final class ChatService implements AutoCloseable {
         joinedChannels.clear();
         remotePlayers.clear();
         lastPrivateSender.clear();
+        chatLogs.close();
         moderation.close();
     }
 
@@ -705,6 +709,15 @@ public final class ChatService implements AutoCloseable {
         String message,
         Map<String, String> local
     ) {
+        if (channel.options().privateChannel()) {
+            chatLogs.logPrivate(
+                player.getGameProfile().getName(),
+                local.getOrDefault("trchat_toplayer", "?"),
+                message
+            );
+        } else {
+            chatLogs.logNormal(player.getGameProfile().getName(), message);
+        }
         if (channel.consoleFormats().isEmpty()) {
             TrChatNeoForge.LOGGER.info("[{}] {}", channel.id(), renderer.render(
                 channel, ChannelRenderer.Audience.CHAT, player, message, local

@@ -20,6 +20,9 @@ public final class TrChatConfig {
     public static final ModConfigSpec.DoubleValue ANTI_REPEAT_SIMILARITY;
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BLOCKED_WORDS;
     public static final ModConfigSpec.ConfigValue<String> FILTER_REPLACEMENT;
+    public static final ModConfigSpec.ConfigValue<String> LOG_NORMAL_FORMAT;
+    public static final ModConfigSpec.ConfigValue<String> LOG_PRIVATE_FORMAT;
+    public static final ModConfigSpec.IntValue LOG_RETENTION_DAYS;
 
     public static final ModConfigSpec.BooleanValue UPDATE_CHECK_ENABLED;
     public static final ModConfigSpec.IntValue UPDATE_CHECK_INTERVAL_MINUTES;
@@ -67,6 +70,17 @@ public final class TrChatConfig {
             value -> value instanceof String
         );
         FILTER_REPLACEMENT = builder.define("filterReplacement", "*");
+        builder.pop();
+
+        builder.comment(
+            "Daily plain-text chat logs under config/trchat-neoforge/logs.",
+            "每日纯文本聊天日志，保存于 config/trchat-neoforge/logs。"
+        ).push("logging");
+        LOG_NORMAL_FORMAT = builder.define("normalFormat", "[{0}] {1}: {2}");
+        LOG_PRIVATE_FORMAT = builder.define("privateFormat", "[{0}] {1} -> {2}: {3}");
+        LOG_RETENTION_DAYS = builder
+            .comment("Delete log files older than this many days. 0 disables deletion.")
+            .defineInRange("retentionDays", 0, 0, 36500);
         builder.pop();
 
         builder.comment(
