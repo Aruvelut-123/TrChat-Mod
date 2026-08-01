@@ -17,6 +17,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -75,7 +76,16 @@ public final class UpdateChecker implements AutoCloseable {
             || !TrChatPermissions.check(player, "trchat.admin")) {
             return;
         }
-        player.sendSystemMessage(message(player, release));
+        player.sendSystemMessage(header(player, release));
+        player.sendSystemMessage(languages.component(player, "Updater-Changelog"));
+        if (release.notes().isEmpty()) {
+            player.sendSystemMessage(languages.component(player, "Updater-Changelog-Empty"));
+        } else {
+            for (String line : release.notes()) {
+                player.sendSystemMessage(net.minecraft.network.chat.Component.literal(line));
+            }
+        }
+        player.sendSystemMessage(languages.component(player, "Status-Footer"));
         notified.add(player.getUUID());
     }
 
@@ -97,9 +107,14 @@ public final class UpdateChecker implements AutoCloseable {
             JsonObject json = JsonParser.parseString(response.body()).getAsJsonObject();
             String tag = json.get("tag_name").getAsString();
             String page = json.has("html_url") ? json.get("html_url").getAsString() : RELEASES_URL;
+            String body = json.has("body") && !json.get("body").isJsonNull()
+                ? json.get("body").getAsString()
+                : "";
             SemanticVersion latest = SemanticVersion.parse(tag);
             if (latest.compareTo(current) > 0) {
-                ReleaseInfo release = new ReleaseInfo(tag.replaceFirst("^[vV]", ""), page);
+                ReleaseInfo release = new ReleaseInfo(
+                    tag.replaceFirst("^[vV]", ""), page, ReleaseNotes.normalize(body)
+                );
                 boolean changed = !release.equals(available);
                 available = release;
                 if (changed) {
@@ -131,15 +146,20 @@ public final class UpdateChecker implements AutoCloseable {
 
     private void notifyAvailable(ReleaseInfo release) {
         TrChatNeoForge.LOGGER.warn(
-            "TrChat NeoForge update available: {} -> {} ({})",
-            currentText, release.version(), release.url()
+            "TrChat NeoForge update available: {} -> {} ({})\n{}",
+            currentText,
+            release.version(),
+            release.url(),
+            release.notes().isEmpty()
+                ? "No release notes provided."
+                : String.join(System.lineSeparator(), release.notes())
         );
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             notifyPlayer(player);
         }
     }
 
-    private MutableComponent message(ServerPlayer player, ReleaseInfo release) {
+    private MutableComponent header(ServerPlayer player, ReleaseInfo release) {
         MutableComponent output = languages.component(
             player, "Updater-Available", currentText, release.version()
         ).copy();
@@ -153,9 +173,7 @@ public final class UpdateChecker implements AutoCloseable {
         return output
             .append("\n")
             .append(languages.component(player, "Updater-Link-Prefix"))
-            .append(link)
-            .append("\n")
-            .append(languages.component(player, "Status-Footer"));
+            .append(link);
     }
 
     @Override
@@ -164,6 +182,6 @@ public final class UpdateChecker implements AutoCloseable {
         notified.clear();
     }
 
-    private record ReleaseInfo(String version, String url) {
+    private record ReleaseInfo(String version, String url, List<String> notes) {
     }
 }

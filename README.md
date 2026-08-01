@@ -30,7 +30,7 @@ NeoForge 作者与维护者：[Baymaxawa](https://space.bilibili.com/475655508)�
 - YAML 配置与语言文件加载时自动补齐缺失项、删除未知项，并保留所有已知项的用户值。
 - 本地 `data.db` 持久化；`datasource.yml` 可切换 SQLite、MySQL、MariaDB 或自定义 JDBC。三种常用驱动均已内嵌。
 - Redis 自动重连，以及与 Bukkit 版的广播、私聊、在线玩家列表和全服禁言协议互通。
-- 内置 GitHub Release 更新检查器：启动后检查、默认每 15 分钟复查，并向后台与 `trchat.admin` 管理员发送短版可点击提醒。
+- 内置 GitHub Release 更新检查器：启动后检查、默认每 15 分钟复查，并向后台与 `trchat.admin` 管理员显示版本、完整更新日志和可点击下载链接。
 
 ## 配置目录
 

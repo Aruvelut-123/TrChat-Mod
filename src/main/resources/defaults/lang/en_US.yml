@@ -70,6 +70,8 @@ Updater-Available: |-
 Updater-Link-Prefix: '&8▪ &7Download: '
 Updater-Link: '&a&nGitHub Releases'
 Updater-Link-Hover: '&7Click to open the TrChat NeoForge releases page'
+Updater-Changelog: '&8▪ &7Changelog:'
+Updater-Changelog-Empty: '&8  &7No release notes were provided.'
 Private-Message-No-Reply: '&8[&3Tr&bChat&8] &7There is nobody to reply to.'
 Private-Message-Spy-Format: '&8[&3Spy&8] &6{0} &2-> &3{1}&f: &7{2}'
 Private-Message-Spy-On: '&c&l&k|&f &a&lPrivate-message spy enabled &c&l&k|'
