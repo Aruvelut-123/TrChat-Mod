@@ -68,7 +68,7 @@ config/trchat-neoforge/
 
 除这两组原生占位符外，还支持 `%message%` 与私聊中的 `%trchat_toplayer%`。其他 Bukkit 插件扩展变量在纯 NeoForge 环境中无法解析，会替换为空文本。
 
-只有代码预先标记为可本地化的布尔状态、游戏模式、方向、世界类型及倒计时错误等占位符，且完整结果全部由英文字母、空格、下划线或连字符组成时，才会查找当前语言文件的 `Placeholder-Translations`。三份默认语言文件已列出允许修改的完整映射；该节点不是动态扩展区，未知键会被配置检查器删除。
+只有代码预先标记为可本地化的布尔状态、游戏模式、方向、世界类型及倒计时错误等占位符，且完整结果全部由英文字母、空格、下划线或连字符组成时，才会查找当前语言文件的 `Placeholder-Translations`。三份默认语言文件已列出允许修改的完整映射；该节点不是动态扩展区，未知键会被配置检查器删除。本服消息按每位接收者的客户端语言分别渲染；Bukkit 兼容跨服协议只能携带一个已渲染组件，因此跨服消息统一使用 `defaultLanguage`，不再受发送者客户端语言影响。
 
 ## Redis 与 Bukkit 互通
 
@@ -112,7 +112,7 @@ SQLite:
 
 数据库保存玩家禁言截止时间、原因、ShadowMute、私聊监听开关、频道状态、屏蔽列表和聊天颜色。SQLite 文件位于 `config/trchat-neoforge/data.db`。
 
-聊天日志配置位于 `settings.toml` 的 `[logging]`：`normalFormat`、`privateFormat` 和 `retentionDays`。`retentionDays = 0` 表示不自动删除。
+聊天日志配置位于 `settings.toml` 的 `[logging]`：`normalMessageFormat`、`privateMessageFormat` 和 `retentionDays`。`retentionDays = 0` 表示不自动删除。
 
 ## function.yml
 
