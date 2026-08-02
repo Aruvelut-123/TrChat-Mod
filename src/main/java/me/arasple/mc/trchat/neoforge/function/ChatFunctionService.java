@@ -23,7 +23,6 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.EquipmentSlot;
-import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.core.component.DataComponents;
@@ -152,9 +151,9 @@ public final class ChatFunctionService {
             container.setItem(index, snapshot.items().get(index).copy());
         }
         viewer.openMenu(new SimpleMenuProvider(
-            (containerId, inventory, ignored) -> snapshot.size() == 54
-                ? ChestMenu.sixRows(containerId, inventory, container)
-                : ChestMenu.threeRows(containerId, inventory, container),
+            (containerId, inventory, ignored) -> ReadOnlyChestMenu.create(
+                containerId, inventory, container, snapshot.size()
+            ),
             Component.literal(snapshot.title())
         ));
         return true;
