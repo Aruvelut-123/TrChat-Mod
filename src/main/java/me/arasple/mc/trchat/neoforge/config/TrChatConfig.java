@@ -11,9 +11,6 @@ public final class TrChatConfig {
     public static final ModConfigSpec.IntValue SERVER_ID;
     public static final ModConfigSpec.ConfigValue<String> SERVER_NAME;
     public static final ModConfigSpec.ConfigValue<String> DEFAULT_LANGUAGE;
-    public static final ModConfigSpec.ConfigValue<String> CHAT_FORMAT;
-    public static final ModConfigSpec.ConfigValue<String> GLOBAL_FORMAT;
-    public static final ModConfigSpec.ConfigValue<String> PRIVATE_FORMAT;
     public static final ModConfigSpec.ConfigValue<String> GLOBAL_PREFIX;
     public static final ModConfigSpec.IntValue MESSAGE_MAX_LENGTH;
     public static final ModConfigSpec.IntValue COOLDOWN_MILLIS;
@@ -52,9 +49,6 @@ public final class TrChatConfig {
         DEFAULT_LANGUAGE = builder
             .comment("Fallback language file name from config/trchat-neoforge/lang without .yml.")
             .define("defaultLanguage", "zh_CN");
-        CHAT_FORMAT = builder.define("format", "&7<%player%>&f %message%");
-        GLOBAL_FORMAT = builder.define("globalFormat", "&8[&bGlobal&8] &7<%player%>&f %message%");
-        PRIVATE_FORMAT = builder.define("privateFormat", "&8[&dPM&8] &7%player%&8: &f%message%");
         GLOBAL_PREFIX = builder
             .comment("Messages beginning with this prefix use Redis global chat. '!all' matches the Bukkit default.")
             .define("globalPrefix", "!all");
@@ -76,8 +70,8 @@ public final class TrChatConfig {
             "Daily plain-text chat logs under config/trchat-neoforge/logs.",
             "每日纯文本聊天日志，保存于 config/trchat-neoforge/logs。"
         ).push("logging");
-        LOG_NORMAL_FORMAT = builder.define("normalFormat", "[{0}] {1}: {2}");
-        LOG_PRIVATE_FORMAT = builder.define("privateFormat", "[{0}] {1} -> {2}: {3}");
+        LOG_NORMAL_FORMAT = builder.define("normalMessageFormat", "[{0}] {1}: {2}");
+        LOG_PRIVATE_FORMAT = builder.define("privateMessageFormat", "[{0}] {1} -> {2}: {3}");
         LOG_RETENTION_DAYS = builder
             .comment("Delete log files older than this many days. 0 disables deletion.")
             .defineInRange("retentionDays", 0, 0, 36500);
