@@ -54,6 +54,15 @@ class LanguageServiceTest {
     }
 
     @Test
+    void translatesPlaceholderUsingConfiguredTrChatLanguage() throws Exception {
+        LanguageService service = new LanguageService(directory, "zh_CN");
+        assertTrue(service.reload());
+
+        assertEquals("是", service.translatePlaceholder("player_online", "yes"));
+        assertEquals("生存模式", service.translatePlaceholder("player_gamemode", "SURVIVAL"));
+    }
+
+    @Test
     void reloadsCustomizedPlaceholderTranslationsFromLanguageFile() throws Exception {
         LanguageService service = new LanguageService(directory, "zh_CN");
         assertTrue(service.reload());

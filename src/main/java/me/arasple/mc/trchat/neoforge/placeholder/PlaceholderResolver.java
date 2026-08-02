@@ -92,7 +92,7 @@ public final class PlaceholderResolver {
             String value = local.get(token);
             if (value == null) {
                 value = resolveToken(token, subject);
-                value = languages.translatePlaceholder(viewer, token, value);
+                value = languages.translatePlaceholder(token, value);
             }
             matcher.appendReplacement(output, Matcher.quoteReplacement(value == null ? "" : value));
         }

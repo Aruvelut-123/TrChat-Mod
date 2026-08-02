@@ -85,7 +85,12 @@ public final class LanguageService {
     }
 
     public String translatePlaceholder(ServerPlayer player, String token, String value) {
-        return translatePlaceholderValue(token, value, selected(player), fallback());
+        return translatePlaceholder(token, value);
+    }
+
+    public String translatePlaceholder(String token, String value) {
+        Map<String, String> configured = selected(defaultLanguage.get());
+        return translatePlaceholderValue(token, value, configured, fallback());
     }
 
     String translatePlaceholderForLanguage(String language, String token, String value) {
