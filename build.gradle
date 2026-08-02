@@ -54,13 +54,13 @@ dependencies {
         }
     }
     additionalRuntimeClasspath 'org.xerial:sqlite-jdbc:3.50.3.0'
-    jarJar(implementation('com.mysql:mysql-connector-j:9.7.0')) {
+    jarJar(implementation('com.mysql:mysql-connector-j:8.4.0')) {
         version {
-            strictly '[9.0,10.0)'
-            prefer '9.7.0'
+            strictly '[8.4,8.5)'
+            prefer '8.4.0'
         }
     }
-    additionalRuntimeClasspath 'com.mysql:mysql-connector-j:9.7.0'
+    additionalRuntimeClasspath 'com.mysql:mysql-connector-j:8.4.0'
     jarJar(implementation('com.google.protobuf:protobuf-java:4.35.1')) {
         version {
             strictly '[4.31,5.0)'
