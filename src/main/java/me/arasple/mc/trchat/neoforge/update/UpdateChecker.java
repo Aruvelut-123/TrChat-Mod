@@ -82,7 +82,7 @@ public final class UpdateChecker implements AutoCloseable {
             player.sendSystemMessage(languages.component(player, "Updater-Changelog-Empty"));
         } else {
             for (String line : release.notes()) {
-                player.sendSystemMessage(net.minecraft.network.chat.Component.literal(line));
+                player.sendSystemMessage(ReleaseNoteRenderer.render(line));
             }
         }
         player.sendSystemMessage(languages.component(player, "Status-Footer"));
