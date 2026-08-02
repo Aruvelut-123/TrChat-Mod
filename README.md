@@ -2,7 +2,7 @@
 
 TrChat 的纯 NeoForge 服务端移植版。仅支持 Minecraft `1.21.1` 与 NeoForge `21.1.233+`，不包含 Bukkit、BungeeCord、Velocity、插件消息代理或 DiscordSRV；跨服只通过 Redis，并保持与 Bukkit TrChat `2.4.9` 的聊天协议互通。
 
-NeoForge 作者与维护者：[Baymaxawa](https://space.bilibili.com/475655508)；原版 TrChat 作者：Arasple。
+NeoForge 作者与维护者：[Baymaxawa](https://space.bilibili.com/475655508)；原版 TrChat 作者：Arasple、ItsFlicker。本项目基于 ItsFlicker 维护的较新分支继续移植。
 
 项目仓库与 Issue：[Aruvelut-123/TrChat-Neoforge](https://github.com/Aruvelut-123/TrChat-Neoforge)。
 
@@ -213,7 +213,7 @@ Set-Location D:\TrChat-Neoforge
 .\scripts\sync-upstream.ps1
 ```
 
-脚本获取 `TrPlugins/TrChat` 的 `v2` 分支，只展示 Redis 协议、频道和聊天行为相关差异。人工移植并验证后执行：
+脚本获取 ItsFlicker 维护的 `TrPlugins/TrChat` `v2` 分支，只展示 Redis 协议、频道和聊天行为相关差异。人工移植并验证后执行：
 
 ```powershell
 .\scripts\sync-upstream.ps1 -MarkSynced

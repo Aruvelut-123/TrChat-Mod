@@ -28,7 +28,7 @@ Status-Overview: |-
 Status-Creator-Prefix: '&8▪ &7By: &fBaymaxawa &8• '
 Status-Creator-Link: '&d&nBilibili'
 Status-Creator-Link-Hover: '&7Click to open Baymaxawa''s Bilibili profile'
-Status-Original-Author: '&8▪ &7Original: &fArasple'
+Status-Original-Author: '&8▪ &7Original: &fArasple, ItsFlicker'
 Status-Repository-Prefix: '&8▪ &7Repo: '
 Status-Repository-Link: '&b&nGitHub / Issues'
 Status-Repository-Link-Hover: '&7Click to open the NeoForge repository or report an issue'
@@ -48,7 +48,7 @@ Command-Controller-Disabled: '&8[&3Tr&bChat&8] &cCommand /{0} is not configured 
 Command-About: |-
   &8&m----------&r &3&lTr&b&lChat &8&m----------
   &8▪ &7Ver: &b{0}
-  &8▪ &7Original: &fArasple
+  &8▪ &7Original: &fArasple, ItsFlicker
   &8▪ &7NeoForge: &fBaymaxawa
   &8▪ &7MC: &f1.21.1 &8| &7NF: &f21.1.233+
   &8&m--------------------------------
