@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -27,10 +28,23 @@ public final class LanguageService {
     );
 
     private final Path directory;
+    private final Supplier<String> defaultLanguage;
     private volatile Map<String, Map<String, String>> languages = Map.of();
 
     public LanguageService() {
-        directory = FMLPaths.CONFIGDIR.get().resolve("trchat-neoforge").resolve("lang");
+        this(
+            FMLPaths.CONFIGDIR.get().resolve("trchat-neoforge").resolve("lang"),
+            () -> TrChatConfig.DEFAULT_LANGUAGE.get()
+        );
+    }
+
+    LanguageService(Path directory, String defaultLanguage) {
+        this(directory, () -> defaultLanguage);
+    }
+
+    private LanguageService(Path directory, Supplier<String> defaultLanguage) {
+        this.directory = directory;
+        this.defaultLanguage = defaultLanguage;
     }
 
     public synchronized boolean reload() {
@@ -44,7 +58,7 @@ public final class LanguageService {
                 for (Path file : files.filter(path -> path.getFileName().toString().endsWith(".yml")).toList()) {
                     String name = stem(file);
                     Map<String, Object> repaired = synchronizeLanguage(file, name);
-                    loaded.put(name.toLowerCase(Locale.ROOT), flatten(repaired));
+                    loaded.put(languageKey(name), flatten(repaired));
                 }
             }
             languages = Map.copyOf(loaded);
@@ -74,34 +88,50 @@ public final class LanguageService {
         return translatePlaceholderValue(token, value, selected(player), fallback());
     }
 
+    String translatePlaceholderForLanguage(String language, String token, String value) {
+        return translatePlaceholderValue(token, value, selected(language), fallback());
+    }
+
     static String translatePlaceholderValue(
         String token,
         String value,
         Map<String, String> selected,
         Map<String, String> fallback
     ) {
-        if (!PlaceholderCatalog.isLocalizable(token)
-            || value == null
-            || !ENGLISH_RESULT.matcher(value).matches()) {
+        String normalizedToken = token == null ? "" : token.trim().toLowerCase(Locale.ROOT);
+        String normalizedValue = value == null ? null : value.trim();
+        if (!PlaceholderCatalog.isLocalizable(normalizedToken)
+            || normalizedValue == null
+            || !ENGLISH_RESULT.matcher(normalizedValue).matches()) {
             return value;
         }
-        String key = "Placeholder-Translations." + value.toLowerCase(Locale.ROOT);
+        String key = "Placeholder-Translations." + normalizedValue.toLowerCase(Locale.ROOT);
         String translated = selected == null ? null : selected.get(key);
         return translated == null ? fallback.getOrDefault(key, value) : translated;
     }
 
     private Map<String, String> selected(ServerPlayer player) {
         String requested = player == null
-            ? TrChatConfig.DEFAULT_LANGUAGE.get()
+            ? defaultLanguage.get()
             : player.clientInformation().language();
-        return languages.get(requested.toLowerCase(Locale.ROOT));
+        return selected(requested);
+    }
+
+    private Map<String, String> selected(String requested) {
+        return languages.get(languageKey(requested));
     }
 
     private Map<String, String> fallback() {
         return languages.getOrDefault(
-            TrChatConfig.DEFAULT_LANGUAGE.get().toLowerCase(Locale.ROOT),
+            languageKey(defaultLanguage.get()),
             languages.getOrDefault("en_us", Map.of())
         );
+    }
+
+    private static String languageKey(String language) {
+        return language == null
+            ? ""
+            : language.trim().replace('-', '_').toLowerCase(Locale.ROOT);
     }
 
     private static Map<String, String> flatten(Map<String, Object> root) {

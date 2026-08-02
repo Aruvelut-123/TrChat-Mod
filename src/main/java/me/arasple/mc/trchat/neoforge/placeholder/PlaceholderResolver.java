@@ -69,21 +69,30 @@ public final class PlaceholderResolver {
     }
 
     public String resolve(String input, ServerPlayer player) {
-        return resolve(input, player, Map.of());
+        return resolve(input, player, player, Map.of());
     }
 
     public String resolve(String input, ServerPlayer player, Map<String, String> local) {
+        return resolve(input, player, player, local);
+    }
+
+    public String resolve(
+        String input,
+        ServerPlayer subject,
+        ServerPlayer viewer,
+        Map<String, String> local
+    ) {
         if (input == null || input.isEmpty()) {
             return "";
         }
         Matcher matcher = PLACEHOLDER.matcher(input);
         StringBuilder output = new StringBuilder(input.length());
         while (matcher.find()) {
-            String token = matcher.group(1);
+            String token = matcher.group(1).trim().toLowerCase(Locale.ROOT);
             String value = local.get(token);
             if (value == null) {
-                value = resolveToken(token, player);
-                value = languages.translatePlaceholder(player, token, value);
+                value = resolveToken(token, subject);
+                value = languages.translatePlaceholder(viewer, token, value);
             }
             matcher.appendReplacement(output, Matcher.quoteReplacement(value == null ? "" : value));
         }

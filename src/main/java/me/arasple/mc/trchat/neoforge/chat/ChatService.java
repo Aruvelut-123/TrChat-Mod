@@ -116,16 +116,27 @@ public final class ChatService implements AutoCloseable {
         if (channel == null || message == null || message.isBlank()) {
             return 0;
         }
-        ChannelRenderer.Rendered rendered = renderer.render(
+        Map<String, String> local = Map.of("message", message.trim());
+        ChannelRenderer.Rendered consoleView = renderer.render(
             channel,
             ChannelRenderer.Audience.CONSOLE,
             sourcePlayer,
+            (ServerPlayer) null,
             message.trim(),
-            Map.of("message", message.trim())
+            local
         );
         // Server is a deliberately local-only channel. Never publish it to Redis.
-        server.getPlayerList().broadcastSystemMessage(rendered.component(), false);
-        TrChatNeoForge.LOGGER.info("[Server] {}", rendered.component().getString());
+        for (ServerPlayer receiver : server.getPlayerList().getPlayers()) {
+            receiver.sendSystemMessage(renderer.render(
+                channel,
+                ChannelRenderer.Audience.CONSOLE,
+                sourcePlayer,
+                receiver,
+                message.trim(),
+                local
+            ).component());
+        }
+        TrChatNeoForge.LOGGER.info("[Server] {}", consoleView.component().getString());
         return 1;
     }
 
@@ -156,7 +167,13 @@ public final class ChatService implements AutoCloseable {
             channel, ChannelRenderer.Audience.SENDER, sender, processed.component(), message, local
         );
         ChannelRenderer.Rendered receiverView = renderer.render(
-            channel, ChannelRenderer.Audience.RECEIVER, sender, processed.component(), message, local
+            channel,
+            ChannelRenderer.Audience.RECEIVER,
+            sender,
+            localTarget,
+            processed.component(),
+            message,
+            local
         );
         boolean shadowMuted = moderation.shadowMuted(sender);
         if (!shadowMuted && localTarget == null && !processed.crossServerSafe()) {
@@ -489,13 +506,22 @@ public final class ChatService implements AutoCloseable {
             channel,
             ChannelRenderer.Audience.CHAT,
             player,
+            null,
             processed.component(),
             message,
             local
         );
 
         if (moderation.shadowMuted(player)) {
-            player.sendSystemMessage(rendered.component());
+            player.sendSystemMessage(renderer.render(
+                channel,
+                ChannelRenderer.Audience.CHAT,
+                player,
+                player,
+                processed.component(),
+                message,
+                local
+            ).component());
             logToConsole(channel, player, message, local);
             return true;
         }
@@ -521,7 +547,7 @@ public final class ChatService implements AutoCloseable {
             sendLang(player, "Redis-Fallback");
         }
 
-        broadcastLocal(channel, player, rendered.component());
+        broadcastLocal(channel, player, processed.component(), message, local);
         logToConsole(channel, player, message, local);
         return true;
     }
@@ -624,7 +650,13 @@ public final class ChatService implements AutoCloseable {
         return permission == null || permission.isBlank() || TrChatPermissions.check(player, permission);
     }
 
-    private void broadcastLocal(ChannelDefinition channel, ServerPlayer sender, Component component) {
+    private void broadcastLocal(
+        ChannelDefinition channel,
+        ServerPlayer sender,
+        Component messageComponent,
+        String message,
+        Map<String, String> local
+    ) {
         String id = channel.id().toLowerCase(Locale.ROOT);
         String target = channel.options().target();
         String[] range = target.split(";", 2);
@@ -649,7 +681,15 @@ public final class ChatService implements AutoCloseable {
                 default -> true;
             };
             if (inRange) {
-                receiver.sendSystemMessage(component);
+                receiver.sendSystemMessage(renderer.render(
+                    channel,
+                    ChannelRenderer.Audience.CHAT,
+                    sender,
+                    receiver,
+                    messageComponent,
+                    message,
+                    local
+                ).component());
             }
         }
     }
@@ -720,12 +760,12 @@ public final class ChatService implements AutoCloseable {
         }
         if (channel.consoleFormats().isEmpty()) {
             TrChatNeoForge.LOGGER.info("[{}] {}", channel.id(), renderer.render(
-                channel, ChannelRenderer.Audience.CHAT, player, message, local
+                channel, ChannelRenderer.Audience.CHAT, player, (ServerPlayer) null, message, local
             ).component().getString());
             return;
         }
         Component console = renderer.render(
-            channel, ChannelRenderer.Audience.CONSOLE, player, message, local
+            channel, ChannelRenderer.Audience.CONSOLE, player, (ServerPlayer) null, message, local
         ).component();
         TrChatNeoForge.LOGGER.info("[{}] {}", channel.id(), console.getString());
     }
