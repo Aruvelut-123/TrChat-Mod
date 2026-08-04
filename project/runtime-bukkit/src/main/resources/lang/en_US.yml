@@ -228,6 +228,9 @@ Channel-Bad-Language:
     sound: 'ENTITY_ITEM_BREAK'
     volume: 1
     pitch: 0
+Channel-Not-Found: '&8[&3Tr&bChat&8] &7The channel &b{0} &7does not exist.'
+Channel-Join-Other: '&8[&3Tr&bChat&8] &3You have moved &7{0} &3to the &b{1} &3channel.'
+Channel-Quit-Other: '&8[&3Tr&bChat&8] &3You have removed &7{0} &3from the chat channel.'
 Sign-Edit-No-Permission:
   - type: actionbar
     text: '&cYou do not have permission to edit the bulletin board.'
