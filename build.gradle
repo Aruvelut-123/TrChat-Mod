@@ -47,13 +47,13 @@ dependencies {
         }
     }
     additionalRuntimeClasspath 'org.yaml:snakeyaml:2.6'
-    jarJar(implementation('org.xerial:sqlite-jdbc:3.50.3.0')) {
+    jarJar(implementation('org.xerial:sqlite-jdbc:3.53.2.1')) {
         version {
             strictly '[3.45,4.0)'
             prefer '3.50.3.0'
         }
     }
-    additionalRuntimeClasspath 'org.xerial:sqlite-jdbc:3.50.3.0'
+    additionalRuntimeClasspath 'org.xerial:sqlite-jdbc:3.53.2.1'
     jarJar(implementation('com.mysql:mysql-connector-j:8.4.0')) {
         version {
             strictly '[8.4,8.5)'
