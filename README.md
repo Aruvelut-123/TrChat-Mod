@@ -171,7 +171,9 @@ NeoForge 1.21.1 的铁砧事件不能安全地只改写重命名文本而不替�
 | `/tell`、`/msg` 等 Private 频道绑定 | 通过 Private 频道发送本服或跨服私聊 |
 | `/r <内容>`、`/reply <内容>` | 回复最后一个向你发送私聊的玩家 |
 | `/trchat channel join <频道>` | 加入或离开频道 |
-| `/say <内容>` | 通过本地 `Server` 频道格式化发送 |
+| `/trchat channel join <频道> <玩家>` | 将其他玩家移入指定频道（需 `trchat.command.channel.other`） |
+| `/trchat channel quit [玩家]` | 退出当前频道；指定玩家时需管理权限 |
+| `/say <内容>` | 以本地化的“控制台”名称通过 Auto-Join 频道发送 |
 
 另有 `/trmsg`、`/trreply`、`/trmute`、`/trunmute`、`/trshadowmute`、`/trspy`，以及频道 YAML 中定义的动态命令。
 

@@ -27,6 +27,10 @@ class LanguageConfigTest {
             "Mute-Shadow-On",
             "Function-Inventory-Format",
             "Filter-Anvil-Blocked",
+            "Console-Name",
+            "Channel-Auto-Join-Missing",
+            "Channel-Join-Other",
+            "Channel-Quit-Other",
             "Redis-Private-Unavailable",
             "Redis-Unsafe-Item"
         )));

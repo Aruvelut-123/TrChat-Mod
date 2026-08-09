@@ -31,6 +31,7 @@ public final class TrChatPermissions {
     );
     public static final PermissionNode<Boolean> CHAT_COLOR_COMMAND = restricted("command.color");
     public static final PermissionNode<Boolean> CLEAR_CHAT = restricted("command.clear");
+    public static final PermissionNode<Boolean> CHANNEL_OTHER = restricted("command.channel.other");
     public static final PermissionNode<Boolean> COMMAND_COOLDOWN_BYPASS = restricted("bypass.cmdcooldown");
     private static final List<PermissionNode<Boolean>> CHAT_COLORS = "0123456789abcdef".chars()
         .mapToObj(code -> new PermissionNode<>(
@@ -46,7 +47,7 @@ public final class TrChatPermissions {
         event.addNodes(
             GLOBAL, PRIVATE, ADMIN, MENTION_ALL, INVENTORY_SHOW, ENDER_CHEST_SHOW,
             MUTE, SHADOW_MUTE, PRIVATE_SPY, IGNORE, CHAT_COLOR_COMMAND, CLEAR_CHAT,
-            COMMAND_COOLDOWN_BYPASS
+            CHANNEL_OTHER, COMMAND_COOLDOWN_BYPASS
         );
         CHAT_COLORS.forEach(event::addNodes);
     }

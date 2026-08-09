@@ -267,6 +267,26 @@ public final class TrChatServerEvents {
                         .executes(context -> selectChannel(
                             context.getSource(),
                             StringArgumentType.getString(context, "channel")
+                        ))
+                        .then(Commands.argument("player", StringArgumentType.word())
+                            .requires(source -> canUsePermission(source, "trchat.command.channel.other"))
+                            .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                                context.getSource().getOnlinePlayerNames(), builder
+                            ))
+                            .executes(context -> setPlayerChannel(
+                                context.getSource(),
+                                StringArgumentType.getString(context, "channel"),
+                                StringArgumentType.getString(context, "player")
+                            )))))
+                .then(Commands.literal("quit")
+                    .executes(context -> quitChannel(context.getSource()))
+                    .then(Commands.argument("player", StringArgumentType.word())
+                        .requires(source -> canUsePermission(source, "trchat.command.channel.other"))
+                        .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                            context.getSource().getOnlinePlayerNames(), builder
+                        ))
+                        .executes(context -> quitPlayerChannel(
+                            context.getSource(), StringArgumentType.getString(context, "player")
                         )))))
             .then(Commands.literal("color")
                 .requires(source -> canUsePermission(source, "trchat.command.color"))
@@ -648,6 +668,64 @@ public final class TrChatServerEvents {
             source.sendFailure(service.languages().component(null, "General-Player-Only"));
             return 0;
         }
+    }
+
+    private int setPlayerChannel(CommandSourceStack source, String channelId, String playerName) {
+        if (service == null) {
+            return 0;
+        }
+        ServerPlayer target = source.getServer().getPlayerList().getPlayerByName(playerName);
+        if (target == null) {
+            source.sendFailure(service.languages().component(
+                source.getPlayer(), "General-Player-Not-Found", playerName
+            ));
+            return 0;
+        }
+        ChannelDefinition channel = channels.byId(channelId).filter(ChannelDefinition::isJoinable).orElse(null);
+        if (channel == null) {
+            source.sendFailure(service.languages().component(
+                source.getPlayer(), "Channel-Not-Found", channelId
+            ));
+            return 0;
+        }
+        if (service.setChannel(target, channel) == 0) {
+            source.sendFailure(service.languages().component(source.getPlayer(), "General-No-Permission"));
+            return 0;
+        }
+        source.sendSuccess(() -> service.languages().component(
+            source.getPlayer(), "Channel-Join-Other", target.getGameProfile().getName(), channel.id()
+        ), true);
+        return 1;
+    }
+
+    private int quitChannel(CommandSourceStack source) {
+        if (service == null) {
+            return 0;
+        }
+        try {
+            return service.quitChannel(source.getPlayerOrException());
+        } catch (CommandSyntaxException exception) {
+            source.sendFailure(service.languages().component(null, "General-Player-Only"));
+            return 0;
+        }
+    }
+
+    private int quitPlayerChannel(CommandSourceStack source, String playerName) {
+        if (service == null) {
+            return 0;
+        }
+        ServerPlayer target = source.getServer().getPlayerList().getPlayerByName(playerName);
+        if (target == null) {
+            source.sendFailure(service.languages().component(
+                source.getPlayer(), "General-Player-Not-Found", playerName
+            ));
+            return 0;
+        }
+        service.quitChannel(target);
+        source.sendSuccess(() -> service.languages().component(
+            source.getPlayer(), "Channel-Quit-Other", target.getGameProfile().getName()
+        ), true);
+        return 1;
     }
 
     private int selectChatColor(CommandSourceStack source, String color) {

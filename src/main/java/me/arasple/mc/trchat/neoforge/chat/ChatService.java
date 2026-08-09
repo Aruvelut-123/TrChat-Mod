@@ -410,6 +410,39 @@ public final class ChatService implements AutoCloseable {
         return moderation.joinedChannels(player).size();
     }
 
+    public int setChannel(ServerPlayer player, ChannelDefinition channel) {
+        if (!channel.isJoinable() || !hasPermission(player, channel.options().joinPermission())) {
+            sendLang(player, "Channel-No-Join-Permission", channel.id());
+            return 0;
+        }
+        Set<String> joined = joinedChannels.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>());
+        activeChannels.put(player.getUUID(), channel.id());
+        joined.add(channel.id().toLowerCase(Locale.ROOT));
+        persistChannelMembership(player);
+        sendLang(player, "Channel-Join", channel.id());
+        return 1;
+    }
+
+    public int quitChannel(ServerPlayer player) {
+        String previousId = activeChannels.getOrDefault(player.getUUID(), channels.normal().id());
+        ChannelDefinition previous = channels.byId(previousId).orElseGet(channels::normal);
+        Set<String> joined = joinedChannels.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>());
+        if (!previous.options().alwaysListen()) {
+            joined.remove(previous.id().toLowerCase(Locale.ROOT));
+        }
+        ChannelDefinition fallback = channels.autoJoin()
+            .filter(channel -> hasPermission(player, channel.options().joinPermission()))
+            .orElseGet(channels::normal);
+        joined.add(fallback.id().toLowerCase(Locale.ROOT));
+        activeChannels.put(player.getUUID(), fallback.id());
+        persistChannelMembership(player);
+        sendLang(player, "Channel-Quit", previous.id());
+        if (!previous.id().equalsIgnoreCase(fallback.id())) {
+            sendLang(player, "Channel-Join", fallback.id());
+        }
+        return 1;
+    }
+
     public void setShadowMuted(ServerPlayer player, boolean value) {
         moderation.setShadowMuted(player, value);
     }
