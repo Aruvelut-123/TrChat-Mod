@@ -15,6 +15,7 @@ import me.arasple.mc.trchat.neoforge.update.UpdateChecker;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.commands.arguments.MessageArgument;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
@@ -356,10 +357,10 @@ public final class TrChatServerEvents {
 
         dispatcher.register(Commands.literal("say")
             .requires(source -> source.hasPermission(2))
-            .then(Commands.argument("message", StringArgumentType.greedyString())
+            .then(Commands.argument("message", MessageArgument.message())
                 .executes(context -> consoleSay(
                     context.getSource(),
-                    StringArgumentType.getString(context, "message")
+                    MessageArgument.getMessage(context, "message").getString()
                 ))));
     }
 
