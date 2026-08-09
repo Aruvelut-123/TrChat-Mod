@@ -68,13 +68,13 @@ dependencies {
         }
     }
     additionalRuntimeClasspath 'com.google.protobuf:protobuf-java:4.35.1'
-    jarJar(implementation('org.mariadb.jdbc:mariadb-java-client:3.5.9')) {
+    jarJar(implementation('org.mariadb.jdbc:mariadb-java-client:3.5.10')) {
         version {
             strictly '[3.0,4.0)'
             prefer '3.5.9'
         }
     }
-    additionalRuntimeClasspath 'org.mariadb.jdbc:mariadb-java-client:3.5.9'
+    additionalRuntimeClasspath 'org.mariadb.jdbc:mariadb-java-client:3.5.10'
 
     testImplementation platform('org.junit:junit-bom:6.1.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
