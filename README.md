@@ -1,5 +1,7 @@
 # TrChat NeoForge 1.21.1
 
+[English](README_EN.md) | 简体中文
+
 TrChat 的纯 NeoForge 服务端移植版。仅支持 Minecraft `1.21.1` 与 NeoForge `21.1.233+`，不包含 Bukkit、BungeeCord、Velocity、插件消息代理或 DiscordSRV；跨服只通过 Redis，并保持与 Bukkit TrChat `2.4.9` 的聊天协议互通。
 
 NeoForge 作者与维护者：[Baymaxawa](https://space.bilibili.com/475655508)；原版 TrChat 作者：Arasple、ItsFlicker。本项目基于 ItsFlicker 维护的较新分支继续移植。
@@ -30,7 +32,14 @@ NeoForge 作者与维护者：[Baymaxawa](https://space.bilibili.com/475655508)�
 - YAML 配置与语言文件加载时自动补齐缺失项、删除未知项，并保留所有已知项的用户值。
 - 本地 `data.db` 持久化；`datasource.yml` 可切换 SQLite、MySQL、MariaDB 或自定义 JDBC。三种常用驱动均已内嵌。
 - Redis 自动重连，以及与 Bukkit 版的广播、私聊、在线玩家列表和全服禁言协议互通。
+- 运行时检测可选的 E33Chat 服务端组件，按实际加载的 TrChat 频道格式生成公聊与私聊识别模板；聊天与命令事件延后处理，让其他模组先完成观察或改写。
 - 内置 GitHub Release 更新检查器：启动后检查、默认每 15 分钟复查，并向后台与 `trchat.admin` 管理员显示版本、完整更新日志和可点击下载链接。
+
+## 模组兼容性
+
+E33Chat 不是依赖。仅客户端安装 E33Chat 时无需服务端检测：TrChat 仍向所有玩家发送同一个标准 Minecraft 文本组件。服务端也安装 E33Chat `2.2.6+` 时，TrChat 会在启动及 `/trchat reload` 后读取当前所有频道的 `Formats`、`Sender` 与 `Receiver`，从玩家名、目标名和正文边界生成 E33Chat 模板，以这组运行时模板替代 E33Chat 自己的聊天格式并广播给所有已安装 E33Chat 的客户端。频道 YAML 始终是唯一格式来源；未安装 E33Chat 的玩家看到的 TrChat 格式不受影响。生成结果不会写入或接管 `e33chat-server.toml`。
+
+E33Chat 模板语法无法可靠表达“玩家名与正文之间没有任何分隔符”或重复多次玩家名的格式；这类无法安全拆分的频道格式会被跳过，但原始 TrChat 消息仍会正常发送。
 
 ## 配置目录
 
@@ -177,16 +186,21 @@ NeoForge 1.21.1 的铁砧事件不能安全地只改写重命名文本而不替�
 
 另有 `/trmsg`、`/trreply`、`/trmute`、`/trunmute`、`/trshadowmute`、`/trspy`，以及频道 YAML 中定义的动态命令。
 
-## 在 D 盘构建和测试
+## 构建和测试
 
-本项目工作目录为 `D:\TrChat-Neoforge`：
+在任意平台进入仓库目录并使用 Java 21。Linux、macOS 与其他 POSIX shell：
 
-```powershell
-Set-Location D:\TrChat-Neoforge
-.\scripts\build.ps1 -Clean
+```bash
+./gradlew clean test build
 ```
 
-产物位于 `build/libs/`。开发服务端可使用：
+Windows PowerShell：
+
+```powershell
+.\gradlew.bat clean test build
+```
+
+产物位于 `build/libs/`。Windows 开发服务端也可使用：
 
 ```powershell
 .\scripts\run-server.ps1 -AcceptEula
