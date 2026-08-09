@@ -325,9 +325,6 @@ public final class TrChatServerEvents {
         }
         Set<String> registered = new HashSet<>();
         for (ChannelDefinition channel : channels.all()) {
-            if (channel.id().equalsIgnoreCase("Server")) {
-                continue;
-            }
             for (String alias : channel.bindings().commands()) {
                 String key = alias.toLowerCase(Locale.ROOT);
                 if (!registered.add(key)) {
@@ -337,15 +334,13 @@ public final class TrChatServerEvents {
             }
         }
 
-        if (channels.byId("Server").isPresent()) {
-            dispatcher.register(Commands.literal("say")
-                .requires(source -> source.hasPermission(2))
-                .then(Commands.argument("message", StringArgumentType.greedyString())
-                    .executes(context -> serverSay(
-                        context.getSource(),
-                        StringArgumentType.getString(context, "message")
-                    ))));
-        }
+        dispatcher.register(Commands.literal("say")
+            .requires(source -> source.hasPermission(2))
+            .then(Commands.argument("message", StringArgumentType.greedyString())
+                .executes(context -> consoleSay(
+                    context.getSource(),
+                    StringArgumentType.getString(context, "message")
+                ))));
     }
 
     private int status(CommandSourceStack source) {
@@ -704,11 +699,15 @@ public final class TrChatServerEvents {
         return targets.size();
     }
 
-    private int serverSay(CommandSourceStack source, String message) {
+    private int consoleSay(CommandSourceStack source, String message) {
         if (service == null) {
             return 0;
         }
-        return service.sendServer(message, source.getPlayer());
+        int result = service.sendConsole(message);
+        if (result == 0 && channels.autoJoin().isEmpty()) {
+            source.sendFailure(service.languages().component(source.getPlayer(), "Channel-Auto-Join-Missing"));
+        }
+        return result;
     }
 
     private int openSnapshot(CommandSourceStack source, String snapshot) {

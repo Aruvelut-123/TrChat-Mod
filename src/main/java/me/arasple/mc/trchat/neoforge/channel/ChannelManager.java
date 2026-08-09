@@ -23,8 +23,9 @@ import java.util.stream.Stream;
 public final class ChannelManager {
 
     private static final System.Logger LOGGER = System.getLogger(ChannelManager.class.getName());
-    public static final String[] DEFAULT_CHANNELS = {"Normal", "Global", "Staff", "Private", "Server"};
+    public static final String[] DEFAULT_CHANNELS = {"Normal", "Global", "Staff", "Private"};
     private static final String EXAMPLE_CHANNEL = "Example";
+    private static final String LEGACY_SERVER_CHANNEL = "Server";
 
     private final Path directory;
     private volatile Map<String, ChannelDefinition> channels = Map.of();
@@ -51,6 +52,7 @@ public final class ChannelManager {
                     .filter(Files::isRegularFile)
                     .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".yml"))
                     .filter(path -> !path.getFileName().toString().equalsIgnoreCase(EXAMPLE_CHANNEL + ".yml"))
+                    .filter(path -> !path.getFileName().toString().equalsIgnoreCase(LEGACY_SERVER_CHANNEL + ".yml"))
                     .sorted()
                     .toList()) {
                     synchronizeChannel(file, stem(file));
@@ -74,9 +76,9 @@ public final class ChannelManager {
             }
             if (autoJoinChannels.size() == 1) {
                 ChannelDefinition autoJoin = loaded.get(autoJoinChannels.getFirst().toLowerCase(Locale.ROOT));
-                if (autoJoin.options().privateChannel() || autoJoin.id().equalsIgnoreCase("Server")) {
+                if (autoJoin.options().privateChannel()) {
                     throw new IOException(
-                        "Options.Auto-Join cannot be enabled for private or Server channel "
+                        "Options.Auto-Join cannot be enabled for private channel "
                             + autoJoin.id()
                     );
                 }

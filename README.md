@@ -16,8 +16,8 @@ NeoForge 作者与维护者：[Baymaxawa](https://space.bilibili.com/475655508)�
 ## 功能
 
 - Bukkit 风格的多频道 YAML：条件、优先级、前缀/正文/后缀、悬浮与点击动作、范围、命令和聊天前缀绑定。
-- 自动创建 `Normal`、`Global`、`Staff`、`Private`、`Server` 频道。
-- `Server` 自动接管后台与 `/say`，格式由 `Server.yml` 控制，并在代码层强制禁止 Redis 转发。
+- 自动创建 `Normal`、`Global`、`Staff`、`Private` 频道。
+- 后台 `/say` 使用开启 `Options.Auto-Join` 的频道及其公开格式，发送者名称按客户端语言显示为“控制台”。
 - 自动创建双语全字段 `Example.yml`，但加载器永远不会将它注册成频道。
 - 完整实现用户所列的 Player 与 Server 占位符，包括动态权限、药水、附魔、世界在线人数、时间、倒计时和 TPS。
 - Bukkit 风格 `function.yml`：玩家/全体艾特、物品、背包、末影箱、命令控制、自定义正则组件与 Action/Actions。
@@ -55,7 +55,6 @@ config/trchat-neoforge/
     ├── Global.yml
     ├── Staff.yml
     ├── Private.yml
-    ├── Server.yml
     └── Example.yml
 ```
 
@@ -96,7 +95,7 @@ channel = "trchat-message"
 
 每台服务端的 `serverId` 必须唯一，建议直接使用服务端端口。Bukkit TrChat 端应连接同一 Redis 数据库，并保留 `trchat-message` 频道。修改连接参数后重启，或执行 `/trchat redis reconnect`。
 
-普通/全服聊天、私聊、私聊监听、在线玩家列表与全服禁言可以跨 Bukkit/NeoForge 互通。`Server` 频道以及物品、背包和末影箱快照始终只在本 NeoForge 服务端处理；聊天中展示原版物品时可以跨服，展示模组物品时消息会限制在本服，避免 Paper 反序列化未知注册键时报错。跨服私聊若包含模组物品则拒绝发送并提示发送者。
+普通/全服聊天、后台 `/say`、私聊、私聊监听、在线玩家列表与全服禁言可以跨 Bukkit/NeoForge 互通。物品、背包和末影箱快照始终只在本 NeoForge 服务端处理；聊天中展示原版物品时可以跨服，展示模组物品时消息会限制在本服，避免 Paper 反序列化未知注册键时报错。跨服私聊若包含模组物品则拒绝发送并提示发送者。
 
 ## 数据库
 

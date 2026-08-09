@@ -24,11 +24,3 @@ Formats:
     msg:
       default-color: 'f'
       hover: '&7时间: %server_time_HH:mm:ss%'
-
-Console:
-  - prefix:
-      server:
-        text: '&eServer&8: '
-    msg:
-      default-color: 'f'
-

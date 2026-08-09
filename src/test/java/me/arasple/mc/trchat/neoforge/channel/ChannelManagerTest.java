@@ -21,17 +21,14 @@ class ChannelManagerTest {
     void createsAndLoadsBukkitStyleDefaults() {
         ChannelManager manager = new ChannelManager(directory.resolve("channels"));
 
-        assertEquals(5, manager.reload());
-        assertEquals(5, manager.all().size());
+        assertEquals(4, manager.reload());
+        assertEquals(4, manager.all().size());
         assertTrue(manager.byCommand("ALL").isPresent());
         assertEquals("Global", manager.byPrefix("!all hello").channel().id());
         assertTrue(manager.byId("private").orElseThrow().options().privateChannel());
         assertEquals("Private", manager.byCommand("tell").orElseThrow().id());
         assertFalse(manager.byId("private").orElseThrow().isJoinable());
-        assertTrue(manager.byId("server").isPresent());
-        assertFalse(manager.byId("server").orElseThrow().isJoinable());
-        assertFalse(manager.byId("server").orElseThrow().options().redis());
-        assertFalse(manager.byId("server").orElseThrow().options().autoJoin());
+        assertTrue(manager.byId("server").isEmpty());
         assertEquals("Normal", manager.autoJoin().orElseThrow().id());
         assertFalse(manager.normal().formats().isEmpty());
         assertNotNull(manager.normal().formats().getFirst().message());
@@ -45,7 +42,7 @@ class ChannelManagerTest {
     void rejectsMultipleAutoJoinChannelsAtomically() throws Exception {
         Path channels = directory.resolve("channels");
         ChannelManager manager = new ChannelManager(channels);
-        assertEquals(5, manager.reload());
+        assertEquals(4, manager.reload());
 
         Files.writeString(
             channels.resolve("Other.yml"),
@@ -54,8 +51,23 @@ class ChannelManagerTest {
         );
 
         assertEquals(-1, manager.reload());
-        assertEquals(5, manager.all().size());
+        assertEquals(4, manager.all().size());
         assertTrue(manager.byId("Other").isEmpty());
         assertEquals("Normal", manager.autoJoin().orElseThrow().id());
+    }
+
+    @Test
+    void ignoresLegacyServerChannelWithoutDeletingIt() throws Exception {
+        Path channels = directory.resolve("channels");
+        Files.createDirectories(channels);
+        Path legacy = channels.resolve("Server.yml");
+        String contents = "Options:\n  Always-Listen: true\nConsole: []\n";
+        Files.writeString(legacy, contents, StandardCharsets.UTF_8);
+
+        ChannelManager manager = new ChannelManager(channels);
+
+        assertEquals(4, manager.reload());
+        assertTrue(manager.byId("Server").isEmpty());
+        assertEquals(contents, Files.readString(legacy, StandardCharsets.UTF_8));
     }
 }

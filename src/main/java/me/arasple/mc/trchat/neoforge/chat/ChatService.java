@@ -90,7 +90,7 @@ public final class ChatService implements AutoCloseable {
             channel = channels.byId(activeChannels.getOrDefault(player.getUUID(), "Normal"))
                 .orElseGet(channels::normal);
         }
-        if (message.isEmpty() || channel.options().privateChannel() || channel.id().equalsIgnoreCase("Server")) {
+        if (message.isEmpty() || channel.options().privateChannel()) {
             return;
         }
         sendPublic(player, channel, message);
@@ -101,42 +101,45 @@ public final class ChatService implements AutoCloseable {
             sendLang(player, "Channel-Private-Target");
             return 0;
         }
-        if (channel.id().equalsIgnoreCase("Server")) {
-            sendLang(player, "Channel-Server-Say-Only");
-            return 0;
-        }
         if (message == null || message.isBlank()) {
             return toggleChannel(player, channel);
         }
         return sendPublic(player, channel, message) ? 1 : 0;
     }
 
-    public int sendServer(String message, ServerPlayer sourcePlayer) {
-        ChannelDefinition channel = channels.byId("Server").orElse(null);
+    public int sendConsole(String message) {
+        ChannelDefinition channel = channels.autoJoin().orElse(null);
         if (channel == null || message == null || message.isBlank()) {
             return 0;
         }
-        Map<String, String> local = Map.of("message", message.trim());
-        ChannelRenderer.Rendered consoleView = renderer.render(
-            channel,
-            ChannelRenderer.Audience.CONSOLE,
-            sourcePlayer,
-            (ServerPlayer) null,
-            message.trim(),
-            local
+        String normalized = message.trim();
+        Map<String, String> defaultContext = consoleMessageContext(null, normalized);
+        ChannelRenderer.Rendered rendered = renderer.render(
+            channel, ChannelRenderer.Audience.CHAT, null, (ServerPlayer) null, normalized, defaultContext
         );
-        // Server is a deliberately local-only channel. Never publish it to Redis.
-        for (ServerPlayer receiver : server.getPlayerList().getPlayers()) {
-            receiver.sendSystemMessage(renderer.render(
-                channel,
-                ChannelRenderer.Audience.CONSOLE,
-                sourcePlayer,
-                receiver,
-                message.trim(),
-                local
-            ).component());
+
+        if (channel.options().redis() && redis != null) {
+            TrChatMessage packet = TrChatMessage.of(
+                "BroadcastRaw",
+                TrChatProtocol.formatUuid(TrChatProtocol.NIL_UUID),
+                ComponentJson.serialize(rendered.component(), server),
+                channel.options().listenPermission(),
+                Boolean.toString(channel.options().doubleTransfer()),
+                String.join(";", channel.options().ports()),
+                rendered.fallback()
+            );
+            if (redis.publish(packet)) {
+                chatLogs.logNormal(moderation.languages().text(null, "Console-Name"), normalized);
+                return 1;
+            }
+            if (channel.options().forceRedis()) {
+                return 0;
+            }
         }
-        TrChatNeoForge.LOGGER.info("[Server] {}", consoleView.component().getString());
+
+        broadcastConsoleLocal(channel, normalized);
+        chatLogs.logNormal(moderation.languages().text(null, "Console-Name"), normalized);
+        TrChatNeoForge.LOGGER.info("[{}] {}", channel.id(), rendered.component().getString());
         return 1;
     }
 
@@ -537,7 +540,6 @@ public final class ChatService implements AutoCloseable {
                 rendered.fallback()
             );
             if (redis.publish(packet)) {
-                logToConsole(channel, player, message, local);
                 return true;
             }
             if (channel.options().forceRedis()) {
@@ -603,9 +605,7 @@ public final class ChatService implements AutoCloseable {
 
     private int toggleChannel(ServerPlayer player, ChannelDefinition channel) {
         if (!channel.isJoinable()) {
-            sendLang(player, channel.options().privateChannel()
-                ? "Channel-Private-Target"
-                : "Channel-Server-Say-Only");
+            sendLang(player, "Channel-Private-Target");
             return 0;
         }
         String id = channel.id().toLowerCase(Locale.ROOT);
@@ -692,6 +692,34 @@ public final class ChatService implements AutoCloseable {
                 ).component());
             }
         }
+    }
+
+    private void broadcastConsoleLocal(ChannelDefinition channel, String message) {
+        String id = channel.id().toLowerCase(Locale.ROOT);
+        for (ServerPlayer receiver : server.getPlayerList().getPlayers()) {
+            Set<String> joined = joinedChannels.getOrDefault(receiver.getUUID(), Set.of());
+            boolean listening = channel.options().alwaysListen() || joined.contains(id);
+            if (!listening || !canListen(receiver, channel)) {
+                continue;
+            }
+            receiver.sendSystemMessage(renderer.render(
+                channel,
+                ChannelRenderer.Audience.CHAT,
+                null,
+                receiver,
+                message,
+                consoleMessageContext(receiver, message)
+            ).component());
+        }
+    }
+
+    private Map<String, String> consoleMessageContext(ServerPlayer viewer, String message) {
+        String consoleName = moderation.languages().text(viewer, "Console-Name");
+        return Map.of(
+            "message", message,
+            "player_name", consoleName,
+            "player_displayname", consoleName
+        );
     }
 
     private void restoreChannelMembership(ServerPlayer player) {

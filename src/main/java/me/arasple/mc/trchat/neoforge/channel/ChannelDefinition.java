@@ -26,7 +26,7 @@ public record ChannelDefinition(
                 string(options.get("Listen-Permission")),
                 string(options.get("Speak-Condition")),
                 bool(options.get("Always-Listen"), false),
-                !id.equalsIgnoreCase("Server") && bool(options.get("Auto-Join"), false),
+                bool(options.get("Auto-Join"), false),
                 bool(options.get("Private"), false),
                 string(options.containsKey("Target") ? options.get("Target") : "ALL"),
                 bool(options.get("Proxy"), false),
@@ -48,7 +48,7 @@ public record ChannelDefinition(
     }
 
     public boolean isJoinable() {
-        return !options.privateChannel() && !id.equalsIgnoreCase("Server");
+        return !options.privateChannel();
     }
 
     public record Options(

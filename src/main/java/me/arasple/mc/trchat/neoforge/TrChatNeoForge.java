@@ -14,7 +14,7 @@ public final class TrChatNeoForge {
 
     public static final String MOD_ID = "trchat_neoforge";
     public static final String MOD_NAME = "TrChat NeoForge 1.21.1";
-    public static final Logger LOGGER = LoggerFactory.getLogger(MOD_NAME);
+    public static final Logger LOGGER = LoggerFactory.getLogger("TrChat");
 
     public TrChatNeoForge(IEventBus modBus, ModContainer container) {
         container.registerConfig(ModConfig.Type.COMMON, TrChatConfig.SPEC, "trchat-neoforge/settings.toml");
