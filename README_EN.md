@@ -4,7 +4,7 @@ English | [简体中文](README.md)
 
 A native server-side NeoForge port of TrChat for Minecraft `1.21.1` and NeoForge `21.1.233+`. It does not include Bukkit, BungeeCord, Velocity, plugin-message proxy transport, or DiscordSRV. Redis is the only cross-server transport and remains wire-compatible with Bukkit TrChat `2.4.9`.
 
-NeoForge author and maintainer: [Baymaxawa](https://space.bilibili.com/475655508). Original TrChat authors: Arasple and ItsFlicker. This port follows the newer branch maintained by ItsFlicker.
+NeoForge author and maintainer: [Baymaxawa](https://www.youtube.com/@baymaxawa). Original TrChat authors: Arasple and ItsFlicker. This port follows the newer branch maintained by ItsFlicker.
 
 Repository and issues: [Aruvelut-123/TrChat-Neoforge](https://github.com/Aruvelut-123/TrChat-Neoforge).
 
