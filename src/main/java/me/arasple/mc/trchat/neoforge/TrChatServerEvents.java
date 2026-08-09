@@ -8,6 +8,7 @@ import me.arasple.mc.trchat.neoforge.channel.ChannelManager;
 import me.arasple.mc.trchat.neoforge.chat.ChatService;
 import me.arasple.mc.trchat.neoforge.chat.CommandInvocation;
 import me.arasple.mc.trchat.neoforge.chat.LegacyText;
+import me.arasple.mc.trchat.neoforge.compat.E33ChatCompat;
 import me.arasple.mc.trchat.neoforge.config.TrChatConfig;
 import me.arasple.mc.trchat.neoforge.moderation.ModerationService;
 import me.arasple.mc.trchat.neoforge.permission.TrChatPermissions;
@@ -23,6 +24,7 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModList;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
@@ -61,6 +63,9 @@ public final class TrChatServerEvents {
     @SubscribeEvent
     public void onServerStarted(ServerStartedEvent event) {
         service = new ChatService(event.getServer(), channels);
+        if (E33ChatCompat.applyTemplates(channels.all())) {
+            TrChatNeoForge.LOGGER.info("E33Chat detected; TrChat public and private formats were registered.");
+        }
         if (TrChatConfig.UPDATE_CHECK_ENABLED.get()) {
             updateChecker = new UpdateChecker(event.getServer(), service.languages(), modVersion());
             updateChecker.start();
@@ -81,7 +86,7 @@ public final class TrChatServerEvents {
         }
     }
 
-    @SubscribeEvent
+    @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onChat(ServerChatEvent event) {
         if (service == null) {
             return;
@@ -114,7 +119,7 @@ public final class TrChatServerEvents {
         }
     }
 
-    @SubscribeEvent
+    @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onCommand(CommandEvent event) {
         if (service == null) {
             return;
@@ -515,6 +520,7 @@ public final class TrChatServerEvents {
             return 0;
         }
         registerDynamicCommands(commandDispatcher);
+        E33ChatCompat.applyTemplates(channels.all());
         for (ServerPlayer player : source.getServer().getPlayerList().getPlayers()) {
             source.getServer().getCommands().sendCommands(player);
         }
