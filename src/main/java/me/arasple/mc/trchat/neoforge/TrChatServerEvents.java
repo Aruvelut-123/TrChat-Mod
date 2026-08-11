@@ -682,7 +682,7 @@ public final class TrChatServerEvents {
                 ));
                 return 0;
             }
-            return service.executeChannel(source.getPlayerOrException(), channel, "");
+            return service.setChannel(source.getPlayerOrException(), channel);
         } catch (CommandSyntaxException exception) {
             source.sendFailure(service.languages().component(null, "General-Player-Only"));
             return 0;
