@@ -74,6 +74,15 @@ internal object KetherActions {
         }
     }
 
+    @KetherParser(["exit", "stop", "terminate"], namespace = "trchat", shared = false)
+    internal fun actionExit() = scriptParser {
+        actionNow {
+            // exit 在 TrChat 脚本中等同于返回 false（取消本次发送）
+            // 覆盖 kether 默认的 exit（terminateQuest 不会完成 future，会导致 Reaction.eval 的 get() 永久阻塞）
+            false
+        }
+    }
+
     fun ScriptFrame.player(): Player {
         return script().sender?.castSafely<Player>() ?: error("No player selected.")
     }

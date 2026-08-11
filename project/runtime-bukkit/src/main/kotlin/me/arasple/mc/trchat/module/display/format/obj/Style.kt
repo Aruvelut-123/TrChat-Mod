@@ -14,6 +14,8 @@ import taboolib.module.chat.ComponentText
 import taboolib.module.chat.Components
 import taboolib.module.chat.impl.AdventureComponent
 import taboolib.module.chat.impl.DefaultComponent
+import java.net.URI
+import java.net.URISyntaxException
 
 sealed interface Style {
 
@@ -85,7 +87,15 @@ sealed interface Style {
 
         data class Url(override val contents: List<Pair<String, Condition?>>) : Style {
             override fun process(component: ComponentText, content: String) {
-                component.clickOpenURL(ChatColor.stripColor(content))
+                val url = ChatColor.stripColor(content).trim().substringBefore(' ')
+                if (url.isBlank()) {
+                    return
+                }
+                try {
+                    URI(url)
+                    component.clickOpenURL(url)
+                } catch (_: URISyntaxException) {
+                }
             }
         }
 

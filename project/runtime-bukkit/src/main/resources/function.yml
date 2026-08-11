@@ -60,7 +60,7 @@ General:
 Custom:
   # 示例 —— 网站分享
   shareUrl:
-    pattern: '(https?|ftp):\/\/([a-zA-Z0-9.-]+(:[0-9]+)?)(\/[^?#]*)?(\?[^#]*)?(#.*)?'
+    pattern: '(https?|ftp):\/\/([a-zA-Z0-9.-]+(:[0-9]+)?)(\/[^?#\s]*)?(\?[^#\s]*)?(#\S*)?'
     display:
       text: '&8[&f&l网站&8]'
       hover:
