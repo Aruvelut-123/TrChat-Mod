@@ -139,7 +139,7 @@ public final class ChatService implements AutoCloseable {
 
         broadcastConsoleLocal(channel, normalized);
         chatLogs.logNormal(moderation.languages().text(null, "Console-Name"), normalized);
-        TrChatNeoForge.LOGGER.info("[{}] {}", channel.id(), rendered.component().getString());
+        TrChatNeoForge.LOGGER.info("{}", rendered.component().getString());
         return 1;
     }
 
@@ -820,7 +820,7 @@ public final class ChatService implements AutoCloseable {
             chatLogs.logNormal(player.getGameProfile().getName(), message);
         }
         if (channel.consoleFormats().isEmpty()) {
-            TrChatNeoForge.LOGGER.info("[{}] {}", channel.id(), renderer.render(
+            TrChatNeoForge.LOGGER.info("{}", renderer.render(
                 channel, ChannelRenderer.Audience.CHAT, player, (ServerPlayer) null, message, local
             ).component().getString());
             return;
@@ -828,7 +828,7 @@ public final class ChatService implements AutoCloseable {
         Component console = renderer.render(
             channel, ChannelRenderer.Audience.CONSOLE, player, (ServerPlayer) null, message, local
         ).component();
-        TrChatNeoForge.LOGGER.info("[{}] {}", channel.id(), console.getString());
+        TrChatNeoForge.LOGGER.info("{}", console.getString());
     }
 
     private void handleRedisMessage(TrChatMessage message) {
