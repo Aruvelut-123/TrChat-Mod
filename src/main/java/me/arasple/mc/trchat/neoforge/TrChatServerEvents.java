@@ -86,11 +86,23 @@ public final class TrChatServerEvents {
         }
     }
 
-    @SubscribeEvent(priority = EventPriority.LOWEST)
-    public void onChat(ServerChatEvent event) {
-        if (service == null) {
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void onChatWithoutE33Chat(ServerChatEvent event) {
+        if (service == null || E33ChatCompat.isActive()) {
             return;
         }
+        handleChat(event);
+    }
+
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    public void onChatWithE33Chat(ServerChatEvent event) {
+        if (service == null || !E33ChatCompat.isActive()) {
+            return;
+        }
+        handleChat(event);
+    }
+
+    private void handleChat(ServerChatEvent event) {
         event.setCanceled(true);
         service.handleChat(event.getPlayer(), event.getRawText());
     }

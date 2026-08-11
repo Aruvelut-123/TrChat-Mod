@@ -32,7 +32,7 @@ Repository and issues: [Aruvelut-123/TrChat-Neoforge](https://github.com/Aruvelu
 - YAML and language synchronization that adds missing keys, removes unknown keys, and retains user values for known keys.
 - Local `data.db` persistence, switchable through `datasource.yml` to SQLite, MySQL, MariaDB, or custom JDBC. Common drivers are bundled.
 - Redis reconnection and Bukkit-compatible broadcast, private-message, online-player-list, and global-mute messages.
-- Runtime detection of E33Chat's optional server component. Recognition templates are derived from the loaded TrChat channel formats, while chat and command handling runs after other mods have observed or rewritten the events.
+- Runtime detection of E33Chat's optional server component. Recognition templates are derived from the loaded TrChat channel formats. Chat handling is deferred only while the compatibility bridge is active; otherwise TrChat claims the event first.
 - Built-in GitHub Release update checks at startup and every 15 minutes by default, with full release notes and clickable links for the console and `trchat.admin` players.
 
 ## Mod compatibility

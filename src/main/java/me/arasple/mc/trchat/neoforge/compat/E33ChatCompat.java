@@ -26,12 +26,14 @@ public final class E33ChatCompat {
     );
 
     private static boolean warningLogged;
+    private static volatile boolean active;
 
     private E33ChatCompat() {
     }
 
     public static boolean applyTemplates(Collection<ChannelDefinition> channels) {
         if (!ModList.get().isLoaded(MOD_ID)) {
+            active = false;
             return false;
         }
         Templates templates = deriveTemplates(channels);
@@ -42,8 +44,10 @@ public final class E33ChatCompat {
 
             Class<?> listener = Class.forName("com.niuqu.chatbubble.ChatServerListener");
             listener.getMethod("broadcastServerConfig").invoke(null);
+            active = true;
             return true;
         } catch (ReflectiveOperationException | LinkageError exception) {
+            active = false;
             if (!warningLogged) {
                 warningLogged = true;
                 TrChatNeoForge.LOGGER.warn(
@@ -53,6 +57,10 @@ public final class E33ChatCompat {
             }
             return false;
         }
+    }
+
+    public static boolean isActive() {
+        return active;
     }
 
     static Templates deriveTemplates(Collection<ChannelDefinition> channels) {
