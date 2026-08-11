@@ -36,7 +36,24 @@ public final class YamlConfigSynchronizer {
         String defaultResource,
         Set<String> openMapPaths
     ) throws IOException {
+        return synchronize(file, defaultResource, defaultResource, openMapPaths);
+    }
+
+    /**
+     * Reconciles against channel-specific defaults while accepting optional
+     * keys declared by a broader schema. Schema-only keys are retained when
+     * configured, but are not added when absent.
+     */
+    public static Map<String, Object> synchronize(
+        Path file,
+        String defaultResource,
+        String schemaResource,
+        Set<String> openMapPaths
+    ) throws IOException {
         Map<String, Object> defaults = loadResource(defaultResource);
+        Map<String, Object> schema = defaultResource.equals(schemaResource)
+            ? defaults
+            : loadResource(schemaResource);
         Files.createDirectories(file.toAbsolutePath().getParent());
         if (!Files.exists(file)) {
             try (InputStream input = YamlConfigSynchronizer.class.getResourceAsStream(defaultResource)) {
@@ -47,7 +64,7 @@ public final class YamlConfigSynchronizer {
             }
         }
         Map<String, Object> current = loadFile(file);
-        Map<String, Object> reconciled = reconcileMap(defaults, current, "", openMapPaths);
+        Map<String, Object> reconciled = reconcileMap(defaults, schema, current, "", openMapPaths);
         if (!reconciled.equals(current)) {
             write(file, reconciled);
             LOGGER.log(System.Logger.Level.INFO, "Repaired YAML configuration {0}", file);
@@ -83,6 +100,7 @@ public final class YamlConfigSynchronizer {
 
     private static Map<String, Object> reconcileMap(
         Map<String, Object> defaults,
+        Map<String, Object> schema,
         Map<String, Object> current,
         String path,
         Set<String> openMapPaths
@@ -91,13 +109,29 @@ public final class YamlConfigSynchronizer {
         for (Map.Entry<String, Object> entry : defaults.entrySet()) {
             String childPath = path.isEmpty() ? entry.getKey() : path + '.' + entry.getKey();
             Object value = current.containsKey(entry.getKey())
-                ? reconcile(entry.getValue(), current.get(entry.getKey()), childPath, openMapPaths)
+                ? reconcile(
+                    entry.getValue(),
+                    schema.getOrDefault(entry.getKey(), entry.getValue()),
+                    current.get(entry.getKey()),
+                    childPath,
+                    openMapPaths
+                )
                 : copy(entry.getValue());
             output.put(entry.getKey(), value);
         }
-        if (openMapPaths.contains(path)) {
-            for (Map.Entry<String, Object> entry : current.entrySet()) {
-                output.putIfAbsent(entry.getKey(), copy(entry.getValue()));
+
+        for (Map.Entry<String, Object> entry : current.entrySet()) {
+            if (output.containsKey(entry.getKey())) {
+                continue;
+            }
+            String childPath = path.isEmpty() ? entry.getKey() : path + '.' + entry.getKey();
+            if (schema.containsKey(entry.getKey())) {
+                Object schemaValue = schema.get(entry.getKey());
+                output.put(entry.getKey(), reconcile(
+                    schemaValue, schemaValue, entry.getValue(), childPath, openMapPaths
+                ));
+            } else if (openMapPaths.contains(path)) {
+                output.put(entry.getKey(), copy(entry.getValue()));
             }
         }
         return output;
@@ -105,6 +139,7 @@ public final class YamlConfigSynchronizer {
 
     private static Object reconcile(
         Object defaultValue,
+        Object schemaValue,
         Object currentValue,
         String path,
         Set<String> openMapPaths
@@ -113,7 +148,12 @@ public final class YamlConfigSynchronizer {
             if (!(currentValue instanceof Map<?, ?> currentMap)) {
                 return copy(defaultValue);
             }
-            return reconcileMap(stringMap(defaultMap), stringMap(currentMap), path, openMapPaths);
+            Map<String, Object> allowed = schemaValue instanceof Map<?, ?> schemaMap
+                ? stringMap(schemaMap)
+                : stringMap(defaultMap);
+            return reconcileMap(
+                stringMap(defaultMap), allowed, stringMap(currentMap), path, openMapPaths
+            );
         }
         if (defaultValue instanceof List<?>) {
             return currentValue instanceof List<?> ? copy(currentValue) : copy(defaultValue);

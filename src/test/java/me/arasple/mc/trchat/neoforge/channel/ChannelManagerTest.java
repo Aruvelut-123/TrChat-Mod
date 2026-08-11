@@ -57,6 +57,32 @@ class ChannelManagerTest {
     }
 
     @Test
+    void movesAutoJoinFromNormalToGlobalWithoutDeletingTheOption() throws Exception {
+        Path channels = directory.resolve("channels");
+        ChannelManager manager = new ChannelManager(channels);
+        assertEquals(4, manager.reload());
+
+        Path normal = channels.resolve("Normal.yml");
+        Files.writeString(
+            normal,
+            Files.readString(normal, StandardCharsets.UTF_8)
+                .replace("Auto-Join: true", "Auto-Join: false"),
+            StandardCharsets.UTF_8
+        );
+        Path global = channels.resolve("Global.yml");
+        Files.writeString(
+            global,
+            Files.readString(global, StandardCharsets.UTF_8)
+                .replace("Always-Listen: true", "Always-Listen: true\n  Auto-Join: true"),
+            StandardCharsets.UTF_8
+        );
+
+        assertEquals(4, manager.reload());
+        assertEquals("Global", manager.autoJoin().orElseThrow().id());
+        assertTrue(Files.readString(global, StandardCharsets.UTF_8).contains("Auto-Join: true"));
+    }
+
+    @Test
     void ignoresLegacyServerChannelWithoutDeletingIt() throws Exception {
         Path channels = directory.resolve("channels");
         Files.createDirectories(channels);

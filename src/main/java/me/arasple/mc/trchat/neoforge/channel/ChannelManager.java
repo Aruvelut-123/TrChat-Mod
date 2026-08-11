@@ -158,7 +158,10 @@ public final class ChannelManager {
             .findFirst()
             .orElseGet(() -> EXAMPLE_CHANNEL.equalsIgnoreCase(channel) ? EXAMPLE_CHANNEL : "Schema");
         YamlConfigSynchronizer.synchronize(
-            file, "/defaults/channels/" + bundled + ".yml", java.util.Set.of()
+            file,
+            "/defaults/channels/" + bundled + ".yml",
+            "/defaults/channels/Schema.yml",
+            java.util.Set.of()
         );
     }
 

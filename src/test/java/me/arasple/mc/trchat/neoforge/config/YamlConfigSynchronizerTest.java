@@ -80,4 +80,28 @@ class YamlConfigSynchronizerTest {
         Map<?, ?> custom = (Map<?, ?>) result.get("Custom");
         assertTrue(custom.containsKey("serverSpecificRule"));
     }
+
+    @Test
+    void retainsConfiguredSchemaKeysWithoutAddingAbsentOptionalKeys() throws Exception {
+        Path file = directory.resolve("Global.yml");
+        Files.writeString(file, """
+            Options:
+              Speak-Condition: 'perm "trchat.custom"'
+              Auto-Join: true
+              Unknown: remove-me
+            """, StandardCharsets.UTF_8);
+
+        Map<String, Object> result = YamlConfigSynchronizer.synchronize(
+            file,
+            "/defaults/channels/Global.yml",
+            "/defaults/channels/Schema.yml",
+            Set.of()
+        );
+
+        Map<?, ?> options = (Map<?, ?>) result.get("Options");
+        assertEquals(true, options.get("Auto-Join"));
+        assertEquals("perm \"trchat.custom\"", options.get("Speak-Condition"));
+        assertFalse(options.containsKey("Target"));
+        assertFalse(options.containsKey("Unknown"));
+    }
 }
