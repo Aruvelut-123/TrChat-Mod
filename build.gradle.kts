@@ -26,7 +26,8 @@ subprojects {
             install(
                 "database",
                 "database-alkaid-redis",
-                "database-player"
+                "database-player",
+                "database-postgresql"
             )
             install(
                 "minecraft-chat",
@@ -42,7 +43,7 @@ subprojects {
 //            disableOnUnsupportedVersion = false
         }
         version {
-            taboolib = "6.3.0-4bced1a"
+            taboolib = "6.3.0-75b18a2"
             coroutines = null
         }
     }
