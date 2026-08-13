@@ -10,8 +10,9 @@ import me.arasple.mc.trchat.module.internal.TrChatVelocity.plugin
 import me.arasple.mc.trchat.util.print
 import me.arasple.mc.trchat.util.proxy.common.MessageReader
 import me.arasple.mc.trchat.util.toUUID
-import net.kyori.adventure.audience.MessageType
+import net.kyori.adventure.audience.Audience
 import net.kyori.adventure.identity.Identity
+import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.serializer.gson.GsonComponentSerializer
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 import taboolib.common.platform.Platform
@@ -95,7 +96,7 @@ object ListenerVelocityTransfer {
                     plugin.server.allServers.forEach { server ->
                         if (ports == null || server.serverInfo.address.port in ports) {
                             server.playersConnected.filter { perm == "" || it.hasPermission(perm) }.forEach {
-                                it.sendMessage(Identity.identity(uuid.toUUID()), message, MessageType.CHAT)
+                                it.sendIdentifiedMessage(Identity.identity(uuid.toUUID()), message)
                             }
                         }
                     }
@@ -115,4 +116,18 @@ object ListenerVelocityTransfer {
             }
         }
     }
+
+    private val sendMessageWithIdentity by lazy {
+        runCatching { Audience::class.java.getMethod("sendMessage", Identity::class.java, Component::class.java) }.getOrNull()
+    }
+
+    @Suppress("Deprecation")
+    private fun Audience.sendIdentifiedMessage(identity: Identity, message: Component) {
+        if (sendMessageWithIdentity != null) {
+            sendMessage(identity, message)
+        } else {
+            sendMessage(message)
+        }
+    }
+
 }

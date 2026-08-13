@@ -17,6 +17,7 @@ import org.bukkit.entity.Entity
 import org.bukkit.entity.Player
 import taboolib.common.platform.*
 import taboolib.common.platform.function.adaptCommandSender
+import taboolib.common.platform.function.debug
 import taboolib.module.chat.ComponentText
 import taboolib.module.chat.Components
 import taboolib.module.chat.impl.AdventureComponent
@@ -74,6 +75,7 @@ object BukkitComponentManager : ComponentManager {
             event.message
         }
         if (commandSender is Player) {
+            debug("Component to send: ${newComponent.toRawMessage()}")
             NMS.instance.sendMessage(commandSender, newComponent, event.sender, Settings.usePackets)
         } else {
             newComponent.sendTo(adaptCommandSender(commandSender))
