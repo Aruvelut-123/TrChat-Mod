@@ -82,6 +82,8 @@ object ListenerBungeeTransfer {
                 val doubleTransfer = data[4].toBoolean()
                 val ports = data[5].takeIf { it != "" }?.split(";")?.map { it.toInt() }
                 val fallback = data.getOrElse(6) { "" }
+                val senderName = data.getOrElse(7) { "" }
+                val mentioned = data.getOrElse(8) { "" }.takeIf { it.isNotEmpty() }?.split(",")?.toSet() ?: emptySet()
                 val message = kotlin.runCatching { Components.parseRaw(raw) }.getOrElse { Components.text(fallback) }
                 message.sendTo(console())
 
@@ -92,8 +94,14 @@ object ListenerBungeeTransfer {
                 } else {
                     server<ProxyServer>().servers.forEach { (_, v) ->
                         if (ports == null || v.address.port in ports) {
-                            v.players.filter { perm == "" || it.hasPermission(perm) }.forEach {
+                            val receivers = v.players.filter { perm == "" || it.hasPermission(perm) }
+                            receivers.forEach {
                                 BungeeComponentManager.sendComponent(it, message, uuid)
+                            }
+                            if (mentioned.isNotEmpty() && senderName.isNotEmpty()) {
+                                receivers.filter { it.name in mentioned }.forEach {
+                                    BungeeProxyManager.sendMessage(v, "SendLang", it.name, "Function-Mention-Notify", senderName)
+                                }
                             }
                         }
                     }

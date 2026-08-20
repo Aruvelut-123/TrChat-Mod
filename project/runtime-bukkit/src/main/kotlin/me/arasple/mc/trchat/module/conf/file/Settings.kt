@@ -6,6 +6,7 @@ import taboolib.common.platform.Awake
 import taboolib.common.platform.Platform
 import taboolib.common.platform.PlatformSide
 import taboolib.common.platform.function.submitAsync
+import taboolib.common.util.ResettableLazy
 import taboolib.common5.util.parseMillis
 import taboolib.module.configuration.Config
 import taboolib.module.configuration.ConfigNode
@@ -55,6 +56,7 @@ object Settings {
     fun init() {
         conf.onReload {
             Kether.isAllowToleranceParser = conf.getBoolean("Options.Kether-Allow-Tolerance-Parser", true)
+            ResettableLazy.reset("settings")
         }
         if (conf.getBoolean("Options.Check-Update", true)) {
             submitAsync(delay = 20, period = 15 * 60 * 20) {

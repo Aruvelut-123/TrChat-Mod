@@ -84,6 +84,8 @@ object ListenerVelocityTransfer {
                 val doubleTransfer = data[4].toBoolean()
                 val ports = data[5].takeIf { it != "" }?.split(";")?.map { it.toInt() }
                 val fallback = data.getOrElse(6) { "" }
+                val senderName = data.getOrElse(7) { "" }
+                val mentioned = data.getOrElse(8) { "" }.takeIf { it.isNotEmpty() }?.split(",")?.toSet() ?: emptySet()
                 val message = kotlin.runCatching { GsonComponentSerializer.gson().deserialize(raw) }
                     .getOrElse { LegacyComponentSerializer.legacySection().deserialize(fallback) }
                 plugin.server.consoleCommandSource.sendMessage(message)
@@ -95,8 +97,14 @@ object ListenerVelocityTransfer {
                 } else {
                     plugin.server.allServers.forEach { server ->
                         if (ports == null || server.serverInfo.address.port in ports) {
-                            server.playersConnected.filter { perm == "" || it.hasPermission(perm) }.forEach {
+                            val receivers = server.playersConnected.filter { perm == "" || it.hasPermission(perm) }
+                            receivers.forEach {
                                 it.sendIdentifiedMessage(Identity.identity(uuid.toUUID()), message)
+                            }
+                            if (mentioned.isNotEmpty() && senderName.isNotEmpty()) {
+                                receivers.filter { it.username in mentioned }.forEach {
+                                    VelocityProxyManager.sendMessage(server, "SendLang", it.username, "Function-Mention-Notify", senderName)
+                                }
                             }
                         }
                     }

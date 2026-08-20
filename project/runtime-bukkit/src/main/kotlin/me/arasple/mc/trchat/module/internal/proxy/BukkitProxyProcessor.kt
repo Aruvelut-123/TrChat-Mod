@@ -94,12 +94,18 @@ sealed interface BukkitProxyProcessor : PluginMessageListener {
                 val perm = data[3]
                 val ports = data[5].takeIf { it != "" }?.split(";")?.map { it.toInt() }
                 val fallback = data.getOrElse(6) { "" }
+                val senderName = data.getOrElse(7) { "" }
+                val mentioned = data.getOrElse(8) { "" }.takeIf { it.isNotEmpty() }?.split(",")?.toSet() ?: emptySet()
                 val message = kotlin.runCatching { Components.parseRaw(raw) }.getOrElse { Components.text(fallback) }
 
                 if (ports == null || BukkitProxyManager.port in ports) {
-                    onlinePlayers
-                        .filter { perm == "" || it.hasPermission(perm) }
-                        .forEach { it.sendComponent(uuid, message) }
+                    val receivers = onlinePlayers.filter { perm == "" || it.hasPermission(perm) }
+                    receivers.forEach { it.sendComponent(uuid, message) }
+                    if (mentioned.isNotEmpty() && senderName.isNotEmpty()) {
+                        receivers.filter { it.name in mentioned }.forEach {
+                            getProxyPlayer(it.name)?.sendLang("Function-Mention-Notify", senderName)
+                        }
+                    }
                     if (this is RedisSide) {
                         console().sendComponent(uuid, message)
                     }

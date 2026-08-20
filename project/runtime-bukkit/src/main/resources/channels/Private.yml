@@ -14,7 +14,7 @@ Sender:
     msg:
       default-color: 'f'
       special-char:
-        Enabled: false
+        enabled: false
         special-char-color: '&f'
       hover: '&7日期: %server_time_HH:mm:ss%'
 
@@ -25,7 +25,7 @@ Receiver:
     msg:
       default-color: 'f'
       special-char:
-        Enabled: false
+        enabled: false
         special-char-color: '&f'
       hover: '&7日期: %server_time_HH:mm:ss%'
 
@@ -37,5 +37,5 @@ Console:
     msg:
       default-color: 'f'
       special-char:
-        Enabled: false
+        enabled: false
         special-char-color: '&f'

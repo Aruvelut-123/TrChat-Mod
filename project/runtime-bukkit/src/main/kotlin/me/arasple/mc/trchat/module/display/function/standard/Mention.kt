@@ -71,7 +71,7 @@ object Mention : Function("MENTION") {
     override fun parseVariable(sender: Player, arg: String): ComponentText? {
         val name = BukkitProxyManager.getExactName(arg) ?: arg
         if (notify) {
-            BukkitProxyManager.sendProxyLang(sender, name, "Function-Mention-Notify", sender.name)
+            recordMention(name)
         }
         return sender.getComponentFromLang("Function-Mention-Format", name, sender.name)
     }

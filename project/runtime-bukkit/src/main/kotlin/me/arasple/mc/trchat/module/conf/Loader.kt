@@ -249,7 +249,7 @@ object Loader {
             val defaultColor = content["default-color"]!!.serialize().map { CustomColor.get(it.first) to it.second.getCondition() }
 
             val specialCharsNode = content["special-char"] as? Map<*, *>
-            val specialCharsEnabled = (specialCharsNode?.get("Enabled") as? Boolean) ?: false
+            val specialCharsEnabled = ((specialCharsNode?.get("enabled") as? Boolean) ?: false) || ((specialCharsNode?.get("Enabled") as? Boolean) ?: false)
             val specialCharsColor = (specialCharsNode?.get("special-char-color") as? String) ?: "&f"
             MsgComponent(defaultColor, style.filterNotNull(), specialCharsEnabled, specialCharsColor)
         } else {

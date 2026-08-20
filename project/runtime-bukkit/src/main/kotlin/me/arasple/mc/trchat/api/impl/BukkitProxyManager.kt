@@ -168,7 +168,9 @@ object BukkitProxyManager : ClientMessageManager {
         listenPerm: String = "",
         doubleTransfer: Boolean = true,
         ports: List<Int> = emptyList(),
-        fallback: String = component.toLegacyText()
+        fallback: String = component.toLegacyText(),
+        senderName: String = "",
+        mentioned: String = ""
     ) {
         sendMessage(recipient, arrayOf(
             "BroadcastRaw",
@@ -177,7 +179,9 @@ object BukkitProxyManager : ClientMessageManager {
             listenPerm,
             doubleTransfer.toString(),
             ports.joinToString(";"),
-            fallback)
+            fallback,
+            senderName,
+            mentioned)
         )
     }
 

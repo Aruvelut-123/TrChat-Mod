@@ -64,7 +64,7 @@ object MentionAll : Function("MENTIONALL") {
     override fun parseVariable(sender: Player, arg: String): ComponentText? {
         if (notify) {
             BukkitProxyManager.getPlayerNames().keys.filter { it != arg }.forEach {
-                BukkitProxyManager.sendProxyLang(sender, it, "Function-Mention-Notify", sender.name)
+                recordMention(it)
             }
         }
         return sender.getComponentFromLang("Function-Mention-All-Format", sender.name)

@@ -9,6 +9,7 @@ import me.arasple.mc.trchat.module.display.channel.obj.ChannelExecuteResult
 import me.arasple.mc.trchat.module.display.channel.obj.ChannelSettings
 import me.arasple.mc.trchat.module.display.format.Format
 import me.arasple.mc.trchat.module.display.format.MsgComponent
+import me.arasple.mc.trchat.module.display.function.Function
 import me.arasple.mc.trchat.module.internal.TrChatBukkit
 import me.arasple.mc.trchat.module.internal.command.main.CommandReply
 import me.arasple.mc.trchat.module.internal.data.ChatLogs
@@ -96,6 +97,7 @@ class PrivateChannel(
     }
 
     override fun execute(sender: CommandSender, message: String): ChannelExecuteResult {
+        Function.clearMentioned()
         if (sender is Player) {
             return execute(sender, message)
         }
@@ -123,6 +125,7 @@ class PrivateChannel(
                     component.append(suffix.value[0].content.toTextComponent(sender)) }
             } ?: return ChannelExecuteResult(failedReason = ChannelExecuteResult.FailReason.NO_FORMAT)
         }
+        val mentioned = Function.takeMentioned()
 
         console().sendComponent(null, component)
         if (settings.proxy && BukkitProxyManager.processor != null) {
@@ -133,16 +136,23 @@ class PrivateChannel(
                 component
             )
             BukkitProxyManager.sendProxyLang(onlinePlayers.firstOrNull(), to, "Private-Message-Receive", "CONSOLE")
+            if (to in mentioned) {
+                BukkitProxyManager.sendProxyLang(onlinePlayers.firstOrNull(), to, "Function-Mention-Notify", "CONSOLE")
+            }
         } else {
             getProxyPlayer(to)?.let {
                 it.sendComponent(null, component)
                 it.sendLang("Private-Message-Receive", "CONSOLE")
+                if (to in mentioned) {
+                    it.sendLang("Function-Mention-Notify", "CONSOLE")
+                }
             }
         }
         return ChannelExecuteResult.success(component, component)
     }
 
     override fun execute(player: Player, message: ComponentText, toConsole: Boolean): ChannelExecuteResult {
+        Function.clearMentioned()
         var plain = message.toPlainText()
         if (!checkLimits(player, plain)) {
             return ChannelExecuteResult(failedReason = ChannelExecuteResult.FailReason.LIMITED)
@@ -178,6 +188,7 @@ class PrivateChannel(
                 .mapNotNull { suffix -> suffix.value.firstOrNull { it.condition.pass(player) }?.content?.toTextComponent(player) }
                 .forEach { suffix -> send.append(suffix) }
         } ?: return ChannelExecuteResult(failedReason = ChannelExecuteResult.FailReason.NO_FORMAT)
+        val mentioned = Function.takeMentioned()
 
         var receive = Components.empty()
         receiver.firstOrNull { it.condition.pass(player) }?.let { format ->
@@ -228,10 +239,16 @@ class PrivateChannel(
                 msgComponent
             )
             BukkitProxyManager.sendProxyLang(player, to, "Private-Message-Receive", player.name)
+            if (to in mentioned) {
+                BukkitProxyManager.sendProxyLang(player, to, "Function-Mention-Notify", player.name)
+            }
         } else {
             getProxyPlayer(to)?.let {
                 it.sendComponent(player, receive)
                 it.sendLang("Private-Message-Receive", player.name)
+                if (to in mentioned) {
+                    it.sendLang("Function-Mention-Notify", player.name)
+                }
             }
             sendSpy(player.name, to, msgComponent)
         }

@@ -11,6 +11,7 @@ Options:
   Cheat-Client-Secure-Chat: false
   Use-Packets: true
   Disabled-Commands: []
+  Disabled-Worlds: []
 
 Channel:
   Default: 'Normal'

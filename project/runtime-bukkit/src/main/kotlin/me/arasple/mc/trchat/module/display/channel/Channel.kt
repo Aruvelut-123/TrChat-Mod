@@ -104,6 +104,7 @@ open class Channel(
     }
 
     open fun execute(sender: CommandSender, message: String): ChannelExecuteResult {
+        Function.clearMentioned()
         if (sender is Player) {
             return execute(sender, message)
         }
@@ -137,6 +138,7 @@ open class Channel(
     }
 
     open fun execute(player: Player, message: ComponentText, toConsole: Boolean = true): ChannelExecuteResult {
+        Function.clearMentioned()
         var plain = message.toPlainText()
         if (!checkLimits(player, plain)) {
             return ChannelExecuteResult(failedReason = ChannelExecuteResult.FailReason.LIMITED)
@@ -155,6 +157,7 @@ open class Channel(
         Metrics.increase(0)
 
         var component = Components.empty()
+        var mentioned = emptySet<String>()
         formats.firstOrNull { it.condition.pass(player) }?.let { format ->
             format.prefix
                 .mapNotNull { prefix -> prefix.value.firstOrNull { it.condition.pass(player) }?.content?.toTextComponent(player) }
@@ -162,6 +165,7 @@ open class Channel(
             format.msg.firstOrNull { it.condition.pass(player) }
                 ?.let { component.append((it.content as MsgComponent).createComponent(player, msg, settings.disabledFunctions)) }
                 ?: return ChannelExecuteResult(failedReason = ChannelExecuteResult.FailReason.NO_FORMAT)
+            mentioned = Function.takeMentioned()
             format.suffix
                 .mapNotNull { suffix -> suffix.value.firstOrNull { it.condition.pass(player) }?.content?.toTextComponent(player) }
                 .forEach { suffix -> component.append(suffix) }
@@ -179,6 +183,9 @@ open class Channel(
         if (player.data.isShadowMuted) {
             if (events.send(player, player.name, plain)) {
                 player.sendComponent(player, component)
+                if (player.name in mentioned) {
+                    BukkitProxyManager.sendProxyLang(player, player.name, "Function-Mention-Notify", player.name)
+                }
             }
             if (toConsole) {
                 console().sendComponent(player, component)
@@ -195,7 +202,9 @@ open class Channel(
                     component,
                     settings.listenPermission,
                     settings.doubleTransfer,
-                    settings.ports
+                    settings.ports,
+                    senderName = player.name,
+                    mentioned = mentioned.joinToString(",")
                 )
                 return ChannelExecuteResult.success(component)
             }
@@ -203,28 +212,35 @@ open class Channel(
         // Local
         when (settings.range.type) {
             ChannelRange.Type.ALL -> {
-                listeners.filter { events.send(player, it, plain) }.forEach {
+                val receivers = listeners.filter { events.send(player, it, plain) }
+                receivers.forEach {
                     getProxyPlayer(it)?.sendComponent(player, component)
                 }
+                notifyMentioned(player, receivers, mentioned)
             }
             ChannelRange.Type.SINGLE_WORLD -> {
-                onlinePlayers.filter { it.name in listeners
+                val receivers = onlinePlayers.filter { it.name in listeners
                         && it.world == player.world
-                        && events.send(player, it.name, plain) }.forEach {
+                        && events.send(player, it.name, plain) }
+                receivers.forEach {
                     it.sendComponent(player, component)
                 }
+                notifyMentioned(player, receivers.map { it.name }, mentioned)
             }
             ChannelRange.Type.DISTANCE -> {
-                onlinePlayers.filter { it.name in listeners
+                val receivers = onlinePlayers.filter { it.name in listeners
                         && it.world == player.world
                         && it.location.distance(player.location) <= settings.range.distance
-                        && events.send(player, it.name, plain) }.forEach {
+                        && events.send(player, it.name, plain) }
+                receivers.forEach {
                     it.sendComponent(player, component)
                 }
+                notifyMentioned(player, receivers.map { it.name }, mentioned)
             }
             ChannelRange.Type.SELF -> {
                 if (events.send(player, player.name, plain)) {
                     player.sendComponent(player, component)
+                    notifyMentioned(player, listOf(player.name), mentioned)
                 }
             }
         }
@@ -232,6 +248,14 @@ open class Channel(
             console().sendComponent(player, component)
         }
         return ChannelExecuteResult.success(component)
+    }
+
+    /** 只有真正收到（能看到）该消息且被 @ 的玩家才会收到提示 */
+    protected fun notifyMentioned(sender: Player, receivers: Collection<String>, mentioned: Set<String>) {
+        if (mentioned.isEmpty()) return
+        receivers.filter { it in mentioned }.forEach {
+            BukkitProxyManager.sendProxyLang(sender, it, "Function-Mention-Notify", sender.name)
+        }
     }
 
     open fun checkLimits(player: Player, message: String): Boolean {

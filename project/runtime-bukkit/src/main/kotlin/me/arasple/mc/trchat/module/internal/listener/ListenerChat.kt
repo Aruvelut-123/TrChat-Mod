@@ -7,12 +7,14 @@ import me.arasple.mc.trchat.module.adventure.toNative
 import me.arasple.mc.trchat.module.display.channel.Channel
 import me.arasple.mc.trchat.module.internal.TrChatBukkit
 import me.arasple.mc.trchat.util.session
+import org.bukkit.entity.Player
 import org.bukkit.event.player.AsyncPlayerChatEvent
 import taboolib.common.platform.Ghost
 import taboolib.common.platform.Platform
 import taboolib.common.platform.PlatformSide
 import taboolib.common.platform.event.EventPriority
 import taboolib.common.platform.event.SubscribeEvent
+import taboolib.common.util.resettableLazy
 import taboolib.module.configuration.ConfigNode
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -28,12 +30,26 @@ object ListenerChat {
     var cancelEvent = false
         private set
 
+    @ConfigNode("Options.Disabled-Worlds", "settings.yml")
+    var disabledWorlds = emptyList<String>()
+        private set
+
     private val cachePrefix = ConcurrentHashMap<UUID, String>()
+
+    private val worldPatterns by resettableLazy("settings") {
+        disabledWorlds.map { Regex(it, RegexOption.IGNORE_CASE) }
+    }
+
+    private fun isDisabledWorld(player: Player): Boolean {
+        val world = player.world?.name ?: return false
+        return worldPatterns.any { it.matches(world) }
+    }
 
     @Ghost
     @SubscribeEvent(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun onPaperChat(e: AsyncChatEvent) {
         if (!TrChatBukkit.isPaperEnv) return
+        if (isDisabledWorld(e.player)) return
         if (cancelEvent) {
             e.isCancelled = true
         } else {
@@ -58,6 +74,7 @@ object ListenerChat {
 
     @SubscribeEvent(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun onBukkitChat(e: AsyncPlayerChatEvent) {
+        if (isDisabledWorld(e.player)) return
         // 提前判定前缀
         if (TrChatBukkit.isPaperEnv) {
             Channel.channels.values.forEach { channel ->
