@@ -24,6 +24,9 @@ Formats:
         text: '&e%player_name%&8: '
     msg:
       default-color: 'f'
+      special-char:
+        Enabled: false
+        special-char-color: '&f'
       hover: '&7Date: %server_time_HH:mm:ss%'
 
 # Can't use placeholders!
@@ -33,3 +36,6 @@ Console:
         text: '&eServer&8: '
     msg:
       default-color: 'f'
+      special-char:
+        Enabled: false
+        special-char-color: '&f'

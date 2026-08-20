@@ -247,7 +247,11 @@ object Loader {
         style += content["shadow"]?.serialize()?.map { it.first to it.second.getCondition() }?.let { Style.Shadow(it) }
         return if (isMsg) {
             val defaultColor = content["default-color"]!!.serialize().map { CustomColor.get(it.first) to it.second.getCondition() }
-            MsgComponent(defaultColor, style.filterNotNull())
+
+            val specialCharsNode = content["special-char"] as? Map<*, *>
+            val specialCharsEnabled = (specialCharsNode?.get("Enabled") as? Boolean) ?: false
+            val specialCharsColor = (specialCharsNode?.get("special-char-color") as? String) ?: "&f"
+            MsgComponent(defaultColor, style.filterNotNull(), specialCharsEnabled, specialCharsColor)
         } else {
             val text = content["text"]?.serialize()?.map { Text(it.first, it.second.getCondition()) } ?: emptyList()
             val head = content["head"]?.serialize()?.map { Head(it.first, it.second.getCondition()) } ?: emptyList()

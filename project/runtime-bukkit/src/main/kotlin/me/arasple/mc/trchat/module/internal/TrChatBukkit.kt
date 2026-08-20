@@ -6,6 +6,7 @@ import me.arasple.mc.trchat.api.nms.NMS
 import me.arasple.mc.trchat.module.conf.file.Filters
 import me.arasple.mc.trchat.module.conf.file.Functions
 import me.arasple.mc.trchat.module.conf.file.Settings
+import me.arasple.mc.trchat.module.conf.file.SpecialChars
 import me.arasple.mc.trchat.module.display.ChatSession
 import me.arasple.mc.trchat.module.display.channel.Channel
 import me.arasple.mc.trchat.module.display.function.Function
@@ -89,6 +90,7 @@ object TrChatBukkit : Plugin() {
         Settings.conf.reload()
         Functions.conf.reload()
         Filters.conf.reload()
+        SpecialChars.conf.reload()
         TrChat.api().getChannelManager().loadChannels(notify)
     }
 

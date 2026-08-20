@@ -23,4 +23,7 @@ Formats:
         text: '&e%player_name%&8: '
     msg:
       default-color: 'a'
+      special-char:
+        Enabled: false
+        special-char-color: '&f'
       hover: '&7Date: %server_time_HH:mm:ss%'

@@ -4,6 +4,9 @@ import me.arasple.mc.trchat.module.display.format.obj.Style
 import me.arasple.mc.trchat.module.display.format.obj.Style.Companion.applyTo
 import me.arasple.mc.trchat.module.display.function.Function
 import me.arasple.mc.trchat.module.internal.script.Condition
+import me.arasple.mc.trchat.module.conf.file.SpecialChars
+import me.arasple.mc.trchat.util.color.wrapSpecialChars
+import me.arasple.mc.trchat.util.color.hasSpecialChars
 import me.arasple.mc.trchat.util.color.CustomColor
 import me.arasple.mc.trchat.util.isDragonCoreHooked
 import me.arasple.mc.trchat.util.pass
@@ -23,7 +26,12 @@ import taboolib.module.chat.impl.AdventureComponent
  * @author ItsFlicker
  * @since 2021/12/12 13:46
  */
-class MsgComponent(val defaultColor: List<Pair<CustomColor, Condition?>>, style: List<Style>) : JsonComponent(style = style) {
+class MsgComponent(
+    val defaultColor: List<Pair<CustomColor, Condition?>>,
+    style: List<Style>,
+    val specialCharsEnabled: Boolean = false,
+    val specialCharsColor: String = "&f"
+) : JsonComponent(style = style) {
 
     private fun processComponent(sender: CommandSender, msg: TextComponent, disabledFunctions: List<String>, depth: Int = 1): TextComponent {
         val children = msg.children().map { processComponent(sender, it as TextComponent, disabledFunctions, depth + 1) }
@@ -71,6 +79,10 @@ class MsgComponent(val defaultColor: List<Pair<CustomColor, Condition?>>, style:
 
         val defaultColor = sender.session.getColor(defaultColor.firstOrNull { it.second.pass(sender) }?.first)
 
+        val channelColor = defaultColor.color
+        val specialCharsPrefix  = if (this.specialCharsEnabled)
+            CustomColor.get(this.specialCharsColor).color else ""
+
         // 分割为多个ComponentText
         for (part in parser.readToFlatten(message)) {
             if (part.isVariable) {
@@ -82,7 +94,11 @@ class MsgComponent(val defaultColor: List<Pair<CustomColor, Condition?>>, style:
                 }
                 continue
             }
-            component.append(toTextComponent(sender, defaultColor.colored(sender, part.text)))
+            val coloredText = defaultColor.colored(sender,  part.text)
+            val text = if (specialCharsPrefix.isNotEmpty() && coloredText.hasSpecialChars(SpecialChars.specialChars))
+                coloredText.wrapSpecialChars(specialCharsPrefix, channelColor, SpecialChars.specialChars)
+            else coloredText
+            component.append(toTextComponent(sender, text))
         }
         return component
     }

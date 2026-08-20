@@ -7,6 +7,9 @@ Formats:
     priority: 100
     msg:
       default-color: '&7'
+      special-char:
+        Enabled: false
+        special-char-color: '&f'
       hover: '&7Date: %server_time_HH:mm:ss%'
     prefix:
       world:
