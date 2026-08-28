@@ -1,0 +1,187 @@
+package me.arasple.mc.trchat.update;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import me.arasple.mc.trchat.TrChatMod;
+import me.arasple.mc.trchat.config.TrChatConfig;
+import me.arasple.mc.trchat.lang.LanguageService;
+import me.arasple.mc.trchat.permission.TrChatPermissions;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public final class UpdateChecker implements AutoCloseable {
+
+    private static final URI API = URI.create(
+        "https://api.github.com/repos/Aruvelut-123/TrChat-Mod/releases/latest"
+    );
+    private static final String RELEASES_URL =
+        "https://github.com/Aruvelut-123/TrChat-Mod/releases";
+
+    private final MinecraftServer server;
+    private final LanguageService languages;
+    private final String currentText;
+    private final SemanticVersion current;
+    private final HttpClient client = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(30))
+        .followRedirects(HttpClient.Redirect.NORMAL)
+        .build();
+    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "TrChat Update Checker");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final AtomicBoolean checking = new AtomicBoolean();
+    private final Set<UUID> notified = ConcurrentHashMap.newKeySet();
+
+    private volatile ReleaseInfo available;
+    private volatile boolean reportedCurrent;
+
+    public UpdateChecker(MinecraftServer server, LanguageService languages, String currentVersion) {
+        this.server = server;
+        this.languages = languages;
+        currentText = currentVersion;
+        current = SemanticVersion.parse(currentVersion);
+    }
+
+    public void start() {
+        executor.scheduleWithFixedDelay(
+            this::check,
+            1,
+            TrChatConfig.UPDATE_CHECK_INTERVAL_MINUTES.get(),
+            TimeUnit.MINUTES
+        );
+    }
+
+    public void notifyPlayer(ServerPlayer player) {
+        ReleaseInfo release = available;
+        if (release == null
+            || notified.contains(player.getUUID())
+            || !TrChatPermissions.check(player, "trchat.admin")) {
+            return;
+        }
+        player.sendSystemMessage(header(player, release));
+        player.sendSystemMessage(languages.component(player, "Updater-Changelog"));
+        if (release.notes().isEmpty()) {
+            player.sendSystemMessage(languages.component(player, "Updater-Changelog-Empty"));
+        } else {
+            for (String line : release.notes()) {
+                player.sendSystemMessage(ReleaseNoteRenderer.render(line));
+            }
+        }
+        player.sendSystemMessage(languages.component(player, "Status-Footer"));
+        notified.add(player.getUUID());
+    }
+
+    private void check() {
+        if (!checking.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            HttpRequest request = HttpRequest.newBuilder(API)
+                .timeout(Duration.ofSeconds(30))
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "TrChat-Mod/" + currentText)
+                .GET()
+                .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IllegalStateException("GitHub API returned HTTP " + response.statusCode());
+            }
+            JsonObject json = JsonParser.parseString(response.body()).getAsJsonObject();
+            String tag = json.get("tag_name").getAsString();
+            String page = json.has("html_url") ? json.get("html_url").getAsString() : RELEASES_URL;
+            String body = json.has("body") && !json.get("body").isJsonNull()
+                ? json.get("body").getAsString()
+                : "";
+            SemanticVersion latest = SemanticVersion.parse(tag);
+            if (latest.compareTo(current) > 0) {
+                ReleaseInfo release = new ReleaseInfo(
+                    tag.replaceFirst("^[vV]", ""), page, ReleaseNotes.normalize(body)
+                );
+                boolean changed = !release.equals(available);
+                available = release;
+                if (changed) {
+                    notified.clear();
+                    server.execute(() -> notifyAvailable(release));
+                }
+            } else {
+                available = null;
+                if (!reportedCurrent) {
+                    reportedCurrent = true;
+                    if (current.compareTo(latest) > 0) {
+                        TrChatMod.LOGGER.info(
+                            "TrChat Mod {} is newer than the latest GitHub release {}.",
+                            currentText, tag
+                        );
+                    } else {
+                        TrChatMod.LOGGER.info("TrChat Mod {} is up to date.", currentText);
+                    }
+                }
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        } catch (Exception exception) {
+            TrChatMod.LOGGER.warn("Unable to check TrChat Mod updates: {}", exception.getMessage());
+        } finally {
+            checking.set(false);
+        }
+    }
+
+    private void notifyAvailable(ReleaseInfo release) {
+        TrChatMod.LOGGER.warn(
+            "TrChat Mod update available: {} -> {} ({})\n{}",
+            currentText,
+            release.version(),
+            release.url(),
+            release.notes().isEmpty()
+                ? "No release notes provided."
+                : String.join(System.lineSeparator(), release.notes())
+        );
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            notifyPlayer(player);
+        }
+    }
+
+    private MutableComponent header(ServerPlayer player, ReleaseInfo release) {
+        MutableComponent output = languages.component(
+            player, "Updater-Available", currentText, release.version()
+        ).copy();
+        MutableComponent link = languages.component(player, "Updater-Link").copy()
+            .withStyle(style -> style
+                .withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, release.url()))
+                .withHoverEvent(new HoverEvent(
+                    HoverEvent.Action.SHOW_TEXT,
+                    languages.component(player, "Updater-Link-Hover")
+                )));
+        return output
+            .append("\n")
+            .append(languages.component(player, "Updater-Link-Prefix"))
+            .append(link);
+    }
+
+    @Override
+    public void close() {
+        executor.shutdownNow();
+        notified.clear();
+    }
+
+    private record ReleaseInfo(String version, String url, List<String> notes) {
+    }
+}

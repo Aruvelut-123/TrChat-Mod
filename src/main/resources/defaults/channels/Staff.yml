@@ -15,5 +15,8 @@ Formats:
         text: '&e%player_name%&8: '
     msg:
       default-color: 'a'
+      special-char:
+        enabled: false
+        special-char-color: '&f'
       hover: '&7时间: %server_time_HH:mm:ss%'
 

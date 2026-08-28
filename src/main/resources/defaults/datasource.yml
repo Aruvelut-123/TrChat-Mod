@@ -1,14 +1,14 @@
 # TrChat data source / TrChat 数据源
-# Available types / 可用类型: SQLite, MySQL, MariaDB, JDBC
-# All three common drivers are bundled; no extra jar is needed.
-# SQLite、MySQL、MariaDB 驱动均已内嵌，不需要额外安装 jar。
+# Available types / 可用类型: SQLite, MySQL, MariaDB, PostgreSQL, JDBC
+# All four common drivers are bundled; no extra jar is needed.
+# SQLite、MySQL、MariaDB、PostgreSQL 驱动均已内嵌，不需要额外安装 jar。
 # Moderation state is stored in trchat_player_state and channel memberships in trchat_player_channels.
 # 禁言等状态保存于 trchat_player_state，玩家加入的频道及当前频道保存于 trchat_player_channels。
 Type: SQLite
 
 SQLite:
-  # Relative to config/trchat-neoforge. Absolute paths are also accepted.
-  # 相对于 config/trchat-neoforge；也可填写绝对路径。
+  # Relative to config/trchat. Absolute paths are also accepted.
+  # 相对于 config/trchat；也可填写绝对路径。
   File: data.db
 
 # Set Type to MySQL to use this section.
@@ -34,6 +34,18 @@ MariaDB:
   # MariaDB Connector/J parameters, without the leading question mark.
   # MariaDB Connector/J 参数，不要填写开头的问号。
   Parameters: 'useUnicode=true&characterEncoding=utf8&useSsl=false'
+
+# Set Type to PostgreSQL to use this section.
+# 使用此处配置时请把 Type 改为 PostgreSQL。
+PostgreSQL:
+  Host: 127.0.0.1
+  Port: 5432
+  Database: trchat
+  User: postgres
+  Password: ''
+  # PostgreSQL JDBC parameters, without the leading question mark.
+  # PostgreSQL JDBC 参数，不要填写开头的问号。
+  Parameters: ''
 
 # Advanced/custom JDBC connection. Set Type to JDBC.
 # 高级/自定义 JDBC 连接：把 Type 改为 JDBC。

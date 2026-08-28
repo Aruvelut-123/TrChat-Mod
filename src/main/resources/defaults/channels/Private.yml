@@ -13,6 +13,9 @@ Sender:
         text: '&8[&a%player_name% &7➦ %trchat_toplayer%&8] '
     msg:
       default-color: 'f'
+      special-char:
+        enabled: false
+        special-char-color: '&f'
       hover: '&7时间: %server_time_HH:mm:ss%'
 
 Receiver:
@@ -21,6 +24,9 @@ Receiver:
         text: '&8[&6%player_name% &7➥ &2%trchat_toplayer%&8] '
     msg:
       default-color: 'f'
+      special-char:
+        enabled: false
+        special-char-color: '&f'
       hover: '&7时间: %server_time_HH:mm:ss%'
 
 Console:
@@ -29,3 +35,6 @@ Console:
         text: '&8[&dPM&8] &7%player_name% &8➥ &7%trchat_toplayer%&8: '
     msg:
       default-color: 'f'
+      special-char:
+        enabled: false
+        special-char-color: '&f'

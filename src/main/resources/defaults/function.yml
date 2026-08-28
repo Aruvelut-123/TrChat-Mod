@@ -58,7 +58,7 @@ General:
 Custom:
   shareUrl:
     priority: 100
-    pattern: '((https|http|ftp|rtsp|mms)?:\/\/)[^\s]+'
+    pattern: '(https?|ftp):\/\/([a-zA-Z0-9.-]+(:[0-9]+)?)(\/[^?#\s]*)?(\?[^#\s]*)?(#\S*)?'
     action: []
     display:
       text: '&8[&f&l网站&8]'

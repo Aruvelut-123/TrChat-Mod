@@ -1,13 +1,13 @@
 modLoader="javafml"
 loaderVersion="${loader_version_range}"
 license="${mod_license}"
-issueTrackerURL="https://github.com/Aruvelut-123/TrChat-Neoforge/issues"
+issueTrackerURL="https://github.com/Aruvelut-123/TrChat-Mod/issues"
 
 [[mods]]
 modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
-displayURL="https://github.com/Aruvelut-123/TrChat-Neoforge"
+displayURL="https://github.com/Aruvelut-123/TrChat-Mod"
 authors="Baymaxawa (NeoForge author and maintainer); Arasple and ItsFlicker (original TrChat authors); original TrChat contributors"
 description='''
 A server-side chat control mod for NeoForge 1.21.1.

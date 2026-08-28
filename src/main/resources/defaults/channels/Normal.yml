@@ -27,4 +27,7 @@ Formats:
         text: '&7: '
     msg:
       default-color: '7'
+      special-char:
+        enabled: false
+        special-char-color: '&f'
       hover: '&7时间: %server_time_HH:mm:ss%'
