@@ -8,7 +8,6 @@ import me.arasple.mc.trchat.channel.ChannelManager;
 import me.arasple.mc.trchat.chat.ChatService;
 import me.arasple.mc.trchat.chat.CommandInvocation;
 import me.arasple.mc.trchat.chat.LegacyText;
-import me.arasple.mc.trchat.compat.E33ChatCompat;
 import me.arasple.mc.trchat.config.TrChatConfig;
 import me.arasple.mc.trchat.moderation.ModerationService;
 import me.arasple.mc.trchat.permission.TrChatPermissions;
@@ -65,9 +64,6 @@ public final class TrChatServerEvents {
     @SubscribeEvent
     public void onServerStarted(ServerStartedEvent event) {
         service = new ChatService(event.getServer(), channels);
-        if (E33ChatCompat.applyTemplates(channels.all())) {
-            TrChatMod.LOGGER.info("E33Chat detected; TrChat public and private formats were registered.");
-        }
         if (TrChatConfig.UPDATE_CHECK_ENABLED.get()) {
             updateChecker = new UpdateChecker(event.getServer(), service.languages(), modVersion());
             updateChecker.start();
@@ -89,16 +85,8 @@ public final class TrChatServerEvents {
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public void onChatWithoutE33Chat(ServerChatEvent event) {
-        if (service == null || E33ChatCompat.isActive()) {
-            return;
-        }
-        handleChat(event);
-    }
-
-    @SubscribeEvent(priority = EventPriority.LOWEST)
-    public void onChatWithE33Chat(ServerChatEvent event) {
-        if (service == null || !E33ChatCompat.isActive()) {
+    public void onChat(ServerChatEvent event) {
+        if (service == null) {
             return;
         }
         handleChat(event);
@@ -550,7 +538,6 @@ public final class TrChatServerEvents {
             return 0;
         }
         registerDynamicCommands(commandDispatcher);
-        E33ChatCompat.applyTemplates(channels.all());
         for (ServerPlayer player : source.getServer().getPlayerList().getPlayers()) {
             source.getServer().getCommands().sendCommands(player);
         }
