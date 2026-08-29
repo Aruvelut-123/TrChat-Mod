@@ -1,4 +1,4 @@
-name: NeoForge build
+name: TrChat Mod build
 
 on:
   push:
@@ -22,11 +22,13 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
 
-      - name: Set up Java 21
+      - name: Set up JDKs
         uses: actions/setup-java@v5
         with:
           distribution: microsoft
-          java-version: '21'
+          java-version: |
+            21
+            25
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -37,8 +39,17 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Build and test
-        run: ./gradlew build
+      - name: Build and test all nodes
+        run: |
+          ./gradlew \
+            :1.21.1-neoforge:build \
+            :1.21.11-neoforge:build \
+            :26.1.2-neoforge:build \
+            :26.2-neoforge:build \
+            :1.21.1-fabric:build \
+            :1.21.11-fabric:build \
+            :26.1.2-fabric:build \
+            :26.2-fabric:build
 
       - name: Add test results to job summary
         if: always()
@@ -50,16 +61,15 @@ jobs:
         with:
           name: test-reports-${{ github.run_number }}
           path: |
-            build/test-results/test/
-            build/reports/tests/test/
+            versions/*/build/test-results/test/
+            versions/*/build/reports/tests/test/
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Upload NeoForge artifact
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: TrChat-NeoForge-1.21.1
+          name: TrChat-Mod-jars-${{ github.run_number }}
           path: |
-            build/libs/trchat_neoforge-*.jar
-            !build/libs/*-sources.jar
+            versions/*/build/libs/*.jar
           if-no-files-found: error

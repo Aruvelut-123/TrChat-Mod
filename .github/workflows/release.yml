@@ -1,4 +1,4 @@
-name: NeoForge release
+name: TrChat Mod release
 
 on:
   release:
@@ -20,11 +20,13 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
 
-      - name: Set up Java 21
+      - name: Set up JDKs
         uses: actions/setup-java@v5
         with:
           distribution: microsoft
-          java-version: '21'
+          java-version: |
+            21
+            25
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -35,8 +37,17 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Build and test
-        run: ./gradlew clean build
+      - name: Build and test all nodes
+        run: |
+          ./gradlew \
+            :1.21.1-neoforge:build \
+            :1.21.11-neoforge:build \
+            :26.1.2-neoforge:build \
+            :26.2-neoforge:build \
+            :1.21.1-fabric:build \
+            :1.21.11-fabric:build \
+            :26.1.2-fabric:build \
+            :26.2-fabric:build
 
       - name: Add test results to job summary
         if: always()
@@ -48,8 +59,8 @@ jobs:
         with:
           name: release-test-reports-${{ github.event.release.tag_name }}
           path: |
-            build/test-results/test/
-            build/reports/tests/test/
+            versions/*/build/test-results/test/
+            versions/*/build/reports/tests/test/
           if-no-files-found: warn
           retention-days: 30
 
@@ -58,11 +69,11 @@ jobs:
         with:
           args: --current --strip header --output RELEASE_NOTES.md
 
-      - name: Replace release notes and upload jar
+      - name: Replace release notes and upload jars
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
         run: |
           gh release edit "$TAG" --notes-file RELEASE_NOTES.md
-          find build/libs -maxdepth 1 -type f -name 'trchat_neoforge-*.jar' ! -name '*-sources.jar' -print0 |
+          find versions -type f \( -path '*/build/libs/*.jar' \) ! -name '*-sources.jar' -print0 |
             xargs -0 gh release upload "$TAG" --clobber

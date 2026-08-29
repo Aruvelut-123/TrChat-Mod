@@ -36,15 +36,15 @@ try {
         throw 'git-cliff failed to generate release notes.'
     }
 
-    $artifacts = @(Get-ChildItem -LiteralPath (Join-Path $repository 'build\libs') -Filter 'trchat_neoforge-*.jar' |
-        Where-Object { $_.Name -notlike '*-sources.jar' })
-    if ($artifacts.Count -ne 1) {
-        throw "Expected exactly one release jar, found $($artifacts.Count)."
+    $artifacts = @(Get-ChildItem -LiteralPath (Join-Path $repository 'versions') -Recurse -Filter '*.jar' |
+        Where-Object { $_.FullName -match '\\build\\libs\\' -and $_.Name -notlike '*-sources.jar' })
+    if ($artifacts.Count -ne 8) {
+        throw "Expected 8 release jars (4 versions x 2 loaders), found $($artifacts.Count)."
     }
 
     git rev-parse --verify --quiet "refs/tags/$Tag" | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        git tag -a $Tag -m "TrChat NeoForge $Tag"
+        git tag -a $Tag -m "TrChat Mod $Tag"
         if ($LASTEXITCODE -ne 0) {
             throw "Unable to create tag $Tag."
         }
@@ -54,14 +54,15 @@ try {
         }
     }
 
-    $releaseTitle = if ($Title) { $Title } else { "TrChat NeoForge 1.21.1 $Tag" }
+    $releaseTitle = if ($Title) { $Title } else { "TrChat Mod $Tag" }
     $arguments = @(
-        'release', 'create', $Tag, $artifacts[0].FullName,
+        'release', 'create', $Tag,
         '--verify-tag', '--title', $releaseTitle, '--notes-file', $notes,
         '--fail-on-no-commits'
     )
     if ($Draft) { $arguments += '--draft' }
     if ($Prerelease) { $arguments += '--prerelease' }
+    $arguments += ($artifacts | ForEach-Object { $_.FullName })
     gh @arguments
     if ($LASTEXITCODE -ne 0) {
         throw 'GitHub release creation failed.'

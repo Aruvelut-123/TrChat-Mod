@@ -15,7 +15,7 @@ else {
 }
 
 if (-not $javaExecutable -or -not (Test-Path -LiteralPath $javaExecutable)) {
-    throw 'Java 21 was not found. Set JAVA_HOME or pass -JavaHome with a Java 21 JDK path.'
+    throw 'Java was not found. Set JAVA_HOME or pass -JavaHome with a JDK path (21 for 1.21.x, 25 for 26.x).'
 }
 
 $previousJavaHome = $env:JAVA_HOME
@@ -33,8 +33,8 @@ try {
         throw "Gradle build failed with exit code $LASTEXITCODE."
     }
 
-    Get-ChildItem -LiteralPath (Join-Path $repository 'build\libs') -Filter 'trchat_neoforge-*.jar' |
-        Where-Object { $_.Name -notlike '*-sources.jar' } |
+    Get-ChildItem -LiteralPath (Join-Path $repository 'versions') -Recurse -Filter '*.jar' |
+        Where-Object { $_.FullName -match '\\build\\libs\\' -and $_.Name -notlike '*-sources.jar' } |
         Select-Object FullName, Length, LastWriteTime
 }
 finally {
