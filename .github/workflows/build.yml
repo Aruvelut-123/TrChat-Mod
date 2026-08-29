@@ -66,10 +66,30 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Upload build artifacts
+      - name: Upload 1.21.1 artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: TrChat-Mod-jars-${{ github.run_number }}
-          path: |
-            versions/*/build/libs/*.jar
+          name: TrChat-1.21.1-${{ github.run_number }}
+          path: versions/1.21.1-*/build/libs/*.jar
+          if-no-files-found: error
+
+      - name: Upload 1.21.11 artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: TrChat-1.21.11-${{ github.run_number }}
+          path: versions/1.21.11-*/build/libs/*.jar
+          if-no-files-found: error
+
+      - name: Upload 26.1.2 artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: TrChat-26.1.2-${{ github.run_number }}
+          path: versions/26.1.2-*/build/libs/*.jar
+          if-no-files-found: error
+
+      - name: Upload 26.2 artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: TrChat-26.2-${{ github.run_number }}
+          path: versions/26.2-*/build/libs/*.jar
           if-no-files-found: error
