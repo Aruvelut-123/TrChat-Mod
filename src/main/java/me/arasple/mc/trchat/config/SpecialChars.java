@@ -1,6 +1,6 @@
 package me.arasple.mc.trchat.config;
 
-import net.neoforged.fml.loading.FMLPaths;
+import me.arasple.mc.trchat.platform.Platform;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -29,7 +29,7 @@ public final class SpecialChars {
     }
 
     public static void reload() {
-        reload(FMLPaths.CONFIGDIR.get().resolve("trchat"));
+        reload(Platform.configDir().resolve("trchat"));
     }
 
     public static void reload(Path folder) {

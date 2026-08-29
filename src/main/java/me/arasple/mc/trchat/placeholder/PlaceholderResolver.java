@@ -20,6 +20,11 @@ import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.storage.ServerLevelData;
+//? if >=1.21.11 {
+import net.minecraft.server.permissions.Permission;
+import net.minecraft.server.permissions.PermissionLevel;
+import net.minecraft.server.players.NameAndId;
+//? }
 import me.arasple.mc.trchat.config.TrChatConfig;
 import me.arasple.mc.trchat.lang.LanguageService;
 import me.arasple.mc.trchat.permission.TrChatPermissions;
@@ -142,7 +147,11 @@ public final class PlaceholderResolver {
         if (key.startsWith("online_")) {
             String requested = key.substring("online_".length());
             for (ServerLevel level : server.getAllLevels()) {
+                //? if >=1.21.11 {
+                Identifier id = level.dimension().identifier();
+                //? } else {
                 ResourceLocation id = level.dimension().location();
+                //? }
                 if (id.toString().equalsIgnoreCase(requested) || id.getPath().equalsIgnoreCase(requested)) {
                     return integer(level.players().size());
                 }
@@ -181,11 +190,21 @@ public final class PlaceholderResolver {
         }
 
         BlockPos position = player.blockPosition();
+        //? if >=1.21.11 {
+        ServerLevel level = player.level();
+        //? } else {
         ServerLevel level = player.serverLevel();
+        //? }
         ItemStack mainHand = player.getMainHandItem();
         ItemStack offHand = player.getOffhandItem();
+        //? if >=1.21.11 {
+        ServerPlayer.RespawnConfig respawnConfig = player.getRespawnConfig();
+        BlockPos bed = respawnConfig == null ? null : respawnConfig.respawnData().pos();
+        BlockPos compass = level.getLevelData().getRespawnData().pos();
+        //? } else {
         BlockPos bed = player.getRespawnPosition();
         BlockPos compass = level.getSharedSpawnPos();
+        //? }
         Locale locale = locale(player);
         long firstPlayed = playerDataTime(player, true);
         long lastPlayed = playerDataTime(player, false);
@@ -207,17 +226,29 @@ public final class PlaceholderResolver {
             case "bed_x" -> bed == null ? "" : integer(bed.getX());
             case "bed_y" -> bed == null ? "" : integer(bed.getY());
             case "bed_z" -> bed == null ? "" : integer(bed.getZ());
+            //? if >=1.21.11 {
+            case "bed_world" -> bed == null ? "" : respawnConfig.respawnData().dimension().identifier().getPath();
+            //? } else {
             case "bed_world" -> bed == null ? "" : player.getRespawnDimension().location().getPath();
+            //? }
             case "biome" -> biome(level, position, false);
             case "biome_capitalized" -> biome(level, position, true);
             case "block_underneath" -> registryName(BuiltInRegistries.BLOCK.getKey(level.getBlockState(position.below()).getBlock()));
             case "can_pickup_items" -> bool(!player.isSpectator());
             case "colored_ping" -> coloredPing(player.connection.latency());
+            //? if >=1.21.11 {
+            case "compass_world" -> Level.OVERWORLD.identifier().getPath();
+            //? } else {
             case "compass_world" -> Level.OVERWORLD.location().getPath();
+            //? }
             case "compass_x" -> integer(compass.getX());
             case "compass_y" -> integer(compass.getY());
             case "compass_z" -> integer(compass.getZ());
+            //? if >=1.21.11 {
+            case "custom_name" -> player.getCustomName() == null ? player.getGameProfile().name() : player.getCustomName().getString();
+            //? } else {
             case "custom_name" -> player.getCustomName() == null ? player.getGameProfile().getName() : player.getCustomName().getString();
+            //? }
             case "current_exp" -> integer(totalExperienceAtCurrentLevel(player));
             case "direction" -> direction(player.getYRot());
             case "direction_xz" -> directionXz(player.getYRot());
@@ -240,14 +271,23 @@ public final class PlaceholderResolver {
             case "health_scale" -> decimal(player.getMaxHealth());
             case "ip" -> player.getIpAddress();
             case "online" -> "yes";
+            //? if >=1.21.11 {
+            case "is_whitelisted" -> bool(server.getPlayerList().isWhiteListed(new NameAndId(player.getGameProfile())));
+            case "is_banned" -> bool(server.getPlayerList().getBans().isBanned(new NameAndId(player.getGameProfile())));
+            //? } else {
             case "is_whitelisted" -> bool(server.getPlayerList().isWhiteListed(player.getGameProfile()));
             case "is_banned" -> bool(server.getPlayerList().getBans().isBanned(player.getGameProfile()));
+            //? }
             case "is_flying" -> bool(player.getAbilities().flying);
             case "is_sneaking" -> bool(player.isCrouching());
             case "is_sprinting" -> bool(player.isSprinting());
             case "is_sleeping" -> bool(player.isSleeping());
             case "is_inside_vehicle" -> bool(player.isPassenger());
+            //? if >=1.21.11 {
+            case "is_op" -> bool(player.permissions().hasPermission(new Permission.HasCommandLevel(PermissionLevel.ADMINS)));
+            //? } else {
             case "is_op" -> bool(player.hasPermissions(2));
+            //? }
             case "item_in_hand" -> itemType(mainHand);
             case "item_in_hand_name" -> itemName(mainHand);
             case "item_in_hand_data" -> itemData(mainHand);
@@ -271,7 +311,11 @@ public final class PlaceholderResolver {
             case "max_health_rounded" -> integer(Math.round(player.getMaxHealth()));
             case "max_no_damage_ticks" -> "20";
             case "minutes_lived" -> integer(player.tickCount / 1200);
+            //? if >=1.21.11 {
+            case "name" -> player.getGameProfile().name();
+            //? } else {
             case "name" -> player.getGameProfile().getName();
+            //? }
             case "no_damage_ticks" -> integer(playerStats.noDamageTicks(player));
             case "ping" -> integer(player.connection.latency());
             case "remaining_air" -> integer(player.getAirSupply());
@@ -280,16 +324,29 @@ public final class PlaceholderResolver {
             case "sleep_ticks" -> integer(player.getSleepTimer());
             case "thunder_duration" -> integer(weatherDuration(level, true));
             case "ticks_lived" -> integer(player.tickCount);
+            //? if >=26.1 {
+            case "time" -> integer(level.getOverworldClockTime());
+            //? } else {
             case "time" -> integer(level.getDayTime());
+            //? }
             case "time_offset" -> "0";
             case "total_exp" -> integer(player.totalExperience);
             case "uuid" -> player.getUUID().toString();
             case "walk_speed" -> decimal(player.getAbilities().getWalkingSpeed());
             case "weather_duration" -> integer(weatherDuration(level, false));
+            //? if >=1.21.11 {
+            case "world" -> level.dimension().identifier().getPath();
+            //? } else {
             case "world" -> level.dimension().location().getPath();
+            //? }
             case "world_type" -> worldType(level.dimension());
+            //? if >=26.1 {
+            case "world_time_12" -> worldTime(level.getOverworldClockTime(), true);
+            case "world_time_24" -> worldTime(level.getOverworldClockTime(), false);
+            //? } else {
             case "world_time_12" -> worldTime(level.getDayTime(), true);
             case "world_time_24" -> worldTime(level.getDayTime(), false);
+            //? }
             case "x" -> integer(position.getX());
             case "y" -> integer(position.getY());
             case "z" -> integer(position.getZ());
@@ -301,16 +358,28 @@ public final class PlaceholderResolver {
     }
 
     private boolean hasEffect(ServerPlayer player, String name) {
+        //? if >=1.21.11 {
+        Identifier id = parseId(name);
+        Optional<Holder.Reference<MobEffect>> effect = BuiltInRegistries.MOB_EFFECT.get(id);
+        //? } else {
         ResourceLocation id = parseId(name);
         Optional<Holder.Reference<MobEffect>> effect = BuiltInRegistries.MOB_EFFECT.getHolder(id);
+        //? }
         return effect.isPresent() && player.hasEffect(effect.get());
     }
 
     private int enchantmentLevel(ItemStack stack, String name) {
+        //? if >=1.21.11 {
+        Identifier id = parseId(name);
+        Optional<Holder.Reference<Enchantment>> enchantment = server.registryAccess()
+            .lookupOrThrow(Registries.ENCHANTMENT)
+            .get(id);
+        //? } else {
         ResourceLocation id = parseId(name);
         Optional<Holder.Reference<Enchantment>> enchantment = server.registryAccess()
             .registryOrThrow(Registries.ENCHANTMENT)
             .getHolder(id);
+        //? }
         return enchantment.map(value -> EnchantmentHelper.getItemEnchantmentLevel(value, stack)).orElse(0);
     }
 
@@ -439,9 +508,15 @@ public final class PlaceholderResolver {
     }
 
     private static String biome(ServerLevel level, BlockPos position, boolean capitalized) {
+        //? if >=1.21.11 {
+        String name = level.getBiome(position).unwrapKey()
+            .map(key -> key.identifier().getPath())
+            .orElse("unknown");
+        //? } else {
         String name = level.getBiome(position).unwrapKey()
             .map(key -> key.location().getPath())
             .orElse("unknown");
+        //? }
         if (!capitalized) {
             return name.toUpperCase(Locale.ROOT);
         }
@@ -477,9 +552,14 @@ public final class PlaceholderResolver {
     }
 
     private static int weatherDuration(ServerLevel level, boolean thunder) {
+        //? if >=26.1 {
+        var weather = level.getWeatherData();
+        return thunder ? weather.getThunderTime() : weather.getRainTime();
+        //? } else {
         return level.getLevelData() instanceof ServerLevelData data
             ? thunder ? data.getThunderTime() : data.getRainTime()
             : 0;
+        //? }
     }
 
     private static String worldTime(long ticks, boolean twelveHour) {

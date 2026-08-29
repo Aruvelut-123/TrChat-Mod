@@ -1,7 +1,7 @@
 package me.arasple.mc.trchat.data;
 
 import me.arasple.mc.trchat.config.TrChatConfig;
-import net.neoforged.fml.loading.FMLPaths;
+import me.arasple.mc.trchat.platform.Platform;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -28,7 +28,7 @@ public final class ChatLogService implements AutoCloseable {
     private long ticks;
 
     public ChatLogService() {
-        this(FMLPaths.CONFIGDIR.get().resolve("trchat").resolve("logs"));
+        this(Platform.configDir().resolve("trchat").resolve("logs"));
     }
 
     ChatLogService(Path directory) {

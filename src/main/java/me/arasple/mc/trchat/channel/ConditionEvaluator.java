@@ -22,7 +22,15 @@ public final class ConditionEvaluator {
         }
         String normalized = condition.trim();
         if (normalized.equalsIgnoreCase("player op") || normalized.equalsIgnoreCase("player is op")) {
+            //? if >=1.21.11 {
+            return player != null && player.permissions().hasPermission(
+                new net.minecraft.server.permissions.Permission.HasCommandLevel(
+                    net.minecraft.server.permissions.PermissionLevel.ADMINS
+                )
+            );
+            //? } else {
             return player != null && player.hasPermissions(2);
+            //? }
         }
         Matcher permission = PERMISSION.matcher(normalized);
         if (permission.matches()) {

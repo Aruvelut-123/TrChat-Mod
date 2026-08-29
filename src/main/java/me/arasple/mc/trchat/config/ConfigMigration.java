@@ -1,6 +1,6 @@
 package me.arasple.mc.trchat.config;
 
-import net.neoforged.fml.loading.FMLPaths;
+import me.arasple.mc.trchat.platform.Platform;
 
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -27,7 +27,7 @@ public final class ConfigMigration {
     }
 
     public static void migrateIfNeeded() {
-        Path configRoot = FMLPaths.CONFIGDIR.get();
+        Path configRoot = Platform.configDir();
         Path legacy = configRoot.resolve(LEGACY_DIR);
         Path current = configRoot.resolve(CURRENT_DIR);
         if (!Files.isDirectory(legacy)) {

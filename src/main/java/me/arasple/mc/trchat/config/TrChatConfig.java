@@ -1,8 +1,11 @@
 package me.arasple.mc.trchat.config;
 
-import net.neoforged.neoforge.common.ModConfigSpec;
-
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+
+//? if neoforge {
+import net.neoforged.neoforge.common.ModConfigSpec;
 
 public final class TrChatConfig {
 
@@ -127,3 +130,135 @@ public final class TrChatConfig {
     private TrChatConfig() {
     }
 }
+//? } else {
+import me.arasple.mc.trchat.platform.Platform;
+import org.yaml.snakeyaml.Yaml;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+public final class TrChatConfig {
+
+    /** Fabric has no ModConfigSpec; a YAML file under config/trchat is read lazily once per field access. */
+    private static volatile Map<String, Object> data;
+
+    public static final Value<Integer> SERVER_ID = new Value<>("chat.serverId", Integer.valueOf(25565), v -> ((Number) v).intValue());
+    public static final Value<String> SERVER_NAME = new Value<>("chat.serverName", "A Minecraft Server", Object::toString);
+    public static final Value<String> DEFAULT_LANGUAGE = new Value<>("chat.defaultLanguage", "zh_CN", Object::toString);
+    public static final Value<String> GLOBAL_PREFIX = new Value<>("chat.globalPrefix", "!all", Object::toString);
+    public static final Value<Integer> MESSAGE_MAX_LENGTH = new Value<>("chat.messageMaxLength", Integer.valueOf(256), v -> ((Number) v).intValue());
+    public static final Value<Integer> COOLDOWN_MILLIS = new Value<>("chat.cooldownMillis", Integer.valueOf(2000), v -> ((Number) v).intValue());
+    public static final Value<Double> ANTI_REPEAT_SIMILARITY = new Value<>("chat.antiRepeatSimilarity", Double.valueOf(0.85D), v -> ((Number) v).doubleValue());
+    public static final Value<List<? extends String>> BLOCKED_WORDS = new Value<>("chat.blockedWords", List.of(), v -> stringList(v));
+    public static final Value<String> FILTER_REPLACEMENT = new Value<>("chat.filterReplacement", "*", Object::toString);
+    public static final Value<List<? extends String>> DISABLED_WORLDS = new Value<>("chat.disabledWorlds", List.of(), v -> stringList(v));
+    public static final Value<String> LOG_NORMAL_FORMAT = new Value<>("logging.normalMessageFormat", "[{0}] {1}: {2}", Object::toString);
+    public static final Value<String> LOG_PRIVATE_FORMAT = new Value<>("logging.privateMessageFormat", "[{0}] {1} -> {2}: {3}", Object::toString);
+    public static final Value<Integer> LOG_RETENTION_DAYS = new Value<>("logging.retentionDays", Integer.valueOf(0), v -> ((Number) v).intValue());
+
+    public static final Value<Boolean> UPDATE_CHECK_ENABLED = new Value<>("updates.enabled", Boolean.TRUE, v -> ((Boolean) v));
+    public static final Value<Integer> UPDATE_CHECK_INTERVAL_MINUTES = new Value<>("updates.intervalMinutes", Integer.valueOf(15), v -> ((Number) v).intValue());
+
+    public static final Value<Boolean> REDIS_ENABLED = new Value<>("redis.enabled", Boolean.FALSE, v -> ((Boolean) v));
+    public static final Value<String> REDIS_HOST = new Value<>("redis.host", "127.0.0.1", Object::toString);
+    public static final Value<Integer> REDIS_PORT = new Value<>("redis.port", Integer.valueOf(6379), v -> ((Number) v).intValue());
+    public static final Value<String> REDIS_USERNAME = new Value<>("redis.username", "", Object::toString);
+    public static final Value<String> REDIS_PASSWORD = new Value<>("redis.password", "", Object::toString);
+    public static final Value<Integer> REDIS_DATABASE = new Value<>("redis.database", Integer.valueOf(0), v -> ((Number) v).intValue());
+    public static final Value<Integer> REDIS_CONNECT_TIMEOUT = new Value<>("redis.connectTimeoutMillis", Integer.valueOf(3000), v -> ((Number) v).intValue());
+    public static final Value<Integer> REDIS_SOCKET_TIMEOUT = new Value<>("redis.socketTimeoutMillis", Integer.valueOf(0), v -> ((Number) v).intValue());
+    public static final Value<Integer> REDIS_RECONNECT_DELAY = new Value<>("redis.reconnectDelayMillis", Integer.valueOf(3000), v -> ((Number) v).intValue());
+    public static final Value<String> REDIS_CHANNEL = new Value<>("redis.channel", "trchat-message", Object::toString);
+
+    private static Map<String, Object> data() {
+        Map<String, Object> cached = data;
+        if (cached == null) {
+            synchronized (TrChatConfig.class) {
+                cached = data;
+                if (cached == null) {
+                    cached = load();
+                    data = cached;
+                }
+            }
+        }
+        return cached;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> load() {
+        Path file = Platform.configDir().resolve("trchat/settings.yml");
+        if (Files.exists(file)) {
+            try (InputStream in = Files.newInputStream(file)) {
+                Object parsed = new Yaml().load(in);
+                if (parsed instanceof Map<?, ?> map) {
+                    return (Map<String, Object>) map;
+                }
+            } catch (IOException ignored) {
+            }
+        }
+        return Map.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<? extends String> stringList(Object value) {
+        if (value instanceof List<?> list) {
+            return (List<? extends String>) list;
+        }
+        return List.of();
+    }
+
+    private TrChatConfig() {
+    }
+
+    /** Simple typed accessor over the YAML data, with a default when missing. */
+    public static final class Value<T> {
+        private final String key;
+        private final T defaultValue;
+        private final Function<Object, T> converter;
+
+        Value(String key, T defaultValue, Function<Object, T> converter) {
+            this.key = key;
+            this.defaultValue = defaultValue;
+            this.converter = converter;
+        }
+
+        public T get() {
+            Object raw = lookup(key);
+            if (raw == null) {
+                return defaultValue;
+            }
+            try {
+                return converter.apply(raw);
+            } catch (RuntimeException ignored) {
+                return defaultValue;
+            }
+        }
+
+        public int getAsInt() {
+            Object value = get();
+            return value instanceof Number number ? number.intValue() : 0;
+        }
+
+        public boolean getAsBoolean() {
+            Object value = get();
+            return value instanceof Boolean bool && bool;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object lookup(String dotted) {
+        Map<String, Object> current = data();
+        String[] parts = dotted.split("\\.");
+        for (int i = 0; i < parts.length - 1; i++) {
+            Object next = current.get(parts[i]);
+            if (!(next instanceof Map)) {
+                return null;
+            }
+            current = (Map<String, Object>) next;
+        }
+        return current.get(parts[parts.length - 1]);
+    }
+}
+//? }

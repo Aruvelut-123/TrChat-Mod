@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "${mod_name}",
+  "description": "A server-side chat control mod. Redis is the only cross-server transport and remains wire-compatible with TrChat Bukkit.",
+  "authors": [
+    "Baymaxawa (maintainer)",
+    "Arasple and ItsFlicker (original TrChat authors)"
+  ],
+  "license": "${mod_license}",
+  "contact": {
+    "homepage": "https://github.com/Aruvelut-123/TrChat-Mod",
+    "issues": "https://github.com/Aruvelut-123/TrChat-Mod/issues",
+    "sources": "https://github.com/Aruvelut-123/TrChat-Mod"
+  },
+  "environment": "*",
+  "entrypoints": {
+    "server": [
+      "me.arasple.mc.trchat.TrChatMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version_range}"
+  }
+}

@@ -1,7 +1,7 @@
 package me.arasple.mc.trchat.channel;
 
 import me.arasple.mc.trchat.config.YamlConfigSynchronizer;
-import net.neoforged.fml.loading.FMLPaths;
+import me.arasple.mc.trchat.platform.Platform;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -31,7 +31,7 @@ public final class ChannelManager {
     private volatile Map<String, ChannelDefinition> channels = Map.of();
 
     public ChannelManager() {
-        this(FMLPaths.CONFIGDIR.get().resolve("trchat").resolve("channels"));
+        this(Platform.configDir().resolve("trchat").resolve("channels"));
     }
 
     ChannelManager(Path directory) {

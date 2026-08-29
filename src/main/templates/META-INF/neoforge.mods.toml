@@ -28,12 +28,5 @@ versionRange="${minecraft_version_range}"
 ordering="NONE"
 side="SERVER"
 
-[[dependencies.${mod_id}]]
-modId="e33chat"
-type="optional"
-versionRange="[2.2.6,)"
-ordering="AFTER"
-side="BOTH"
-
 [features.${mod_id}]
 javaVersion="[21,)"

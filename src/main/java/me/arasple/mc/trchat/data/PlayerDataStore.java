@@ -1,7 +1,7 @@
 package me.arasple.mc.trchat.data;
 
 import me.arasple.mc.trchat.config.YamlConfigSynchronizer;
-import net.neoforged.fml.loading.FMLPaths;
+import me.arasple.mc.trchat.platform.Platform;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -36,7 +36,7 @@ public final class PlayerDataStore implements AutoCloseable {
     private final ExecutorService saveExecutor;
 
     public PlayerDataStore() {
-        this(FMLPaths.CONFIGDIR.get().resolve("trchat"));
+        this(Platform.configDir().resolve("trchat"));
     }
 
     PlayerDataStore(Path folder) {

@@ -4,7 +4,11 @@ import net.minecraft.world.Container;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ChestMenu;
+//? if >=26.1 {
+import net.minecraft.world.inventory.ContainerInput;
+//? } else {
 import net.minecraft.world.inventory.ClickType;
+//? }
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
@@ -29,7 +33,11 @@ final class ReadOnlyChestMenu extends ChestMenu {
     }
 
     @Override
+    //? if >=26.1 {
+    public void clicked(int slotId, int button, ContainerInput clickType, Player player) {
+        //? } else {
     public void clicked(int slotId, int button, ClickType clickType, Player player) {
+        //? }
         broadcastFullState();
     }
 

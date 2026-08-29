@@ -165,11 +165,19 @@ public final class UpdateChecker implements AutoCloseable {
         ).copy();
         MutableComponent link = languages.component(player, "Updater-Link").copy()
             .withStyle(style -> style
+                //? if >=1.21.11 {
+                .withClickEvent(new ClickEvent.OpenUrl(URI.create(release.url())))
+                .withHoverEvent(new HoverEvent.ShowText(
+                    languages.component(player, "Updater-Link-Hover")
+                ))
+                //? } else {
                 .withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, release.url()))
                 .withHoverEvent(new HoverEvent(
                     HoverEvent.Action.SHOW_TEXT,
                     languages.component(player, "Updater-Link-Hover")
-                )));
+                ))
+                //? }
+            );
         return output
             .append("\n")
             .append(languages.component(player, "Updater-Link-Prefix"))

@@ -27,7 +27,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.component.ItemContainerContents;
-import net.neoforged.fml.loading.FMLPaths;
+import me.arasple.mc.trchat.platform.Platform;
 
 import java.io.IOException;
 import java.net.URI;
@@ -64,7 +64,7 @@ public final class ChatFunctionService {
     private volatile Configuration configuration = Configuration.empty();
 
     public ChatFunctionService(MinecraftServer server, LanguageService languages) {
-        this(server, languages, FMLPaths.CONFIGDIR.get().resolve("trchat").resolve("function.yml"));
+        this(server, languages, Platform.configDir().resolve("trchat").resolve("function.yml"));
     }
 
     ChatFunctionService(MinecraftServer server, LanguageService languages, Path file) {
@@ -292,9 +292,19 @@ public final class ChatFunctionService {
     }
 
     private boolean cooldown(ServerPlayer player, String function, long cooldownMillis) {
+        //? if >=1.21.11 {
+        if (player.permissions().hasPermission(
+            new net.minecraft.server.permissions.Permission.HasCommandLevel(
+                net.minecraft.server.permissions.PermissionLevel.byId(2)
+            )
+        )) {
+            return true;
+        }
+        //? } else {
         if (player.hasPermissions(2)) {
             return true;
         }
+        //? }
         String key = player.getUUID() + ":" + function;
         long now = System.currentTimeMillis();
         long until = cooldowns.getOrDefault(key, 0L);
@@ -325,10 +335,16 @@ public final class ChatFunctionService {
         }
         return Component.literal("@" + name)
             .withStyle(ChatFormatting.AQUA)
+            //? if >=1.21.11 {
+            .withStyle(style -> style.withHoverEvent(new HoverEvent.ShowText(
+                languages.component(sender, "Function-Mention-Hover", sender.getGameProfile().getName(), name)
+            )));
+            //? } else {
             .withStyle(style -> style.withHoverEvent(new HoverEvent(
                 HoverEvent.Action.SHOW_TEXT,
                 languages.component(sender, "Function-Mention-Hover", sender.getGameProfile().getName(), name)
             )));
+            //? }
     }
 
     private Component mentionAll(ServerPlayer sender, List<String> mentioned) {
@@ -341,19 +357,36 @@ public final class ChatFunctionService {
         }
         return Component.literal("@所有人")
             .withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD)
+            //? if >=1.21.11 {
+            .withStyle(style -> style.withHoverEvent(new HoverEvent.ShowText(
+                languages.component(sender, "Function-Mention-All-Hover", sender.getGameProfile().getName())
+            )));
+            //? } else {
             .withStyle(style -> style.withHoverEvent(new HoverEvent(
                 HoverEvent.Action.SHOW_TEXT,
                 languages.component(sender, "Function-Mention-All-Hover", sender.getGameProfile().getName())
             )));
+            //? }
     }
 
     /** 只有真正收到（能看到）该消息且被 @ 的玩家才会收到提示 */
     public void notifyMention(ServerPlayer target, String senderName) {
+        //? if >=1.21.11 {
+        target.playSound(SoundEvents.ANVIL_LAND, 1.0F, 2.0F);
+        //? } else {
         target.playNotifySound(SoundEvents.ANVIL_LAND, SoundSource.PLAYERS, 1.0F, 2.0F);
+        //? }
+        //? if >=26.1 {
+        target.sendSystemMessage(
+            languages.component(target, "Function-Mention-Notify", senderName),
+            true
+        );
+        //? } else {
         target.displayClientMessage(
             languages.component(target, "Function-Mention-Notify", senderName),
             true
         );
+        //? }
         target.connection.send(new ClientboundSetTitlesAnimationPacket(10, 50, 10));
         target.connection.send(new ClientboundSetTitleTextPacket(
             languages.component(target, "Function-Mention-Title", senderName)
@@ -364,32 +397,58 @@ public final class ChatFunctionService {
     }
 
     private Component item(ServerPlayer sender, String slotArgument, FunctionSettings settings) {
+        //? if >=1.21.11 {
+        int slot = slotArgument.isBlank() ? sender.getInventory().getSelectedSlot() : Integer.parseInt(slotArgument) - 1;
+        //? } else {
         int slot = slotArgument.isBlank() ? sender.getInventory().selected : Integer.parseInt(slotArgument) - 1;
+        //? }
         ItemStack stack = sender.getInventory().getItem(slot);
         if (stack.isEmpty()) {
             return languages.component(sender, "Function-Item-Air").copy().withStyle(ChatFormatting.GRAY);
         }
         ItemStack hoverStack = settings.compatible() ? new ItemStack(Items.STONE, stack.getCount()) : stack;
         Component itemName = settings.originName()
+            //? if >=1.21.11 {
+            ? stack.getItemName()
+            //? } else {
             ? Component.translatable(stack.getDescriptionId())
+            //? }
             : stack.getHoverName();
         MutableComponent component = Component.literal("[")
             .append(itemName)
             .append(Component.literal(" x" + stack.getCount() + "]"));
         MutableComponent rendered = component.withStyle(style -> style
             .withColor(ChatFormatting.AQUA)
+            //? if >=1.21.11 {
+            //? if >=26.1 {
+            .withHoverEvent(new HoverEvent.ShowItem(net.minecraft.world.item.ItemStackTemplate.fromNonEmptyStack(hoverStack))));
+            //? } else {
+            .withHoverEvent(new HoverEvent.ShowItem(hoverStack)));
+            //? }
+            //? } else {
             .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_ITEM, new HoverEvent.ItemStackInfo(hoverStack))));
+            //? }
         if (settings.ui()) {
             String snapshot = createItemSnapshot(sender, stack);
+            //? if >=1.21.11 {
+            rendered.withStyle(style -> style.withClickEvent(
+                new ClickEvent.RunCommand("/trchat view " + snapshot)
+            ));
+            //? } else {
             rendered.withStyle(style -> style.withClickEvent(
                 new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/trchat view " + snapshot)
             ));
+            //? }
         }
         return rendered;
     }
 
     private static boolean isVanillaDisplayedItem(ServerPlayer sender, String slotArgument) {
+        //? if >=1.21.11 {
+        int slot = slotArgument.isBlank() ? sender.getInventory().getSelectedSlot() : Integer.parseInt(slotArgument) - 1;
+        //? } else {
         int slot = slotArgument.isBlank() ? sender.getInventory().selected : Integer.parseInt(slotArgument) - 1;
+        //? }
         ItemStack stack = sender.getInventory().getItem(slot);
         if (stack.isEmpty()) {
             return true;
@@ -404,12 +463,20 @@ public final class ChatFunctionService {
         String hoverKey = enderChest ? "Function-EnderChest-Hover" : "Function-Inventory-Hover";
         return languages.component(sender, labelKey, sender.getGameProfile().getName()).copy()
             .withStyle(ChatFormatting.AQUA)
+            //? if >=1.21.11 {
+            .withStyle(style -> style
+                .withHoverEvent(new HoverEvent.ShowText(
+                    languages.component(sender, hoverKey)
+                ))
+                .withClickEvent(new ClickEvent.RunCommand("/trchat view " + snapshotId)));
+            //? } else {
             .withStyle(style -> style
                 .withHoverEvent(new HoverEvent(
                     HoverEvent.Action.SHOW_TEXT,
                     languages.component(sender, hoverKey)
                 ))
                 .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/trchat view " + snapshotId)));
+            //? }
     }
 
     private String createSnapshot(ServerPlayer player, boolean enderChest) {
@@ -449,10 +516,17 @@ public final class ChatFunctionService {
         List<ItemStack> items = new ArrayList<>();
         ItemContainerContents contents = stack.get(DataComponents.CONTAINER);
         if (contents != null) {
+            //? if >=26.1 {
+            for (ItemStack nested : contents.nonEmptyItemCopyStream().toList()) {
+                if (items.size() >= 27) break;
+                items.add(nested.copy());
+            }
+            //? } else {
             for (ItemStack nested : contents.nonEmptyItems()) {
                 if (items.size() >= 27) break;
                 items.add(nested.copy());
             }
+            //? }
         }
         if (items.isEmpty()) {
             for (int index = 0; index < 13; index++) items.add(ItemStack.EMPTY);
@@ -475,24 +549,46 @@ public final class ChatFunctionService {
         MutableComponent component = LegacyText.parse(replace(display.text(), value)).copy();
         Style style = component.getStyle();
         if (!display.hover().isBlank()) {
+            //? if >=1.21.11 {
+            style = style.withHoverEvent(new HoverEvent.ShowText(
+                LegacyText.parse(replace(display.hover(), value))
+            ));
+            //? } else {
             style = style.withHoverEvent(new HoverEvent(
                 HoverEvent.Action.SHOW_TEXT,
                 LegacyText.parse(replace(display.hover(), value))
             ));
+            //? }
         }
         if (!display.url().isBlank()) {
             String resolved = replace(display.url(), value).trim();
             int space = resolved.indexOf(' ');
             String url = space < 0 ? resolved : resolved.substring(0, space);
             if (!url.isBlank() && isValidUrl(url)) {
+                //? if >=1.21.11 {
+                style = style.withClickEvent(new ClickEvent.OpenUrl(java.net.URI.create(url)));
+                //? } else {
                 style = style.withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, url));
+                //? }
             }
         } else if (!display.command().isBlank()) {
+            //? if >=1.21.11 {
+            style = style.withClickEvent(new ClickEvent.RunCommand(replace(display.command(), value)));
+            //? } else {
             style = style.withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, replace(display.command(), value)));
+            //? }
         } else if (!display.suggest().isBlank()) {
+            //? if >=1.21.11 {
+            style = style.withClickEvent(new ClickEvent.SuggestCommand(replace(display.suggest(), value)));
+            //? } else {
             style = style.withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, replace(display.suggest(), value)));
+            //? }
         } else if (!display.copy().isBlank()) {
+            //? if >=1.21.11 {
+            style = style.withClickEvent(new ClickEvent.CopyToClipboard(replace(display.copy(), value)));
+            //? } else {
             style = style.withClickEvent(new ClickEvent(ClickEvent.Action.COPY_TO_CLIPBOARD, replace(display.copy(), value)));
+            //? }
         }
         return component.setStyle(style);
     }

@@ -13,7 +13,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.chunk.LevelChunk;
-import net.neoforged.fml.loading.FMLPaths;
+import me.arasple.mc.trchat.platform.Platform;
 
 import java.io.IOException;
 import java.net.URI;
@@ -48,7 +48,7 @@ public final class FilterService {
     public FilterService(MinecraftServer server, LanguageService languages) {
         this.server = server;
         this.languages = languages;
-        Path folder = FMLPaths.CONFIGDIR.get().resolve("trchat");
+        Path folder = Platform.configDir().resolve("trchat");
         this.file = folder.resolve("filter.yml");
         this.cacheDirectory = folder.resolve("filters");
     }
@@ -70,7 +70,15 @@ public final class FilterService {
     }
 
     public String filterChat(ServerPlayer player, String input) {
+        //? if >=1.21.11 {
+        if (!settings.chat() || player.permissions().hasPermission(
+            new net.minecraft.server.permissions.Permission.HasCommandLevel(
+                net.minecraft.server.permissions.PermissionLevel.byId(2)
+            )
+        )) return input;
+        //? } else {
         if (!settings.chat() || player.hasPermissions(2)) return input;
+        //? }
         return filter(input).text();
     }
 
@@ -80,7 +88,15 @@ public final class FilterService {
     }
 
     public boolean checkAnvil(ServerPlayer player, String name) {
+        //? if >=1.21.11 {
+        if (!settings.anvil() || name == null || player.permissions().hasPermission(
+            new net.minecraft.server.permissions.Permission.HasCommandLevel(
+                net.minecraft.server.permissions.PermissionLevel.byId(2)
+            )
+        )) return true;
+        //? } else {
         if (!settings.anvil() || name == null || player.hasPermissions(2)) return true;
+        //? }
         TextFilter.Result result = filter(name);
         if (result.matches() == 0) return true;
         player.sendSystemMessage(languages.component(player, "Filter-Anvil-Blocked"));

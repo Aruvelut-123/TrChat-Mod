@@ -6,7 +6,7 @@ import me.arasple.mc.trchat.config.YamlConfigSynchronizer;
 import me.arasple.mc.trchat.placeholder.PlaceholderCatalog;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.fml.loading.FMLPaths;
+import me.arasple.mc.trchat.platform.Platform;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -33,7 +33,7 @@ public final class LanguageService {
 
     public LanguageService() {
         this(
-            FMLPaths.CONFIGDIR.get().resolve("trchat").resolve("lang"),
+            Platform.configDir().resolve("trchat").resolve("lang"),
             () -> TrChatConfig.DEFAULT_LANGUAGE.get()
         );
     }

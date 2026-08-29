@@ -287,7 +287,15 @@ public final class ChatService implements AutoCloseable {
     public List<String> availableChatColors(ServerPlayer player) {
         return "0123456789abcdef".chars()
             .mapToObj(code -> Character.toString((char) code))
+            //? if >=1.21.11 {
+            .filter(code -> player.permissions().hasPermission(
+                new net.minecraft.server.permissions.Permission.HasCommandLevel(
+                    net.minecraft.server.permissions.PermissionLevel.byId(2)
+                )
+            ) || hasPermission(player, "trchat.color." + code))
+            //? } else {
             .filter(code -> player.hasPermissions(2) || hasPermission(player, "trchat.color." + code))
+            //? }
             .toList();
     }
 
@@ -302,7 +310,15 @@ public final class ChatService implements AutoCloseable {
             sendLang(player, "Color-Invalid", requested);
             return 0;
         }
+        //? if >=1.21.11 {
+        if (!player.permissions().hasPermission(
+            new net.minecraft.server.permissions.Permission.HasCommandLevel(
+                net.minecraft.server.permissions.PermissionLevel.byId(2)
+            )
+        ) && !hasPermission(player, "trchat.color." + color)) {
+        //? } else {
         if (!player.hasPermissions(2) && !hasPermission(player, "trchat.color." + color)) {
+        //? }
             sendLang(player, "General-No-Permission");
             return 0;
         }
@@ -612,7 +628,15 @@ public final class ChatService implements AutoCloseable {
         local.put("message", message);
         String selected = moderation.chatColor(player);
         if (!selected.isBlank()
+            //? if >=1.21.11 {
+            && (player.permissions().hasPermission(
+                new net.minecraft.server.permissions.Permission.HasCommandLevel(
+                    net.minecraft.server.permissions.PermissionLevel.byId(2)
+                )
+            ) || hasPermission(player, "trchat.color." + selected))) {
+            //? } else {
             && (player.hasPermissions(2) || hasPermission(player, "trchat.color." + selected))) {
+            //? }
             local.put(ChannelRenderer.MESSAGE_COLOR, selected);
         }
         return local;
@@ -627,7 +651,15 @@ public final class ChatService implements AutoCloseable {
             sendLang(player, "General-Too-Long", message.length(), TrChatConfig.MESSAGE_MAX_LENGTH.getAsInt());
             return null;
         }
+        //? if >=1.21.11 {
+        if (globalMute && !player.permissions().hasPermission(
+            new net.minecraft.server.permissions.Permission.HasCommandLevel(
+                net.minecraft.server.permissions.PermissionLevel.byId(2)
+            )
+        )) {
+        //? } else {
         if (globalMute && !player.hasPermissions(2)) {
+        //? }
             sendLang(player, "General-Global-Muting");
             return null;
         }
@@ -638,7 +670,15 @@ public final class ChatService implements AutoCloseable {
 
         long now = System.currentTimeMillis();
         ChatState previous = chatStates.get(player.getUUID());
+        //? if >=1.21.11 {
+        if (!player.permissions().hasPermission(
+            new net.minecraft.server.permissions.Permission.HasCommandLevel(
+                net.minecraft.server.permissions.PermissionLevel.byId(2)
+            )
+        ) && previous != null) {
+        //? } else {
         if (!player.hasPermissions(2) && previous != null) {
+        //? }
             long remaining = TrChatConfig.COOLDOWN_MILLIS.getAsInt() - (now - previous.sentAt());
             if (remaining > 0) {
                 sendLang(player, "Cooldowns-Chat", remaining);
@@ -728,10 +768,17 @@ public final class ChatService implements AutoCloseable {
             }
             boolean inRange = switch (range[0]) {
                 case "SELF" -> receiver.getUUID().equals(sender.getUUID());
+                //? if >=1.21.11 {
+                case "SINGLE_WORLD", "WORLD" -> receiver.level() == sender.level();
+                case "DISTANCE" -> receiver.level() == sender.level()
+                    && distance >= 0
+                    && receiver.distanceToSqr(sender) <= (double) distance * distance;
+                //? } else {
                 case "SINGLE_WORLD", "WORLD" -> receiver.serverLevel() == sender.serverLevel();
                 case "DISTANCE" -> receiver.serverLevel() == sender.serverLevel()
                     && distance >= 0
                     && receiver.distanceToSqr(sender) <= (double) distance * distance;
+                //? }
                 default -> true;
             };
             if (inRange) {

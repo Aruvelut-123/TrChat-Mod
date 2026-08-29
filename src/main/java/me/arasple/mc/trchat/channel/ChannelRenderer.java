@@ -5,6 +5,9 @@ import me.arasple.mc.trchat.config.SpecialChars;
 import me.arasple.mc.trchat.placeholder.PlaceholderResolver;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+//? if >=1.21.11 {
+import net.minecraft.network.chat.FontDescription;
+//? }
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
@@ -130,7 +133,11 @@ public final class ChannelRenderer {
                 .append(messageComponent.copy());
         if (!messagePart.hover().isBlank()) {
             Component hover = LegacyText.parse(placeholders.resolve(messagePart.hover(), subject, viewer, local));
+            //? if >=1.21.11 {
+            body.withStyle(style -> style.withHoverEvent(new HoverEvent.ShowText(hover)));
+            //? } else {
             body.withStyle(style -> style.withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, hover)));
+            //? }
         }
         result.append(body);
 
@@ -166,7 +173,11 @@ public final class ChannelRenderer {
 
         if (!part.hover().isBlank()) {
             Component hover = LegacyText.parse(placeholders.resolve(part.hover(), subject, viewer, local));
+            //? if >=1.21.11 {
+            style = style.withHoverEvent(new HoverEvent.ShowText(hover));
+            //? } else {
             style = style.withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, hover));
+            //? }
         }
         ClickEvent click = clickEvent(part, subject, viewer, local);
         if (click != null) {
@@ -176,9 +187,15 @@ public final class ChannelRenderer {
             style = style.withInsertion(placeholders.resolve(part.insertion(), subject, viewer, local));
         }
         if (!part.font().isBlank()) {
+            //? if >=1.21.11 {
+            style = style.withFont(new FontDescription.Resource(ResourceLocation.parse(
+                placeholders.resolve(part.font(), subject, viewer, local)
+            )));
+            //? } else {
             style = style.withFont(ResourceLocation.parse(
                 placeholders.resolve(part.font(), subject, viewer, local)
             ));
+            //? }
         }
         return component.setStyle(style);
     }
@@ -190,40 +207,68 @@ public final class ChannelRenderer {
         Map<String, String> local
     ) {
         if (!part.suggest().isBlank()) {
+            //? if >=1.21.11 {
+            return new ClickEvent.SuggestCommand(
+                placeholders.resolve(part.suggest(), subject, viewer, local)
+            );
+            //? } else {
             return new ClickEvent(
                 ClickEvent.Action.SUGGEST_COMMAND,
                 placeholders.resolve(part.suggest(), subject, viewer, local)
             );
+            //? }
         }
         if (!part.command().isBlank()) {
+            //? if >=1.21.11 {
+            return new ClickEvent.RunCommand(
+                placeholders.resolve(part.command(), subject, viewer, local)
+            );
+            //? } else {
             return new ClickEvent(
                 ClickEvent.Action.RUN_COMMAND,
                 placeholders.resolve(part.command(), subject, viewer, local)
             );
+            //? }
         }
         if (!part.url().isBlank()) {
             String resolved = placeholders.resolve(part.url(), subject, viewer, local).trim();
             int space = resolved.indexOf(' ');
             String url = space < 0 ? resolved : resolved.substring(0, space);
             if (!url.isBlank() && isValidUrl(url)) {
+                //? if >=1.21.11 {
+                return new ClickEvent.OpenUrl(URI.create(url));
+                //? } else {
                 return new ClickEvent(
                     ClickEvent.Action.OPEN_URL,
                     url
                 );
+                //? }
             }
             return null;
         }
         if (!part.copy().isBlank()) {
+            //? if >=1.21.11 {
+            return new ClickEvent.CopyToClipboard(
+                placeholders.resolve(part.copy(), subject, viewer, local)
+            );
+            //? } else {
             return new ClickEvent(
                 ClickEvent.Action.COPY_TO_CLIPBOARD,
                 placeholders.resolve(part.copy(), subject, viewer, local)
             );
+            //? }
         }
         if (!part.file().isBlank()) {
+            //? if >=1.21.11 {
+            return new ClickEvent.OpenFile(
+                placeholders.resolve(part.file(), subject, viewer, local)
+            );
+            //? } else {
             return new ClickEvent(
                 ClickEvent.Action.OPEN_FILE,
                 placeholders.resolve(part.file(), subject, viewer, local)
             );
+            //? }
         }
         return null;
     }
