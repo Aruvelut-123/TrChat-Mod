@@ -26,17 +26,18 @@ val mcVersion = sc.current.version
 // 26.x is NeoForge year-version scheme; 1.x is standard Minecraft versioning.
 val isLegacyObfuscated = mcVersion.startsWith("1.")
 
-// Compute the minecraft version range: [current, next_minor)
+// Compute the minecraft version range in Fabric predicate syntax: ">=X <Y".
+// (Fabric's VersionPredicate does not understand Maven-style "[X,Y)" ranges.)
 fun computeVersionRange(version: String): String {
     val parts = version.split(".")
     if (parts.size == 3) {
-        // 1.21.1 -> [1.21.1,1.21.2); 26.1.2 -> [26.1.2,26.2)
-        return "[$version,${parts[0]}.${parts[1]}.${parts[2].toInt() + 1})"
+        // 1.21.1 -> >=1.21.1 <1.21.2; 26.1.2 -> >=26.1.2 <26.2
+        return ">=$version <${parts[0]}.${parts[1]}.${parts[2].toInt() + 1}"
     } else if (parts.size == 2) {
-        // 26.2 -> [26.2,26.3)
-        return "[$version,${parts[0]}.${parts[1].toInt() + 1})"
+        // 26.2 -> >=26.2 <26.3
+        return ">=$version <${parts[0]}.${parts[1].toInt() + 1}"
     }
-    return "[$version,$version)"
+    return ">=$version"
 }
 
 // Loom plugin id depends on whether the target Minecraft is obfuscated.
@@ -75,13 +76,22 @@ dependencies {
         implementation("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")
     }
 
-    // Bundled libraries.
-    implementation("org.yaml:snakeyaml:2.6")
-    implementation("org.xerial:sqlite-jdbc:3.53.2.1")
-    implementation("com.mysql:mysql-connector-j:8.4.0")
-    implementation("com.google.protobuf:protobuf-java:4.35.1")
-    implementation("org.mariadb.jdbc:mariadb-java-client:3.5.10")
-    implementation("org.postgresql:postgresql:42.7.5")
+    // Bundled libraries. `implementation` puts them on the compile/runtime classpath; Loom's
+    // "include" configuration (jar-in-jar) makes them travel inside the mod jar, matching the
+    // NeoForge jarJar behavior. Accessed via add() because the plugin is applied dynamically
+    // and does not register a Kotlin DSL type-safe accessor.
+    val bundled = listOf(
+        "org.yaml:snakeyaml:2.6",
+        "org.xerial:sqlite-jdbc:3.53.2.1",
+        "com.mysql:mysql-connector-j:8.4.0",
+        "com.google.protobuf:protobuf-java:4.35.1",
+        "org.mariadb.jdbc:mariadb-java-client:3.5.10",
+        "org.postgresql:postgresql:42.7.5",
+    )
+    for (lib in bundled) {
+        implementation(lib)
+        add("include", lib)
+    }
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -136,6 +146,7 @@ tasks {
         )
         inputs.properties(props)
         filesMatching("fabric.mod.json") { expand(props) }
+        exclude("META-INF/neoforge.mods.toml")
     }
 
     jar {

@@ -133,6 +133,7 @@ tasks {
         )
         inputs.properties(props)
         filesMatching("META-INF/neoforge.mods.toml") { expand(props) }
+        exclude("fabric.mod.json")
     }
 
     jar {
