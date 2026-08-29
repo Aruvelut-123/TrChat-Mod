@@ -1,0 +1,49 @@
+# TrChat Mod configuration (Fabric).
+# Chat behavior. Placeholders: %player%, %display_name%, %message%, %server%.
+chat:
+  # Numeric server identifier. Use the server port to match the Bukkit TrChat Redis protocol.
+  serverId: 25565
+  # Value exposed by %server_name%.
+  serverName: "A Minecraft Server"
+  # Fallback language file name from config/trchat/lang without .yml.
+  defaultLanguage: zh_CN
+  # Messages beginning with this prefix use Redis global chat. '!all' matches the Bukkit default.
+  globalPrefix: "!all"
+  messageMaxLength: 256
+  cooldownMillis: 2000
+  # 0 disables anti-repeat. Values from 0.0 to 1.0 compare against the player's previous message.
+  antiRepeatSimilarity: 0.85
+  blockedWords: []
+  filterReplacement: "*"
+  # World names (regular expressions, case-insensitive) where chat is disabled.
+  disabledWorlds: []
+
+# Daily plain-text chat logs under config/trchat/logs.
+logging:
+  normalMessageFormat: "[{0}] {1}: {2}"
+  privateMessageFormat: "[{0}] {1} -> {2}: {3}"
+  # Delete log files older than this many days. 0 disables deletion.
+  retentionDays: 0
+
+# GitHub release update checker. It only notifies and never downloads files.
+updates:
+  # Check for updates and notify the console and online TrChat administrators.
+  enabled: true
+  # Minutes between checks. The Bukkit upstream default is 15 minutes.
+  intervalMinutes: 15
+
+# Redis is the only supported cross-server transport.
+redis:
+  enabled: false
+  host: "127.0.0.1"
+  port: 6379
+  # Leave blank when Redis ACL usernames are not used.
+  username: ""
+  # Leave blank when authentication is disabled.
+  password: ""
+  database: 0
+  connectTimeoutMillis: 3000
+  socketTimeoutMillis: 0
+  reconnectDelayMillis: 3000
+  # Do not change when interoperating with the Bukkit version.
+  channel: "trchat-message"

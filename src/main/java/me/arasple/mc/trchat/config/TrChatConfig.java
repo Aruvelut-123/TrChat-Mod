@@ -2,6 +2,7 @@ package me.arasple.mc.trchat.config;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 //? if neoforge {
@@ -132,11 +133,8 @@ public final class TrChatConfig {
 }
 //? } else {
 import me.arasple.mc.trchat.platform.Platform;
-import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 public final class TrChatConfig {
@@ -189,16 +187,16 @@ public final class TrChatConfig {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> load() {
         Path file = Platform.configDir().resolve("trchat/settings.yml");
-        if (Files.exists(file)) {
-            try (InputStream in = Files.newInputStream(file)) {
-                Object parsed = new Yaml().load(in);
-                if (parsed instanceof Map<?, ?> map) {
-                    return (Map<String, Object>) map;
-                }
-            } catch (IOException ignored) {
-            }
+        try {
+            Map<String, Object> result = YamlConfigSynchronizer.synchronize(
+                file, "/defaults/settings.yml", Set.of()
+            );
+            return result;
+        } catch (IOException | RuntimeException exception) {
+            System.getLogger(TrChatConfig.class.getName())
+                .log(System.Logger.Level.ERROR, "Unable to load " + file, exception);
+            return Map.of();
         }
-        return Map.of();
     }
 
     @SuppressWarnings("unchecked")
