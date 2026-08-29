@@ -103,6 +103,11 @@ tasks {
         dependsOn("stonecutterGenerate")
     }
 
+    // sourcesJar packs the Stonecutter-processed sources; it must run after generation.
+    named("sourcesJar") {
+        dependsOn("stonecutterGenerate")
+    }
+
     // 26.x ships deobfuscated jars; 1.x needs Mojang mappings handled by moddev internally.
     compileJava {
         dependsOn("stonecutterGenerate")

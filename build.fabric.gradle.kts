@@ -111,6 +111,11 @@ tasks {
         dependsOn("stonecutterGenerate")
     }
 
+    // sourcesJar packs the Stonecutter-processed sources; it must run after generation.
+    named("sourcesJar") {
+        dependsOn("stonecutterGenerate")
+    }
+
     compileJava {
         options.release.set(requiredJava.majorVersion.toInt())
         options.encoding = "UTF-8"
