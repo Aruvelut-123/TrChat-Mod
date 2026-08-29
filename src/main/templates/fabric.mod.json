@@ -14,7 +14,7 @@
     "issues": "https://github.com/Aruvelut-123/TrChat-Mod/issues",
     "sources": "https://github.com/Aruvelut-123/TrChat-Mod"
   },
-  "environment": "*",
+  "environment": "server",
   "entrypoints": {
     "server": [
       "me.arasple.mc.trchat.TrChatMod"

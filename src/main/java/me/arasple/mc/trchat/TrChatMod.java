@@ -26,16 +26,16 @@ public final class TrChatMod {
     }
 }
 //? } else {
-import net.fabricmc.api.ModInitializer;
+import net.fabricmc.api.DedicatedServerModInitializer;
 
-public final class TrChatMod implements ModInitializer {
+public final class TrChatMod implements DedicatedServerModInitializer {
 
     public static final String MOD_ID = "trchat";
     public static final String MOD_NAME = "TrChat Mod";
     public static final Logger LOGGER = LoggerFactory.getLogger("TrChat");
 
     @Override
-    public void onInitialize() {
+    public void onInitializeServer() {
         ConfigMigration.migrateIfNeeded();
         new TrChatServerEventsFabric();
     }
