@@ -75,7 +75,11 @@ public final class ChannelManager {
                 );
             }
             if (autoJoinChannels.size() == 1) {
+                //? if >=1.20.5 {
                 ChannelDefinition autoJoin = loaded.get(autoJoinChannels.getFirst().toLowerCase(Locale.ROOT));
+                //? } else {
+                ChannelDefinition autoJoin = loaded.get(autoJoinChannels.get(0).toLowerCase(Locale.ROOT));
+                //? }
                 if (autoJoin.options().privateChannel()) {
                     throw new IOException(
                         "Options.Auto-Join cannot be enabled for private channel "

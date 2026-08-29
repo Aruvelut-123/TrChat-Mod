@@ -16,6 +16,10 @@ public record TrChatMessage(List<String> data) {
     }
 
     public String type() {
+        //? if >=1.20.5 {
         return data.getFirst();
+        //? } else {
+        return data.get(0);
+        //? }
     }
 }

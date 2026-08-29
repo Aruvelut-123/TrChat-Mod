@@ -27,6 +27,7 @@ jobs:
         with:
           distribution: microsoft
           java-version: |
+            17
             21
             25
 
@@ -49,7 +50,8 @@ jobs:
             :1.21.1-fabric:build \
             :1.21.11-fabric:build \
             :26.1.2-fabric:build \
-            :26.2-fabric:build
+            :26.2-fabric:build \
+            :1.20.1-forge:build
 
       - name: Add test results to job summary
         if: always()
@@ -92,4 +94,11 @@ jobs:
         with:
           name: TrChat-26.2-${{ github.run_number }}
           path: versions/26.2-*/build/libs/*.jar
+          if-no-files-found: error
+
+      - name: Upload 1.20.1 artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: TrChat-1.20.1-${{ github.run_number }}
+          path: versions/1.20.1-*/build/libs/*.jar
           if-no-files-found: error

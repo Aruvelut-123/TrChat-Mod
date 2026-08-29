@@ -1,4 +1,4 @@
-# TrChat Mod — NeoForge / Fabric 多版本
+# TrChat Mod — NeoForge / Fabric / Forge 多版本
 
 [English](README_EN.md) | 简体中文
 
@@ -8,6 +8,7 @@ TrChat Bukkit 插件的多加载器多版本服务端移植版。支持以下加
 | --- | --- |
 | NeoForge | 1.21.1（21.1.233+）、1.21.11（21.1.x）、26.1.2、26.2 |
 | Fabric | 1.21.1、1.21.11、26.1.2、26.2 |
+| Forge（LTS） | 1.20.1（47.4.0+） |
 
 不包含 Bukkit、BungeeCord、Velocity、插件消息代理或 DiscordSRV；跨服只通过 Redis，并保持与 Bukkit TrChat `2.4.9` 的聊天协议互通。
 
@@ -19,6 +20,7 @@ TrChat Bukkit 插件的多加载器多版本服务端移植版。支持以下加
 
 | 版本 | Java | 加载器版本 |
 | --- | --- | --- |
+| 1.20.1 Forge（LTS） | 17 | Forge 47.4.0+ |
 | 1.21.x 系列 | 21 | NeoForge 21.1.233+ / Fabric Loader 0.16.0+ |
 | 26.x 系列 | 25 | NeoForge / Fabric + Fabric API 对应版本 |
 
@@ -43,13 +45,13 @@ TrChat Bukkit 插件的多加载器多版本服务端移植版。支持以下加
 
 ## 加载器差异
 
-| 特性 | NeoForge | Fabric |
-| --- | --- | --- |
-| 权限系统 | NeoForge PermissionAPI（节点式） | 内置 OP 级别检查（无权限 API，可配合 LuckPerms Fabric 版） |
-| 配置格式 | TOML（ModConfigSpec 自动生成） | YAML（手动编辑，加载器无关） |
-| 命令拦截 | CommandEvent（服务端命令控制器） | 不支持（别名路由通过注册命令实现） |
-| 铁砧过滤 | AnvilUpdateEvent | 不支持（Fabric API 未提供铁砧事件） |
-| 配置迁移 | 自动从旧版 `trchat-neoforge` 目录迁移 | 自动从旧版 `trchat-neoforge` 目录迁移 |
+| 特性 | NeoForge | Fabric | Forge 1.20.1（LTS） |
+| --- | --- | --- | --- |
+| 权限系统 | NeoForge PermissionAPI（节点式） | 内置 OP 级别检查（无权限 API，可配合 LuckPerms Fabric 版） | Forge PermissionAPI（节点式） |
+| 配置格式 | TOML（ModConfigSpec 自动生成） | YAML（手动编辑，加载器无关） | TOML（ForgeConfigSpec 自动生成） |
+| 命令拦截 | CommandEvent（服务端命令控制器） | 不支持（别名路由通过注册命令实现） | CommandEvent（服务端命令控制器） |
+| 铁砧过滤 | AnvilUpdateEvent | 不支持（Fabric API 未提供铁砧事件） | AnvilUpdateEvent |
+| 配置迁移 | 自动从旧版 `trchat-neoforge` 目录迁移 | 自动从旧版 `trchat-neoforge` 目录迁移 | 自动从旧版 `trchat-neoforge` 目录迁移 |
 
 ### Fabric 特别说明
 
@@ -58,13 +60,20 @@ TrChat Bukkit 插件的多加载器多版本服务端移植版。支持以下加
 - 服务端命令控制器（在 NeoForge 中拦截命令执行）在 Fabric 上无法通过 API 实现，因此不生效。
 - 铁砧重命名过滤在 Fabric 上无法通过 API 实现，因此不生效。
 
+### Forge 1.20.1（LTS）特别说明
+
+- Forge 1.20.1 是长期支持版本，运行于 Java 17，与 1.21+ 共享同一套业务逻辑。
+- 配置位于 `config/trchat/settings.toml`，由 ForgeConfigSpec 首次启动自动生成。
+- 潜影盒等容器物品快照按 NBT 读取，行为与 NeoForge 一致。
+- 服务端命令控制器与铁砧过滤通过 Forge 事件实现，与 NeoForge 行为一致。
+
 ## 配置目录
 
 首次启动后生成：
 
 ```text
 config/trchat/
-├── settings.toml         (NeoForge) 或 settings.yml (Fabric)
+├── settings.toml         (NeoForge/Forge) 或 settings.yml (Fabric)
 ├── datasource.yml
 ├── data.db
 ├── function.yml
@@ -97,7 +106,7 @@ config/trchat/
 本工程使用 [Stonecutter](https://stonecutter.kikugie.dev/) 管理多版本多加载器差异。构建所需 JDK 版本根据目标版本自动选择。
 
 ```powershell
-# 全部 8 个节点编译+测试
+# 全部 9 个节点编译+测试
 .\gradlew test
 
 # 仅编译特定节点

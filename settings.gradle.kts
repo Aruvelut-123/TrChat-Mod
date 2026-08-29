@@ -21,6 +21,9 @@ pluginManagement {
                 "net.fabricmc.fabric-loom" -> useVersion("1.17.20")
                 "net.fabricmc.fabric-loom-remap" -> useModule("net.fabricmc:fabric-loom:1.17.20")
                 "net.neoforged.moddev" -> useVersion("2.0.144")
+                // Forge (1.20.1) is built through moddevgradle's legacy forge support.
+                "net.neoforged.moddev.legacyforge" -> useModule("net.neoforged:moddev-gradle:2.0.144")
+                "net.neoforged.moddev.legacyforge.repositories" -> useModule("net.neoforged:moddev-gradle:2.0.144")
             }
         }
     }
@@ -49,6 +52,7 @@ stonecutter {
         }
 
         // See https://stonecutter.kikugie.dev/wiki/start/#choosing-minecraft-versions
+        match("1.20.1", "forge")
         match("1.21.1", "fabric", "neoforge")
         match("1.21.11", "fabric", "neoforge")
         match("26.1.2", "fabric", "neoforge")

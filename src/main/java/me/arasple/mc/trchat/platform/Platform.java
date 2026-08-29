@@ -45,6 +45,8 @@ public final class Platform {
         static PlatformImpl create() {
             //? if fabric {
             return new FabricPlatform();
+            //? } else if forge {
+            return new ForgePlatform();
             //? } else {
             return new NeoForgePlatform();
             //? }

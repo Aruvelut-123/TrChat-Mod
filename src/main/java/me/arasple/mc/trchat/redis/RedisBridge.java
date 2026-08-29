@@ -28,10 +28,16 @@ public final class RedisBridge implements AutoCloseable {
         if (!running.compareAndSet(false, true)) {
             return;
         }
+        //? if >=1.20.5 {
         subscriberThread = Thread.ofPlatform()
             .daemon(true)
             .name("TrChat Redis subscriber")
             .start(this::subscriptionLoop);
+        //? } else {
+        subscriberThread = new Thread(this::subscriptionLoop, "TrChat Redis subscriber");
+        subscriberThread.setDaemon(true);
+        subscriberThread.start();
+        //? }
     }
 
     public boolean publish(TrChatMessage message) {

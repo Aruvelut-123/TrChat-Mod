@@ -25,8 +25,10 @@ import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+//? if >=1.20.5 {
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.component.ItemContainerContents;
+//? }
 import me.arasple.mc.trchat.platform.Platform;
 
 import java.io.IOException;
@@ -514,6 +516,7 @@ public final class ChatFunctionService {
         expireSnapshots();
         String id = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         List<ItemStack> items = new ArrayList<>();
+        //? if >=1.20.5 {
         ItemContainerContents contents = stack.get(DataComponents.CONTAINER);
         if (contents != null) {
             //? if >=26.1 {
@@ -528,6 +531,17 @@ public final class ChatFunctionService {
             }
             //? }
         }
+        //? } else {
+        if (stack.hasTag() && stack.getTag().contains("Items", 9)) {
+            net.minecraft.nbt.ListTag list = stack.getTag().getList("Items", 10);
+            for (int index = 0; index < list.size() && items.size() < 27; index++) {
+                ItemStack nested = ItemStack.of(list.getCompound(index));
+                if (!nested.isEmpty()) {
+                    items.add(nested);
+                }
+            }
+        }
+        //? }
         if (items.isEmpty()) {
             for (int index = 0; index < 13; index++) items.add(ItemStack.EMPTY);
             items.add(stack.copy());

@@ -1,4 +1,4 @@
-# TrChat Mod — NeoForge / Fabric Multi-Version
+# TrChat Mod — NeoForge / Fabric / Forge Multi-Version
 
 English | [简体中文](README.md)
 
@@ -8,6 +8,7 @@ A multi-loader, multi-version server-side port of the TrChat Bukkit plugin. Supp
 | --- | --- |
 | NeoForge | 1.21.1 (21.1.233+), 1.21.11 (21.1.x), 26.1.2, 26.2 |
 | Fabric | 1.21.1, 1.21.11, 26.1.2, 26.2 |
+| Forge (LTS) | 1.20.1 (47.4.0+) |
 
 It does not include Bukkit, BungeeCord, Velocity, plugin-message proxy transport, or DiscordSRV. Redis is the only cross-server transport and remains wire-compatible with Bukkit TrChat `2.4.9`.
 
@@ -19,6 +20,7 @@ Repository and issues: [Aruvelut-123/TrChat-Mod](https://github.com/Aruvelut-123
 
 | Version family | Java | Loader version |
 | --- | --- | --- |
+| 1.20.1 Forge (LTS) | 17 | Forge 47.4.0+ |
 | 1.21.x | 21 | NeoForge 21.1.233+ / Fabric Loader 0.16.0+ |
 | 26.x | 25 | NeoForge / Fabric + Fabric API (corresponding version) |
 
@@ -43,13 +45,13 @@ Server-side installation only; vanilla clients can join directly.
 
 ## Loader differences
 
-| Feature | NeoForge | Fabric |
-| --- | --- | --- |
-| Permission system | NeoForge PermissionAPI (node-based) | Built-in OP level check (no permission API; LuckPerms Fabric recommended) |
-| Configuration format | TOML (ModConfigSpec auto-generated) | YAML (manual editing, loader-agnostic) |
-| Command interception | CommandEvent (server command controller) | Not supported (alias routing works via registered commands) |
-| Anvil rename filtering | AnvilUpdateEvent | Not supported (Fabric API does not provide anvil events) |
-| Config migration | Auto-migrate from legacy `trchat-neoforge` directory | Auto-migrate from legacy `trchat-neoforge` directory |
+| Feature | NeoForge | Fabric | Forge 1.20.1 (LTS) |
+| --- | --- | --- | --- |
+| Permission system | NeoForge PermissionAPI (node-based) | Built-in OP level check (no permission API; LuckPerms Fabric recommended) | Forge PermissionAPI (node-based) |
+| Configuration format | TOML (ModConfigSpec auto-generated) | YAML (manual editing, loader-agnostic) | TOML (ForgeConfigSpec auto-generated) |
+| Command interception | CommandEvent (server command controller) | Not supported (alias routing works via registered commands) | CommandEvent (server command controller) |
+| Anvil rename filtering | AnvilUpdateEvent | Not supported (Fabric API does not provide anvil events) | AnvilUpdateEvent |
+| Config migration | Auto-migrate from legacy `trchat-neoforge` directory | Auto-migrate from legacy `trchat-neoforge` directory | Auto-migrate from legacy `trchat-neoforge` directory |
 
 ### Fabric notes
 
@@ -58,13 +60,20 @@ Server-side installation only; vanilla clients can join directly.
 - The server command controller (which intercepts command execution on NeoForge) is not available through Fabric API and is therefore disabled.
 - Anvil rename filtering is not available through Fabric API and is therefore disabled.
 
+### Forge 1.20.1 (LTS) notes
+
+- Forge 1.20.1 is the long-term-support build, running on Java 17, sharing the same business logic as 1.21+.
+- Configuration lives at `config/trchat/settings.toml`, auto-generated on first launch by ForgeConfigSpec.
+- Container items such as shulker boxes are snapshot through NBT, matching NeoForge behavior.
+- The server command controller and anvil filtering work through Forge events, matching NeoForge behavior.
+
 ## Configuration directory
 
 Generated on first launch:
 
 ```text
 config/trchat/
-├── settings.toml         (NeoForge) or settings.yml (Fabric)
+├── settings.toml         (NeoForge/Forge) or settings.yml (Fabric)
 ├── datasource.yml
 ├── data.db
 ├── function.yml
@@ -95,7 +104,7 @@ Public/global chat, private messages, private-spy, online-player-list, and globa
 This project uses [Stonecutter](https://stonecutter.kikugie.dev/) to manage multi-version multi-loader differences. The required JDK version is selected automatically.
 
 ```powershell
-# Build and test all 8 nodes
+# Build and test all 9 nodes
 .\gradlew test
 
 # Build a specific node

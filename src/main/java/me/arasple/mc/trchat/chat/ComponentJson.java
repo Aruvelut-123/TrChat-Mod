@@ -19,8 +19,10 @@ public final class ComponentJson {
         RegistryOps<JsonElement> ops = RegistryOps.create(com.mojang.serialization.JsonOps.INSTANCE, server.registryAccess());
         DataResult<JsonElement> result = net.minecraft.network.chat.ComponentSerialization.CODEC.encodeStart(ops, component);
         return result.result().map(JsonElement::toString).orElse("{}");
-        //? } else {
+        //? } else if >=1.20.5 {
         return Component.Serializer.toJson(component, server.registryAccess());
+        //? } else {
+        return Component.Serializer.toJson(component);
         //? }
     }
 
@@ -34,8 +36,13 @@ public final class ComponentJson {
                 if (component.isPresent()) {
                     return component.get();
                 }
-                //? } else {
+                //? } else if >=1.20.5 {
                 Component component = Component.Serializer.fromJson(json, server.registryAccess());
+                if (component != null) {
+                    return component;
+                }
+                //? } else {
+                Component component = Component.Serializer.fromJson(json);
                 if (component != null) {
                     return component;
                 }

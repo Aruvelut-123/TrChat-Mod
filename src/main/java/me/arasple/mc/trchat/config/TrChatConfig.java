@@ -131,6 +131,130 @@ public final class TrChatConfig {
     private TrChatConfig() {
     }
 }
+//? } else if forge {
+import net.minecraftforge.common.ForgeConfigSpec;
+
+public final class TrChatConfig {
+
+    public static final ForgeConfigSpec SPEC;
+
+    public static final ForgeConfigSpec.IntValue SERVER_ID;
+    public static final ForgeConfigSpec.ConfigValue<String> SERVER_NAME;
+    public static final ForgeConfigSpec.ConfigValue<String> DEFAULT_LANGUAGE;
+    public static final ForgeConfigSpec.ConfigValue<String> GLOBAL_PREFIX;
+    public static final ForgeConfigSpec.IntValue MESSAGE_MAX_LENGTH;
+    public static final ForgeConfigSpec.IntValue COOLDOWN_MILLIS;
+    public static final ForgeConfigSpec.DoubleValue ANTI_REPEAT_SIMILARITY;
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> BLOCKED_WORDS;
+    public static final ForgeConfigSpec.ConfigValue<String> FILTER_REPLACEMENT;
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> DISABLED_WORLDS;
+    public static final ForgeConfigSpec.ConfigValue<String> LOG_NORMAL_FORMAT;
+    public static final ForgeConfigSpec.ConfigValue<String> LOG_PRIVATE_FORMAT;
+    public static final ForgeConfigSpec.IntValue LOG_RETENTION_DAYS;
+
+    public static final ForgeConfigSpec.BooleanValue UPDATE_CHECK_ENABLED;
+    public static final ForgeConfigSpec.IntValue UPDATE_CHECK_INTERVAL_MINUTES;
+
+    public static final ForgeConfigSpec.BooleanValue REDIS_ENABLED;
+    public static final ForgeConfigSpec.ConfigValue<String> REDIS_HOST;
+    public static final ForgeConfigSpec.IntValue REDIS_PORT;
+    public static final ForgeConfigSpec.ConfigValue<String> REDIS_USERNAME;
+    public static final ForgeConfigSpec.ConfigValue<String> REDIS_PASSWORD;
+    public static final ForgeConfigSpec.IntValue REDIS_DATABASE;
+    public static final ForgeConfigSpec.IntValue REDIS_CONNECT_TIMEOUT;
+    public static final ForgeConfigSpec.IntValue REDIS_SOCKET_TIMEOUT;
+    public static final ForgeConfigSpec.IntValue REDIS_RECONNECT_DELAY;
+    public static final ForgeConfigSpec.ConfigValue<String> REDIS_CHANNEL;
+
+    static {
+        ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
+
+        builder.comment("Chat behavior. Placeholders: %player%, %display_name%, %message%, %server%.")
+            .push("chat");
+        SERVER_ID = builder
+            .comment("Numeric server identifier. Use the server port to match the Bukkit TrChat Redis protocol.")
+            .defineInRange("serverId", 25565, 1, 65535);
+        SERVER_NAME = builder
+            .comment("Value exposed by %server_name%.")
+            .define("serverName", "A Minecraft Server");
+        DEFAULT_LANGUAGE = builder
+            .comment("Fallback language file name from config/trchat/lang without .yml.")
+            .define("defaultLanguage", "zh_CN");
+        GLOBAL_PREFIX = builder
+            .comment("Messages beginning with this prefix use Redis global chat. '!all' matches the Bukkit default.")
+            .define("globalPrefix", "!all");
+        MESSAGE_MAX_LENGTH = builder.defineInRange("messageMaxLength", 256, 1, 32767);
+        COOLDOWN_MILLIS = builder.defineInRange("cooldownMillis", 2000, 0, 600000);
+        ANTI_REPEAT_SIMILARITY = builder
+            .comment("0 disables anti-repeat. Values from 0.0 to 1.0 compare against the player's previous message.")
+            .defineInRange("antiRepeatSimilarity", 0.85D, 0.0D, 1.0D);
+        BLOCKED_WORDS = builder.defineList(
+            "blockedWords",
+            () -> List.<String>of(),
+            value -> value instanceof String
+        );
+        FILTER_REPLACEMENT = builder.define("filterReplacement", "*");
+        DISABLED_WORLDS = builder
+            .comment("World names (regular expressions, case-insensitive) where chat is disabled.",
+                "在此世界内禁用聊天（正则表达式，不区分大小写）。")
+            .defineList(
+                "disabledWorlds",
+                () -> List.<String>of(),
+                value -> value instanceof String
+            );
+        builder.pop();
+
+        builder.comment(
+            "Daily plain-text chat logs under config/trchat/logs.",
+            "每日纯文本聊天日志，保存于 config/trchat/logs。"
+        ).push("logging");
+        LOG_NORMAL_FORMAT = builder.define("normalMessageFormat", "[{0}] {1}: {2}");
+        LOG_PRIVATE_FORMAT = builder.define("privateMessageFormat", "[{0}] {1} -> {2}: {3}");
+        LOG_RETENTION_DAYS = builder
+            .comment("Delete log files older than this many days. 0 disables deletion.")
+            .defineInRange("retentionDays", 0, 0, 36500);
+        builder.pop();
+
+        builder.comment(
+            "GitHub release update checker. It only notifies and never downloads files.",
+            "GitHub Release 更新检查器：仅提醒，不会自动下载文件。"
+        ).push("updates");
+        UPDATE_CHECK_ENABLED = builder
+            .comment("Check for updates and notify the console and online TrChat administrators.",
+                "检查更新，并提醒后台及在线 TrChat 管理员。")
+            .define("enabled", true);
+        UPDATE_CHECK_INTERVAL_MINUTES = builder
+            .comment("Minutes between checks. The Bukkit upstream default is 15 minutes.",
+                "检查间隔（分钟）。Bukkit 上游默认值为 15 分钟。")
+            .defineInRange("intervalMinutes", 15, 1, 1440);
+        builder.pop();
+
+        builder.comment("Redis is the only supported cross-server transport.")
+            .push("redis");
+        REDIS_ENABLED = builder.define("enabled", false);
+        REDIS_HOST = builder.define("host", "127.0.0.1");
+        REDIS_PORT = builder.defineInRange("port", 6379, 1, 65535);
+        REDIS_USERNAME = builder
+            .comment("Leave blank when Redis ACL usernames are not used.")
+            .define("username", "");
+        REDIS_PASSWORD = builder
+            .comment("Leave blank when authentication is disabled.")
+            .define("password", "");
+        REDIS_DATABASE = builder.defineInRange("database", 0, 0, 15);
+        REDIS_CONNECT_TIMEOUT = builder.defineInRange("connectTimeoutMillis", 3000, 100, 60000);
+        REDIS_SOCKET_TIMEOUT = builder.defineInRange("socketTimeoutMillis", 0, 0, 600000);
+        REDIS_RECONNECT_DELAY = builder.defineInRange("reconnectDelayMillis", 3000, 100, 60000);
+        REDIS_CHANNEL = builder
+            .comment("Do not change when interoperating with the Bukkit version.")
+            .define("channel", "trchat-message");
+        builder.pop();
+
+        SPEC = builder.build();
+    }
+
+    private TrChatConfig() {
+    }
+}
 //? } else {
 import me.arasple.mc.trchat.platform.Platform;
 

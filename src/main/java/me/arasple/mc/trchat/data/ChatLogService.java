@@ -82,7 +82,7 @@ public final class ChatLogService implements AutoCloseable {
     }
 
     private void deleteExpired() {
-        int days = TrChatConfig.LOG_RETENTION_DAYS.getAsInt();
+        int days = TrChatConfig.LOG_RETENTION_DAYS.get();
         if (days <= 0 || !Files.isDirectory(directory)) {
             return;
         }

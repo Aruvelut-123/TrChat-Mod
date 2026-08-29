@@ -25,6 +25,26 @@ public final class TrChatMod {
         NeoForge.EVENT_BUS.register(new TrChatServerEvents());
     }
 }
+//? } else if forge {
+import me.arasple.mc.trchat.config.TrChatConfig;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.fml.ModLoadingContext;
+import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.fml.config.ModConfig;
+
+@Mod(TrChatMod.MOD_ID)
+public final class TrChatMod {
+
+    public static final String MOD_ID = "trchat";
+    public static final String MOD_NAME = "TrChat Mod";
+    public static final Logger LOGGER = LoggerFactory.getLogger("TrChat");
+
+    public TrChatMod() {
+        ConfigMigration.migrateIfNeeded();
+        ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, TrChatConfig.SPEC, "trchat/settings.toml");
+        MinecraftForge.EVENT_BUS.register(new TrChatServerEventsForge());
+    }
+}
 //? } else {
 import net.fabricmc.api.DedicatedServerModInitializer;
 

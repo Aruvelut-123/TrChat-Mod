@@ -337,7 +337,11 @@ public class TrChatCommands {
             target.getGameProfile().getName(),
             service.activeChannel(target),
             service.joinedChannelCount(target),
+            //? if >=1.20.5 {
             target.connection.latency(),
+            //? } else {
+            target.latency,
+            //? }
             state(viewer, muted),
             state(viewer, service.isShadowMuted(target)),
             state(viewer, service.isPrivateSpy(target)),
@@ -712,7 +716,12 @@ public class TrChatCommands {
             }
         }
         source.sendSuccess(() -> service.languages().component(
-            source.getPlayer(), "Clear-Success", "*".equals(targetName) ? "*" : targets.getFirst().getGameProfile().getName()
+            source.getPlayer(), "Clear-Success", "*".equals(targetName) ? "*" :
+                //? if >=1.20.5 {
+                targets.getFirst().getGameProfile().getName()
+                //? } else {
+                targets.get(0).getGameProfile().getName()
+                //? }
         ), true);
         return targets.size();
     }

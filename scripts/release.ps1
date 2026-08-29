@@ -38,8 +38,8 @@ try {
 
     $artifacts = @(Get-ChildItem -LiteralPath (Join-Path $repository 'versions') -Recurse -Filter '*.jar' |
         Where-Object { $_.FullName -match '\\build\\libs\\' -and $_.Name -notlike '*-sources.jar' })
-    if ($artifacts.Count -ne 8) {
-        throw "Expected 8 release jars (4 versions x 2 loaders), found $($artifacts.Count)."
+    if ($artifacts.Count -ne 9) {
+        throw "Expected 9 release jars (4 versions x 2 loaders + 1.20.1 forge), found $($artifacts.Count)."
     }
 
     git rev-parse --verify --quiet "refs/tags/$Tag" | Out-Null

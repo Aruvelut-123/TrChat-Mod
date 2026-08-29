@@ -41,9 +41,17 @@ public final class PlayerDataStore implements AutoCloseable {
 
     PlayerDataStore(Path folder) {
         this.folder = folder;
+        //? if >=1.20.5 {
         this.saveExecutor = Executors.newSingleThreadExecutor(
             Thread.ofVirtual().name("TrChat-Data-Save-", 0).factory()
         );
+        //? } else {
+        this.saveExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread worker = new Thread(runnable, "TrChat-Data-Save");
+            worker.setDaemon(true);
+            return worker;
+        });
+        //? }
     }
 
     public synchronized void initialize() {

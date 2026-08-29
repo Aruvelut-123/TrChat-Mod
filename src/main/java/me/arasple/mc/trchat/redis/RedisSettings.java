@@ -17,13 +17,13 @@ public record RedisSettings(
     public static RedisSettings fromConfig() {
         return new RedisSettings(
             TrChatConfig.REDIS_HOST.get(),
-            TrChatConfig.REDIS_PORT.getAsInt(),
+            TrChatConfig.REDIS_PORT.get(),
             TrChatConfig.REDIS_USERNAME.get(),
             TrChatConfig.REDIS_PASSWORD.get(),
-            TrChatConfig.REDIS_DATABASE.getAsInt(),
-            TrChatConfig.REDIS_CONNECT_TIMEOUT.getAsInt(),
-            TrChatConfig.REDIS_SOCKET_TIMEOUT.getAsInt(),
-            TrChatConfig.REDIS_RECONNECT_DELAY.getAsInt(),
+            TrChatConfig.REDIS_DATABASE.get(),
+            TrChatConfig.REDIS_CONNECT_TIMEOUT.get(),
+            TrChatConfig.REDIS_SOCKET_TIMEOUT.get(),
+            TrChatConfig.REDIS_RECONNECT_DELAY.get(),
             TrChatConfig.REDIS_CHANNEL.get()
         );
     }

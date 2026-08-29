@@ -153,6 +153,7 @@ public final class FilterService {
     private void refreshCloudAsync() {
         Settings current = settings;
         if (!current.cloudEnabled() || current.urls().isEmpty()) return;
+        //? if >=1.20.5 {
         Thread.ofVirtual().name("TrChat-Filter-Cloud").start(() -> {
             Set<String> collected = new HashSet<>(current.localWords());
             for (String url : current.urls()) {
@@ -163,6 +164,20 @@ public final class FilterService {
                 .toList();
             LOGGER.log(System.Logger.Level.INFO, "Loaded {0} filter words", words.size());
         });
+        //? } else {
+        Thread worker = new Thread(() -> {
+            Set<String> collected = new HashSet<>(current.localWords());
+            for (String url : current.urls()) {
+                collected.addAll(fetch(url, current.cloudIgnored()));
+            }
+            words = collected.stream()
+                .sorted(java.util.Comparator.comparingInt(String::length).reversed())
+                .toList();
+            LOGGER.log(System.Logger.Level.INFO, "Loaded {0} filter words", words.size());
+        }, "TrChat-Filter-Cloud");
+        worker.setDaemon(true);
+        worker.start();
+        //? }
     }
 
     private List<String> fetch(String url, Set<String> ignored) {

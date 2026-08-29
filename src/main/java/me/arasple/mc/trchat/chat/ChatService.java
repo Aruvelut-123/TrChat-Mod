@@ -488,7 +488,7 @@ public final class ChatService implements AutoCloseable {
             redis.close();
             redis = null;
         }
-        if (TrChatConfig.REDIS_ENABLED.getAsBoolean()) {
+        if (TrChatConfig.REDIS_ENABLED.get()) {
             redis = new RedisBridge(RedisSettings.fromConfig(), message ->
                 server.execute(() -> handleRedisMessage(message)));
             redis.start();
@@ -647,8 +647,8 @@ public final class ChatService implements AutoCloseable {
         if (message.isEmpty()) {
             return null;
         }
-        if (message.length() > TrChatConfig.MESSAGE_MAX_LENGTH.getAsInt()) {
-            sendLang(player, "General-Too-Long", message.length(), TrChatConfig.MESSAGE_MAX_LENGTH.getAsInt());
+        if (message.length() > TrChatConfig.MESSAGE_MAX_LENGTH.get()) {
+            sendLang(player, "General-Too-Long", message.length(), TrChatConfig.MESSAGE_MAX_LENGTH.get());
             return null;
         }
         //? if >=1.21.11 {
@@ -679,7 +679,7 @@ public final class ChatService implements AutoCloseable {
         //? } else {
         if (!player.hasPermissions(2) && previous != null) {
         //? }
-            long remaining = TrChatConfig.COOLDOWN_MILLIS.getAsInt() - (now - previous.sentAt());
+            long remaining = TrChatConfig.COOLDOWN_MILLIS.get() - (now - previous.sentAt());
             if (remaining > 0) {
                 sendLang(player, "Cooldowns-Chat", remaining);
                 return null;
@@ -923,7 +923,7 @@ public final class ChatService implements AutoCloseable {
             return;
         }
         try {
-            switch (data.getFirst()) {
+            switch (/*? if >=1.20.5 {*/ data.getFirst() /*? } else {*/ data.get(0) /*? }*/) {
                 case "BroadcastRaw" -> receiveBroadcast(data);
                 case "SendPrivateRaw" -> receivePrivate(data);
                 case "UpdateNames" -> receivePlayerNames(data);
@@ -933,11 +933,11 @@ public final class ChatService implements AutoCloseable {
                     }
                 }
                 case "SendLang" -> receiveLanguageNotice(data);
-                default -> TrChatMod.LOGGER.debug("Ignoring unsupported Bukkit Redis action '{}'", data.getFirst());
+                default -> TrChatMod.LOGGER.debug("Ignoring unsupported Bukkit Redis action '{}'", /*? if >=1.20.5 {*/ data.getFirst() /*? } else {*/ data.get(0) /*? }*/);
             }
         } catch (RuntimeException exception) {
             TrChatMod.LOGGER.warn("Ignoring invalid TrChat Redis action '{}': {}",
-                data.getFirst(), exception.getMessage());
+                /*? if >=1.20.5 {*/ data.getFirst() /*? } else {*/ data.get(0) /*? }*/, exception.getMessage());
         }
     }
 
@@ -946,7 +946,7 @@ public final class ChatService implements AutoCloseable {
             return;
         }
         if (data.size() > 5 && !data.get(5).isBlank()) {
-            String serverId = Integer.toString(TrChatConfig.SERVER_ID.getAsInt());
+            String serverId = Integer.toString(TrChatConfig.SERVER_ID.get());
             boolean accepted = List.of(data.get(5).split(";")).contains(serverId);
             if (!accepted) {
                 return;
@@ -1023,7 +1023,7 @@ public final class ChatService implements AutoCloseable {
             return;
         }
         String serverId = data.get(1);
-        if (serverId.equals(Integer.toString(TrChatConfig.SERVER_ID.getAsInt()))) {
+        if (serverId.equals(Integer.toString(TrChatConfig.SERVER_ID.get()))) {
             return;
         }
         String[] names = splitProtocolList(data.get(2));
@@ -1072,7 +1072,7 @@ public final class ChatService implements AutoCloseable {
         // server snapshot without producing FastUUID warnings or a real player.
         if (players.isEmpty()) {
             redis.publish(TrChatProtocol.emptyPlayerNames(
-                Integer.toString(TrChatConfig.SERVER_ID.getAsInt())
+                Integer.toString(TrChatConfig.SERVER_ID.get())
             ));
             return;
         }
@@ -1088,7 +1088,7 @@ public final class ChatService implements AutoCloseable {
             .toList());
         redis.publish(TrChatMessage.of(
             "UpdateNames",
-            Integer.toString(TrChatConfig.SERVER_ID.getAsInt()),
+            Integer.toString(TrChatConfig.SERVER_ID.get()),
             names,
             displayNames,
             uuids
@@ -1138,7 +1138,7 @@ public final class ChatService implements AutoCloseable {
 
     private static List<String> unwrap(List<String> data) {
         List<String> current = data;
-        while (current.size() > 1 && "ForwardMessage".equals(current.getFirst())) {
+        while (current.size() > 1 && "ForwardMessage".equals(/*? if >=1.20.5 {*/ current.getFirst() /*? } else {*/ current.get(0) /*? }*/)) {
             current = current.subList(1, current.size());
         }
         return current;

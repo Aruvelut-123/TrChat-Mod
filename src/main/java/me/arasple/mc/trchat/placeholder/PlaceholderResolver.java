@@ -4,7 +4,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
+//? if >=1.20.5 {
 import net.minecraft.core.component.DataComponents;
+//? }
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
@@ -128,7 +130,11 @@ public final class PlaceholderResolver {
             case "ram_free" -> integer(runtime.freeMemory() / MEBIBYTE);
             case "ram_total" -> integer(runtime.totalMemory() / MEBIBYTE);
             case "ram_max" -> integer(runtime.maxMemory() / MEBIBYTE);
+            //? if >=1.20.5 {
             case "tps" -> decimal(Math.min(20.0D, 1_000_000_000.0D / Math.max(50_000_000.0D, server.getAverageTickTimeNanos())));
+            //? } else {
+            case "tps" -> decimal(Math.min(20.0D, 1000.0D / Math.max(50.0D, server.getAverageTickTime())));
+            //? }
             case "tps_1" -> decimal(metrics.tps(1));
             case "tps_5" -> decimal(metrics.tps(5));
             case "tps_15" -> decimal(metrics.tps(15));
@@ -174,7 +180,11 @@ public final class PlaceholderResolver {
     private String player(String key, ServerPlayer player) {
         if (key.startsWith("ping_")) {
             ServerPlayer target = server.getPlayerList().getPlayerByName(key.substring(5));
+            //? if >=1.20.5 {
             return target == null ? "0" : integer(target.connection.latency());
+            //? } else {
+            return target == null ? "0" : integer(target.latency);
+            //? }
         }
         if (key.startsWith("has_permission_")) {
             return bool(TrChatPermissions.check(player, key.substring("has_permission_".length())));
@@ -235,7 +245,13 @@ public final class PlaceholderResolver {
             case "biome_capitalized" -> biome(level, position, true);
             case "block_underneath" -> registryName(BuiltInRegistries.BLOCK.getKey(level.getBlockState(position.below()).getBlock()));
             case "can_pickup_items" -> bool(!player.isSpectator());
-            case "colored_ping" -> coloredPing(player.connection.latency());
+            case "colored_ping" -> coloredPing(
+                //? if >=1.20.5 {
+                player.connection.latency()
+                //? } else {
+                player.latency
+                //? }
+            );
             //? if >=1.21.11 {
             case "compass_world" -> Level.OVERWORLD.identifier().getPath();
             //? } else {
@@ -296,7 +312,11 @@ public final class PlaceholderResolver {
             case "item_in_offhand_name" -> itemName(offHand);
             case "item_in_offhand_data" -> itemData(offHand);
             case "item_in_offhand_durability" -> itemDurability(offHand);
+            //? if >=1.20.5 {
             case "locale" -> player.clientInformation().language();
+            //? } else {
+            case "locale" -> player.getLanguage();
+            //? }
             case "locale_display_name" -> locale.getDisplayName();
             case "locale_short" -> locale.getLanguage();
             case "locale_country" -> locale.getCountry();
@@ -317,7 +337,11 @@ public final class PlaceholderResolver {
             case "name" -> player.getGameProfile().getName();
             //? }
             case "no_damage_ticks" -> integer(playerStats.noDamageTicks(player));
+            //? if >=1.20.5 {
             case "ping" -> integer(player.connection.latency());
+            //? } else {
+            case "ping" -> integer(player.latency);
+            //? }
             case "remaining_air" -> integer(player.getAirSupply());
             case "saturation" -> decimal(player.getFoodData().getSaturationLevel());
             case "seconds_lived" -> integer(player.tickCount / 20);
@@ -361,11 +385,16 @@ public final class PlaceholderResolver {
         //? if >=1.21.11 {
         Identifier id = parseId(name);
         Optional<Holder.Reference<MobEffect>> effect = BuiltInRegistries.MOB_EFFECT.get(id);
-        //? } else {
+        return effect.isPresent() && player.hasEffect(effect.get());
+        //? } else if >=1.20.5 {
         ResourceLocation id = parseId(name);
         Optional<Holder.Reference<MobEffect>> effect = BuiltInRegistries.MOB_EFFECT.getHolder(id);
-        //? }
         return effect.isPresent() && player.hasEffect(effect.get());
+        //? } else {
+        ResourceLocation id = parseId(name);
+        MobEffect effect = BuiltInRegistries.MOB_EFFECT.get(id);
+        return effect != null && player.hasEffect(effect);
+        //? }
     }
 
     private int enchantmentLevel(ItemStack stack, String name) {
@@ -374,13 +403,18 @@ public final class PlaceholderResolver {
         Optional<Holder.Reference<Enchantment>> enchantment = server.registryAccess()
             .lookupOrThrow(Registries.ENCHANTMENT)
             .get(id);
-        //? } else {
+        return enchantment.map(value -> EnchantmentHelper.getItemEnchantmentLevel(value, stack)).orElse(0);
+        //? } else if >=1.20.5 {
         ResourceLocation id = parseId(name);
         Optional<Holder.Reference<Enchantment>> enchantment = server.registryAccess()
             .registryOrThrow(Registries.ENCHANTMENT)
             .getHolder(id);
-        //? }
         return enchantment.map(value -> EnchantmentHelper.getItemEnchantmentLevel(value, stack)).orElse(0);
+        //? } else {
+        ResourceLocation id = parseId(name);
+        Enchantment enchantment = BuiltInRegistries.ENCHANTMENT.get(id);
+        return enchantment == null ? 0 : EnchantmentHelper.getItemEnchantmentLevel(enchantment, stack);
+        //? }
     }
 
     private static ResourceLocation parseId(String value) {
@@ -476,7 +510,11 @@ public final class PlaceholderResolver {
     }
 
     private static String itemName(ItemStack stack) {
+        //? if >=1.20.5 {
         return stack.isEmpty() || !stack.has(DataComponents.CUSTOM_NAME) ? "" : stack.getHoverName().getString();
+        //? } else {
+        return stack.isEmpty() || !stack.hasCustomHoverName() ? "" : stack.getHoverName().getString();
+        //? }
     }
 
     private static String itemData(ItemStack stack) {
@@ -528,7 +566,11 @@ public final class PlaceholderResolver {
     }
 
     private static Locale locale(ServerPlayer player) {
+        //? if >=1.20.5 {
         return Locale.forLanguageTag(player.clientInformation().language().replace('_', '-'));
+        //? } else {
+        return Locale.forLanguageTag(player.getLanguage().replace('_', '-'));
+        //? }
     }
 
     private static String direction(float yaw) {

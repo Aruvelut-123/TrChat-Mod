@@ -118,7 +118,11 @@ public final class LanguageService {
     private Map<String, String> selected(ServerPlayer player) {
         String requested = player == null
             ? defaultLanguage.get()
+            //? if >=1.20.5 {
             : player.clientInformation().language();
+            //? } else {
+            : player.getLanguage();
+            //? }
         return selected(requested);
     }
 
