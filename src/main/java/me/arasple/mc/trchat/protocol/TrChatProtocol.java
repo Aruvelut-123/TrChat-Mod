@@ -13,7 +13,9 @@ public final class TrChatProtocol {
     }
 
     public static String formatUuid(UUID uuid) {
-        return uuid.toString().replace("-", "");
+        // TrChat Bukkit uses com.eatthepath.uuid.FastUUID, whose parseUUID() strictly requires
+        // the canonical 36-char dashed form. Standard UUID.toString() matches that format.
+        return uuid.toString();
     }
 
     public static boolean isCrossServerSafeItemNamespace(String namespace) {

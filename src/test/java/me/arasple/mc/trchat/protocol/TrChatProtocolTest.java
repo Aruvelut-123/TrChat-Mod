@@ -14,8 +14,8 @@ class TrChatProtocolTest {
 
     @Test
     void usesBukkitFastUuidWireFormat() {
-        assertEquals("123456781234567890abcdef12345678", TrChatProtocol.formatUuid(UUID_VALUE));
-        assertEquals("00000000000000000000000000000000", TrChatProtocol.formatUuid(TrChatProtocol.NIL_UUID));
+        assertEquals("12345678-1234-5678-90ab-cdef12345678", TrChatProtocol.formatUuid(UUID_VALUE));
+        assertEquals("00000000-0000-0000-0000-000000000000", TrChatProtocol.formatUuid(TrChatProtocol.NIL_UUID));
     }
 
     @Test
@@ -51,7 +51,7 @@ class TrChatProtocolTest {
             "Alex", "Steve", "receiver-json", "fallback", "message-json"
         ).data());
         assertEquals(List.of(
-            "UpdateNames", "25566", "", "#", "00000000000000000000000000000000"
+            "UpdateNames", "25566", "", "#", "00000000-0000-0000-0000-000000000000"
         ), TrChatProtocol.emptyPlayerNames("25566").data());
     }
 }
