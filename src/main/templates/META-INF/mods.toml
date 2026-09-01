@@ -17,6 +17,7 @@ Redis is the only cross-server transport and remains wire-compatible with TrChat
 [[dependencies.${mod_id}]]
 modId="forge"
 type="required"
+mandatory=true
 versionRange="${forge_version_range}"
 ordering="NONE"
 side="SERVER"
@@ -24,6 +25,7 @@ side="SERVER"
 [[dependencies.${mod_id}]]
 modId="minecraft"
 type="required"
+mandatory=true
 versionRange="${minecraft_version_range}"
 ordering="NONE"
 side="SERVER"
