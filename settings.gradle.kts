@@ -31,8 +31,8 @@ pluginManagement {
 
 plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
-    id("dev.kikugie.stonecutter") version "0.9.7"
-    id("net.neoforged.moddev") version "2.0.144" apply false
+    id("dev.kikugie.stonecutter") version "0.9.8"
+    id("net.neoforged.moddev") version "2.0.146" apply false
 }
 
 stonecutter {
