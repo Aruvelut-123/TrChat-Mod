@@ -40,6 +40,14 @@ public final class TrChatConfig {
     public static final ModConfigSpec.IntValue REDIS_RECONNECT_DELAY;
     public static final ModConfigSpec.ConfigValue<String> REDIS_CHANNEL;
 
+    public static final ModConfigSpec.IntValue ANTI_REPEAT_MAX_PER_PERIOD;
+    public static final ModConfigSpec.IntValue ANTI_REPEAT_PERIOD_MILLIS;
+    public static final ModConfigSpec.BooleanValue ANTI_REPEAT_COMPARE_ALL;
+    public static final ModConfigSpec.IntValue ANTI_HIGH_FREQUENCY_MAX_PER_PERIOD;
+    public static final ModConfigSpec.IntValue ANTI_HIGH_FREQUENCY_PERIOD_MILLIS;
+    public static final ModConfigSpec.IntValue ANTI_DUPLICATE_PHRASE_MAX_REPEAT;
+    public static final ModConfigSpec.ConfigValue<List<? extends String>> ANTI_DUPLICATE_PHRASE_WHITELIST;
+
     static {
         ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
 
@@ -62,6 +70,33 @@ public final class TrChatConfig {
         ANTI_REPEAT_SIMILARITY = builder
             .comment("0 disables anti-repeat. Values from 0.0 to 1.0 compare against the player's previous message.")
             .defineInRange("antiRepeatSimilarity", 0.85D, 0.0D, 1.0D);
+        ANTI_REPEAT_MAX_PER_PERIOD = builder
+            .comment("Max similar messages allowed per period. 0 blocks similar messages immediately.")
+            .defineInRange("antiRepeatMaxPerPeriod", 0, 0, 60000);
+        ANTI_REPEAT_PERIOD_MILLIS = builder
+            .comment("Anti-repeat counting period in milliseconds.")
+            .defineInRange("antiRepeatPeriodMillis", 60000, 0, 86400000);
+        ANTI_REPEAT_COMPARE_ALL = builder
+            .comment("true compares against every message in the period (stricter); false only the previous one.")
+            .define("antiRepeatCompareAll", false);
+        ANTI_HIGH_FREQUENCY_MAX_PER_PERIOD = builder
+            .comment("Max messages allowed per period. 0 disables the high-frequency guard.")
+            .defineInRange("antiHighFrequencyMaxPerPeriod", 0, 0, 60000);
+        ANTI_HIGH_FREQUENCY_PERIOD_MILLIS = builder
+            .comment("High-frequency counting period in milliseconds.")
+            .defineInRange("antiHighFrequencyPeriodMillis", 60000, 0, 86400000);
+        ANTI_DUPLICATE_PHRASE_MAX_REPEAT = builder
+            .comment("Max consecutive phrase repeats in one message. 0 disables this guard.")
+            .defineInRange("antiDuplicatePhraseMaxRepeat", 0, 0, 100);
+        ANTI_DUPLICATE_PHRASE_WHITELIST = builder
+            .comment("Phrases that may repeat without being blocked.",
+                "无论连续重复多少次都不拦截的词组。")
+            .defineList(
+                "antiDuplicatePhraseWhitelist",
+                () -> List.of("哈", "6", "?", "？", "!", "！"),
+                () -> "",
+                value -> value instanceof String
+            );
         BLOCKED_WORDS = builder.defineList(
             "blockedWords",
             () -> List.<String>of(),
@@ -166,6 +201,14 @@ public final class TrChatConfig {
     public static final ForgeConfigSpec.IntValue REDIS_RECONNECT_DELAY;
     public static final ForgeConfigSpec.ConfigValue<String> REDIS_CHANNEL;
 
+    public static final ForgeConfigSpec.IntValue ANTI_REPEAT_MAX_PER_PERIOD;
+    public static final ForgeConfigSpec.IntValue ANTI_REPEAT_PERIOD_MILLIS;
+    public static final ForgeConfigSpec.BooleanValue ANTI_REPEAT_COMPARE_ALL;
+    public static final ForgeConfigSpec.IntValue ANTI_HIGH_FREQUENCY_MAX_PER_PERIOD;
+    public static final ForgeConfigSpec.IntValue ANTI_HIGH_FREQUENCY_PERIOD_MILLIS;
+    public static final ForgeConfigSpec.IntValue ANTI_DUPLICATE_PHRASE_MAX_REPEAT;
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> ANTI_DUPLICATE_PHRASE_WHITELIST;
+
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
 
@@ -188,6 +231,32 @@ public final class TrChatConfig {
         ANTI_REPEAT_SIMILARITY = builder
             .comment("0 disables anti-repeat. Values from 0.0 to 1.0 compare against the player's previous message.")
             .defineInRange("antiRepeatSimilarity", 0.85D, 0.0D, 1.0D);
+        ANTI_REPEAT_MAX_PER_PERIOD = builder
+            .comment("Max similar messages allowed per period. 0 blocks similar messages immediately.")
+            .defineInRange("antiRepeatMaxPerPeriod", 0, 0, 60000);
+        ANTI_REPEAT_PERIOD_MILLIS = builder
+            .comment("Anti-repeat counting period in milliseconds.")
+            .defineInRange("antiRepeatPeriodMillis", 60000, 0, 86400000);
+        ANTI_REPEAT_COMPARE_ALL = builder
+            .comment("true compares against every message in the period (stricter); false only the previous one.")
+            .define("antiRepeatCompareAll", false);
+        ANTI_HIGH_FREQUENCY_MAX_PER_PERIOD = builder
+            .comment("Max messages allowed per period. 0 disables the high-frequency guard.")
+            .defineInRange("antiHighFrequencyMaxPerPeriod", 0, 0, 60000);
+        ANTI_HIGH_FREQUENCY_PERIOD_MILLIS = builder
+            .comment("High-frequency counting period in milliseconds.")
+            .defineInRange("antiHighFrequencyPeriodMillis", 60000, 0, 86400000);
+        ANTI_DUPLICATE_PHRASE_MAX_REPEAT = builder
+            .comment("Max consecutive phrase repeats in one message. 0 disables this guard.")
+            .defineInRange("antiDuplicatePhraseMaxRepeat", 0, 0, 100);
+        ANTI_DUPLICATE_PHRASE_WHITELIST = builder
+            .comment("Phrases that may repeat without being blocked.",
+                "无论连续重复多少次都不拦截的词组。")
+            .defineList(
+                "antiDuplicatePhraseWhitelist",
+                () -> List.of("哈", "6", "?", "？", "!", "！"),
+                value -> value instanceof String
+            );
         BLOCKED_WORDS = builder.defineList(
             "blockedWords",
             () -> List.<String>of(),
@@ -273,6 +342,13 @@ public final class TrChatConfig {
     public static final Value<Integer> MESSAGE_MAX_LENGTH = new Value<>("chat.messageMaxLength", Integer.valueOf(256), v -> ((Number) v).intValue());
     public static final Value<Integer> COOLDOWN_MILLIS = new Value<>("chat.cooldownMillis", Integer.valueOf(2000), v -> ((Number) v).intValue());
     public static final Value<Double> ANTI_REPEAT_SIMILARITY = new Value<>("chat.antiRepeatSimilarity", Double.valueOf(0.85D), v -> ((Number) v).doubleValue());
+    public static final Value<Integer> ANTI_REPEAT_MAX_PER_PERIOD = new Value<>("chat.antiRepeatMaxPerPeriod", Integer.valueOf(0), v -> ((Number) v).intValue());
+    public static final Value<Integer> ANTI_REPEAT_PERIOD_MILLIS = new Value<>("chat.antiRepeatPeriodMillis", Integer.valueOf(60000), v -> ((Number) v).intValue());
+    public static final Value<Boolean> ANTI_REPEAT_COMPARE_ALL = new Value<>("chat.antiRepeatCompareAll", Boolean.FALSE, v -> ((Boolean) v));
+    public static final Value<Integer> ANTI_HIGH_FREQUENCY_MAX_PER_PERIOD = new Value<>("chat.antiHighFrequencyMaxPerPeriod", Integer.valueOf(0), v -> ((Number) v).intValue());
+    public static final Value<Integer> ANTI_HIGH_FREQUENCY_PERIOD_MILLIS = new Value<>("chat.antiHighFrequencyPeriodMillis", Integer.valueOf(60000), v -> ((Number) v).intValue());
+    public static final Value<Integer> ANTI_DUPLICATE_PHRASE_MAX_REPEAT = new Value<>("chat.antiDuplicatePhraseMaxRepeat", Integer.valueOf(0), v -> ((Number) v).intValue());
+    public static final Value<List<? extends String>> ANTI_DUPLICATE_PHRASE_WHITELIST = new Value<>("chat.antiDuplicatePhraseWhitelist", List.of("哈", "6", "?", "？", "!", "！"), v -> stringList(v));
     public static final Value<List<? extends String>> BLOCKED_WORDS = new Value<>("chat.blockedWords", List.of(), v -> stringList(v));
     public static final Value<String> FILTER_REPLACEMENT = new Value<>("chat.filterReplacement", "*", Object::toString);
     public static final Value<List<? extends String>> DISABLED_WORLDS = new Value<>("chat.disabledWorlds", List.of(), v -> stringList(v));
