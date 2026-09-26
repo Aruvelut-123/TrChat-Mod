@@ -50,6 +50,9 @@ public final class TrChatPermissions {
     public static final PermissionNode<Boolean> CLEAR_CHAT = restricted("command.clear");
     public static final PermissionNode<Boolean> CHANNEL_OTHER = restricted("command.channel.other");
     public static final PermissionNode<Boolean> COMMAND_COOLDOWN_BYPASS = restricted("bypass.cmdcooldown");
+    public static final PermissionNode<Boolean> BYPASS_REPEAT = restricted("bypass.repeat");
+    public static final PermissionNode<Boolean> BYPASS_DUPLICATE = restricted("bypass.duplicate");
+    public static final PermissionNode<Boolean> BYPASS_HIGH_FREQUENCY = restricted("bypass.highfrequency");
     private static final List<PermissionNode<Boolean>> CHAT_COLORS = "0123456789abcdef".chars()
         .mapToObj(code -> new PermissionNode<>(
             "trchat", "color." + (char) code, PermissionTypes.BOOLEAN,
@@ -72,7 +75,7 @@ public final class TrChatPermissions {
         event.addNodes(
             GLOBAL, PRIVATE, ADMIN, MENTION_ALL, INVENTORY_SHOW, ENDER_CHEST_SHOW,
             MUTE, SHADOW_MUTE, PRIVATE_SPY, IGNORE, CHAT_COLOR_COMMAND, CLEAR_CHAT,
-            CHANNEL_OTHER, COMMAND_COOLDOWN_BYPASS
+            CHANNEL_OTHER, COMMAND_COOLDOWN_BYPASS, BYPASS_REPEAT, BYPASS_DUPLICATE, BYPASS_HIGH_FREQUENCY
         );
         CHAT_COLORS.forEach(event::addNodes);
     }
