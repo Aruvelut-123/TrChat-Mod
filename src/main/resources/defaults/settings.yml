@@ -13,6 +13,26 @@ chat:
   cooldownMillis: 2000
   # 0 disables anti-repeat. Values from 0.0 to 1.0 compare against the player's previous message.
   antiRepeatSimilarity: 0.85
+  # Max similar messages allowed per period. 0 blocks similar messages immediately.
+  antiRepeatMaxPerPeriod: 0
+  # Anti-repeat counting period in milliseconds.
+  antiRepeatPeriodMillis: 60000
+  # true compares against every message in the period (stricter); false only the previous one.
+  antiRepeatCompareAll: false
+  # Max messages allowed per period. 0 disables the high-frequency guard.
+  antiHighFrequencyMaxPerPeriod: 0
+  # High-frequency counting period in milliseconds.
+  antiHighFrequencyPeriodMillis: 60000
+  # Max consecutive phrase repeats in one message. 0 disables this guard.
+  antiDuplicatePhraseMaxRepeat: 0
+  # Phrases that may repeat without being blocked.
+  antiDuplicatePhraseWhitelist:
+    - "哈"
+    - "6"
+    - "?"
+    - "？"
+    - "!"
+    - "！"
   blockedWords: []
   filterReplacement: "*"
   # World names (regular expressions, case-insensitive) where chat is disabled.

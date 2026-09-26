@@ -1,5 +1,7 @@
 General-Too-Long: '&8[&3Tr&bChat&8] &7你的聊天内容过长。&8[&6{0}&8/&2{1}&8]'
 General-Too-Similar: '&8[&3Tr&bChat&8] &7两次聊天内容过于相似，请勿复读。'
+General-Too-Duplicate: '&8[&3Tr&bChat&8] &7检测到大量重复内容，请勿刷屏。'
+General-Too-Frequent: '&8[&3Tr&bChat&8] &7你的发言频率过高，请稍候。'
 General-No-Permission: '&8[&3Tr&bChat&8] &7你没有足够的权限。'
 General-Muted: '&8[&3Tr&bChat&8] &c你已被禁言，解除时间：{0}，原因：{1}'
 General-Global-Muting: '&8[&3Tr&bChat&8] &c当前正在全员禁言。'

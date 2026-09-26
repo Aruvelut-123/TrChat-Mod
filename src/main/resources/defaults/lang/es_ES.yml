@@ -1,5 +1,7 @@
 General-Too-Long: '&8[&3Tr&bChat&8] &7Tu mensaje es demasiado largo. &8[&6{0}&8/&2{1}&8]'
 General-Too-Similar: '&8[&3Tr&bChat&8] &7No repitas mensajes similares.'
+General-Too-Duplicate: '&8[&3Tr&bChat&8] &7Se detectó contenido repetido en exceso; por favor, deja de spammeo.'
+General-Too-Frequent: '&8[&3Tr&bChat&8] &7Estás enviando mensajes con demasiada frecuencia; espera un momento.'
 General-No-Permission: '&8[&3Tr&bChat&8] &7No tienes permiso.'
 General-Muted: '&8[&3Tr&bChat&8] &cEstás silenciado hasta {0}. Motivo: {1}'
 General-Global-Muting: '&8[&3Tr&bChat&8] &cEl chat global está silenciado.'
