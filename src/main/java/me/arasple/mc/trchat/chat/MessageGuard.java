@@ -2,6 +2,7 @@ package me.arasple.mc.trchat.chat;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 public final class MessageGuard {
 
@@ -66,5 +67,97 @@ public final class MessageGuard {
 
     private static String normalize(String value) {
         return value.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+    }
+
+    /**
+     * Counts the highest number of consecutive repetitions of any substring within a message.
+     * Ported from the upstream TrChat 2.5.2 anti-spam guard.
+     *
+     * @param message the message to inspect
+     * @param whitelist phrases that may repeat without being counted
+     * @return the maximum consecutive repeat count (1 when no repeat is found)
+     */
+    public static int maxConsecutiveRepeat(String message, Set<String> whitelist) {
+        int n = message.length();
+        if (n < 2) {
+            return 1;
+        }
+        int max = 1;
+        boolean checkWhitelist = whitelist != null && !whitelist.isEmpty();
+        int i = 0;
+        while (i < n) {
+            // Prune 1: not enough remaining characters to beat the current maximum.
+            if (n - i <= max) {
+                break;
+            }
+            int maxLen = (n - i) / 2;
+            int len = 1;
+            while (len <= maxLen) {
+                // Prune 2: theoretical maximum repeats at this length cannot beat the current maximum.
+                int maxPossible = (n - i) / len;
+                if (maxPossible <= max) {
+                    break;
+                }
+                if (checkWhitelist && isWhitelistedUnit(message, i, len, whitelist)) {
+                    len++;
+                    continue;
+                }
+                int count = 1;
+                int j = i + len;
+                while (j + len <= n && regionMatches(message, j, message, j - len, len)) {
+                    count++;
+                    j += len;
+                }
+                if (count > max) {
+                    max = count;
+                }
+                len++;
+            }
+            i++;
+        }
+        return max;
+    }
+
+    /**
+     * Whether the repeated unit at the given position is exempted by the whitelist.
+     * A unit of length {@code len} is whitelisted when it is some whitelisted phrase repeated
+     * an integer number of times.
+     */
+    private static boolean isWhitelistedUnit(String message, int start, int len, Set<String> whitelist) {
+        for (String w : whitelist) {
+            int wl = w.length();
+            if (wl == 0 || len < wl || len % wl != 0) {
+                continue;
+            }
+            int repeat = len / wl;
+            boolean ok = true;
+            int k = 0;
+            while (k < repeat) {
+                if (!regionMatches(message, start + k * wl, w, 0, wl)) {
+                    ok = false;
+                    break;
+                }
+                k++;
+            }
+            if (ok) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Case-sensitive region match mirroring String.regionMatches semantics for this guard. */
+    private static boolean regionMatches(String source, int sourceStart, String target, int targetStart, int length) {
+        int sourceEnd = sourceStart + length;
+        int targetEnd = targetStart + length;
+        if (sourceEnd > source.length() || targetEnd > target.length()) {
+            return false;
+        }
+        for (int i = 0; i < length; i++) {
+            if (source.charAt(sourceStart + i) != target.charAt(targetStart + i)) {
+                return false;
+            }
+        }
+        return true;
     }
 }

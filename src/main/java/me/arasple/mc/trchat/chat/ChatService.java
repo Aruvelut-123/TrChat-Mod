@@ -53,6 +53,8 @@ public final class ChatService implements AutoCloseable {
     private final ModerationService moderation;
     private final ChatLogService chatLogs = new ChatLogService();
     private final Map<UUID, ChatState> chatStates = new HashMap<>();
+    private final Map<UUID, List<SimilarEntry>> similarPeriodMessages = new HashMap<>();
+    private final Map<UUID, List<Long>> frequencyPeriodMessages = new HashMap<>();
     private final Map<UUID, String> activeChannels = new HashMap<>();
     private final Map<UUID, Set<String>> joinedChannels = new HashMap<>();
     private final Map<String, RemoteServerPlayers> remotePlayers = new ConcurrentHashMap<>();
@@ -526,6 +528,9 @@ public final class ChatService implements AutoCloseable {
         playerStats.remove(player.getUUID());
         activeChannels.remove(player.getUUID());
         joinedChannels.remove(player.getUUID());
+        chatStates.remove(player.getUUID());
+        similarPeriodMessages.remove(player.getUUID());
+        frequencyPeriodMessages.remove(player.getUUID());
         playerListChanged();
     }
 
@@ -669,30 +674,77 @@ public final class ChatService implements AutoCloseable {
         }
 
         long now = System.currentTimeMillis();
-        ChatState previous = chatStates.get(player.getUUID());
+        UUID uuid = player.getUUID();
+        ChatState previous = chatStates.get(uuid);
         //? if >=1.21.11 {
-        if (!player.permissions().hasPermission(
+        boolean op = player.permissions().hasPermission(
             new net.minecraft.server.permissions.Permission.HasCommandLevel(
                 net.minecraft.server.permissions.PermissionLevel.byId(2)
             )
-        ) && previous != null) {
+        );
         //? } else {
-        if (!player.hasPermissions(2) && previous != null) {
+        boolean op = player.hasPermissions(2);
         //? }
+        final String pendingMessage = message;
+
+        if (!op) {
+            int maxPerPeriod = TrChatConfig.ANTI_REPEAT_MAX_PER_PERIOD.get();
+            if (maxPerPeriod >= 0 && !hasPermission(player, "trchat.bypass.repeat")) {
+                long periodMillis = Math.max(0L, TrChatConfig.ANTI_REPEAT_PERIOD_MILLIS.get());
+                int period = periodMillis > 0L ? (int) periodMillis : 60000;
+                List<SimilarEntry> similarPeriod = similarPeriodMessages.computeIfAbsent(uuid, ignored -> new ArrayList<>());
+                similarPeriod.removeIf(entry -> now - entry.sentAt() > period);
+                double threshold = TrChatConfig.ANTI_REPEAT_SIMILARITY.get();
+                boolean similar;
+                if (TrChatConfig.ANTI_REPEAT_COMPARE_ALL.get()) {
+                    similar = similarPeriod.stream()
+                        .anyMatch(entry -> MessageGuard.similarity(entry.message(), pendingMessage) >= threshold);
+                } else {
+                    similar = previous != null && MessageGuard.similarity(previous.message(), pendingMessage) >= threshold;
+                }
+                if (similar) {
+                    if (maxPerPeriod == 0 || similarPeriod.size() >= maxPerPeriod) {
+                        sendLang(player, "General-Too-Similar");
+                        return null;
+                    }
+                    similarPeriod.add(new SimilarEntry(now, pendingMessage));
+                }
+            }
+        }
+
+        int maxRepeat = TrChatConfig.ANTI_DUPLICATE_PHRASE_MAX_REPEAT.get();
+        if (maxRepeat > 0 && !hasPermission(player, "trchat.bypass.duplicate")) {
+            Set<String> whitelist = Set.copyOf(TrChatConfig.ANTI_DUPLICATE_PHRASE_WHITELIST.get());
+            if (MessageGuard.maxConsecutiveRepeat(pendingMessage, whitelist) > maxRepeat) {
+                sendLang(player, "General-Too-Duplicate");
+                return null;
+            }
+        }
+
+        if (previous != null && !op) {
             long remaining = TrChatConfig.COOLDOWN_MILLIS.get() - (now - previous.sentAt());
             if (remaining > 0) {
                 sendLang(player, "Cooldowns-Chat", remaining);
                 return null;
             }
-            double threshold = TrChatConfig.ANTI_REPEAT_SIMILARITY.get();
-            if (threshold > 0 && MessageGuard.similarity(previous.message(), message) >= threshold) {
-                sendLang(player, "General-Too-Similar");
+        }
+
+        int highMax = TrChatConfig.ANTI_HIGH_FREQUENCY_MAX_PER_PERIOD.get();
+        if (highMax > 0 && !hasPermission(player, "trchat.bypass.highfrequency")) {
+            long highPeriodMillis = Math.max(0L, TrChatConfig.ANTI_HIGH_FREQUENCY_PERIOD_MILLIS.get());
+            int highPeriod = highPeriodMillis > 0L ? (int) highPeriodMillis : 60000;
+            List<Long> periodMessages = frequencyPeriodMessages.computeIfAbsent(uuid, ignored -> new ArrayList<>());
+            periodMessages.removeIf(sentAt -> now - sentAt > highPeriod);
+            if (periodMessages.size() >= highMax) {
+                sendLang(player, "General-Too-Frequent");
                 return null;
             }
+            periodMessages.add(now);
         }
+
         message = filters.filterChat(player, message);
         message = MessageGuard.filter(message, TrChatConfig.BLOCKED_WORDS.get(), TrChatConfig.FILTER_REPLACEMENT.get());
-        chatStates.put(player.getUUID(), new ChatState(now, message));
+        chatStates.put(uuid, new ChatState(now, message));
         return message;
     }
 
@@ -1157,6 +1209,9 @@ public final class ChatService implements AutoCloseable {
     }
 
     private record ChatState(long sentAt, String message) {
+    }
+
+    private record SimilarEntry(long sentAt, String message) {
     }
 
     private record RemotePlayer(String name, String displayName, UUID uuid) {
