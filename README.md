@@ -25,3 +25,12 @@ public class Demo implements Listener {
     }   
 }
 ```
+
+---
+
+### 🎃 PumpkinMC（实验性支持）
+
+本分支（`pumpkin-experimental`）包含对 [PumpkinMC](https://pumpkinmc.org)（Rust 实现的
+Minecraft 服务器）的实验性支持：`pumpkin/` 是一个独立的 Rust crate，以 WASM Component
+插件形式在 Pumpkin 上提供 TrChat 的本地聊天核心（事件拦截、格式渲染、广播）。
+详见 [pumpkin/README.md](pumpkin/README.md)。
