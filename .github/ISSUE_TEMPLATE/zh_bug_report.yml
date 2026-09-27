@@ -9,8 +9,8 @@ body:
       label: '正在使用的版本？（提交前请确保使用的最新版）'
       description: '请使用以下格式回答：<平台>:<版本>'
       placeholder: Neoforge:2.5.4.1
-      validations:
-        required: true
+    validations:
+      required: true
 
   - type: checkboxes
     id: issues-reviewed

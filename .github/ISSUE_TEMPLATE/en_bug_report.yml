@@ -9,8 +9,8 @@ body:
       label: 'Which platform and mod version are you using?'
       description: 'Answer in format of <platform>:<version> thanks.'
       placeholder: Neoforge:2.5.4.1
-      validations:
-        required: true
+    validations:
+      required: true
 
   - type: checkboxes
     id: issues-reviewed
