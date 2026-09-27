@@ -3,7 +3,7 @@ description: '注意: 未正确根据提示进行反馈错误可能会被忽略�
 title: "[问题] "
 labels: ['Bug | 漏洞']
 body:
-  - type: textarea
+  - type: input
     id: latests
     attributes:
       label: '正在使用的版本？（提交前请确保使用的最新版）'

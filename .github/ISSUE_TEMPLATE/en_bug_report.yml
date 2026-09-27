@@ -3,7 +3,7 @@ description: 'Warning: Failure to properly follow the prompts for feedback error
 title: "[issue] "
 labels: ['Bug | 漏洞']
 body:
-  - type: textarea
+  - type: input
     id: latests
     attributes:
       label: 'Which platform and mod version are you using?'
