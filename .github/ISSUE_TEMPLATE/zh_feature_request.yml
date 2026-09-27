@@ -1,17 +1,27 @@
 name: 功能请求
-description: 为 TrChat NeoForge 提出新功能
+description: '注意: 未正确根据提示发布功能请求可能会被忽略或关闭.'
 title: "[功能] "
-labels: ["enhancement"]
+labels: ['Enhancement | 新功能']
 body:
   - type: checkboxes
+    id: issues-reviewed
     attributes:
-      label: 重复检查
+      label: '是否存在重复 issue'
+      description: '有些功能可能已经被别人提到过，你翻阅过吗 [Issues](https://github.com/Aruvelut-123/TrChat-Mod/issues)?'
       options:
-        - label: 我已阅读 README 并检查现有 Issues。
+        - label: '我已翻阅现有的 issue 没有发现内容重复, 亦或是对现有 issue 的更详细的描述.'
           required: true
+
   - type: textarea
+    id: description
     attributes:
-      label: 功能说明
-      description: 请说明使用场景、预期行为，以及对 Redis/Bukkit 互通的影响。
+      label: '详细的描述'
+      description: '对该功能清晰地描述.'
+      value: |
+        ```
+        1. ...
+        2. ...
+        3. ...
+        ```
     validations:
       required: true
