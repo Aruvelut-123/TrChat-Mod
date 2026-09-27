@@ -25,9 +25,9 @@ body:
     id: proxy
     attributes:
       label: 'If using cross-server feature, r u really using redis?'
-      description: 'If not, then the cross-server feature won't woking'
+      description: 'If not, then the cross-server feature may not woking'
       options:
-        - label: 'I'm sure I'm using redis.'
+        - label: 'I am sure that I am using redis.'
           required: true
 
   - type: textarea
