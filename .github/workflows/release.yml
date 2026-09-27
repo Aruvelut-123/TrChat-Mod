@@ -8,9 +8,25 @@ permissions:
   contents: write
 
 jobs:
-  build-and-upload:
+  build:
+    name: Build ${{ matrix.node }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - 1.20.1-forge
+          - 1.21.1-neoforge
+          - 1.21.11-neoforge
+          - 26.1.2-neoforge
+          - 26.2-neoforge
+          - 26.3-neoforge
+          - 1.21.1-fabric
+          - 1.21.11-fabric
+          - 26.1.2-fabric
+          - 26.2-fabric
+          - 26.3-fabric
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v7
@@ -39,33 +55,56 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Build and test all nodes
-        run: |
-          ./gradlew \
-            :1.21.1-neoforge:build \
-            :1.21.11-neoforge:build \
-            :26.1.2-neoforge:build \
-            :26.2-neoforge:build \
-            :1.21.1-fabric:build \
-            :1.21.11-fabric:build \
-            :26.1.2-fabric:build \
-            :26.2-fabric:build \
-            :1.20.1-forge:build
+      - name: Build and test ${{ matrix.node }}
+        run: ./gradlew :${{ matrix.node }}:build
 
-      - name: Add test results to job summary
+      - name: Test report ${{ matrix.node }}
         if: always()
-        run: python3 scripts/ci-test-summary.py
+        uses: dorny/test-reporter@v3
+        with:
+          name: Tests ${{ matrix.node }}
+          path: versions/${{ matrix.node }}/build/test-results/test/TEST-*.xml
+          reporter: java-junit
+          only-summary: 'true'
+          report-title: ${{ matrix.node }}
+          list-suites: 'all'
+          list-tests: 'all'
+          fail-on-error: 'false'
+          fail-on-empty: 'false'
 
-      - name: Upload test reports
+      - name: Upload test reports ${{ matrix.node }}
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: release-test-reports-${{ github.event.release.tag_name }}
+          name: release-test-reports-${{ matrix.node }}-${{ github.event.release.tag_name }}
           path: |
-            versions/*/build/test-results/test/
-            versions/*/build/reports/tests/test/
+            versions/${{ matrix.node }}/build/test-results/test/
+            versions/${{ matrix.node }}/build/reports/tests/test/
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Upload ${{ matrix.node }} jar to release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          shopt -s nullglob
+          for f in versions/${{ matrix.node }}/build/libs/*.jar; do
+            [[ "$f" == *-sources.jar ]] && continue
+            gh release upload "$TAG" "$f" --clobber
+          done
+
+  release-notes:
+    name: Generate release notes
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
 
       - name: Install git-cliff
         uses: taiki-e/install-action@v2
@@ -76,12 +115,9 @@ jobs:
         run: |
           git cliff --current --strip header --output RELEASE_NOTES.md
 
-      - name: Replace release notes and upload jars
-        if: success()
+      - name: Replace release notes
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
         run: |
           gh release edit "$TAG" --notes-file RELEASE_NOTES.md
-          find versions -type f \( -path '*/build/libs/*.jar' \) ! -name '*-sources.jar' -print0 |
-            xargs -0 gh release upload "$TAG" --clobber

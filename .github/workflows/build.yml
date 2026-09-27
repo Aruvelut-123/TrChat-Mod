@@ -13,7 +13,23 @@ permissions:
 
 jobs:
   build:
+    name: Build ${{ matrix.node }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - 1.20.1-forge
+          - 1.21.1-neoforge
+          - 1.21.11-neoforge
+          - 26.1.2-neoforge
+          - 26.2-neoforge
+          - 26.3-neoforge
+          - 1.21.1-fabric
+          - 1.21.11-fabric
+          - 26.1.2-fabric
+          - 26.2-fabric
+          - 26.3-fabric
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -34,71 +50,43 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          cache-read-only: false
           cache-cleanup: on-success
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Build and test all nodes
-        run: |
-          ./gradlew \
-            :1.21.1-neoforge:build \
-            :1.21.11-neoforge:build \
-            :26.1.2-neoforge:build \
-            :26.2-neoforge:build \
-            :1.21.1-fabric:build \
-            :1.21.11-fabric:build \
-            :26.1.2-fabric:build \
-            :26.2-fabric:build \
-            :1.20.1-forge:build
+      - name: Build and test ${{ matrix.node }}
+        run: ./gradlew :${{ matrix.node }}:build
 
-      - name: Add test results to job summary
+      - name: Test report ${{ matrix.node }}
         if: always()
-        run: python3 scripts/ci-test-summary.py
+        uses: dorny/test-reporter@v3
+        with:
+          name: Tests ${{ matrix.node }}
+          path: versions/${{ matrix.node }}/build/test-results/test/TEST-*.xml
+          reporter: java-junit
+          only-summary: 'true'
+          report-title: ${{ matrix.node }}
+          list-suites: 'all'
+          list-tests: 'all'
+          fail-on-error: 'false'
+          fail-on-empty: 'false'
 
-      - name: Upload test reports
+      - name: Upload test reports ${{ matrix.node }}
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-reports-${{ github.run_number }}
+          name: test-reports-${{ matrix.node }}-${{ github.run_number }}
           path: |
-            versions/*/build/test-results/test/
-            versions/*/build/reports/tests/test/
+            versions/${{ matrix.node }}/build/test-results/test/
+            versions/${{ matrix.node }}/build/reports/tests/test/
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30
 
-      - name: Upload 1.21.1 artifacts
+      - name: Upload artifacts ${{ matrix.node }}
         uses: actions/upload-artifact@v7
         with:
-          name: TrChat-1.21.1-${{ github.run_number }}
-          path: versions/1.21.1-*/build/libs/*.jar
-          if-no-files-found: error
-
-      - name: Upload 1.21.11 artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: TrChat-1.21.11-${{ github.run_number }}
-          path: versions/1.21.11-*/build/libs/*.jar
-          if-no-files-found: error
-
-      - name: Upload 26.1.2 artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: TrChat-26.1.2-${{ github.run_number }}
-          path: versions/26.1.2-*/build/libs/*.jar
-          if-no-files-found: error
-
-      - name: Upload 26.2 artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: TrChat-26.2-${{ github.run_number }}
-          path: versions/26.2-*/build/libs/*.jar
-          if-no-files-found: error
-
-      - name: Upload 1.20.1 artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: TrChat-1.20.1-${{ github.run_number }}
-          path: versions/1.20.1-*/build/libs/*.jar
+          name: TrChat-${{ matrix.node }}-${{ github.run_number }}
+          path: versions/${{ matrix.node }}/build/libs/*.jar
           if-no-files-found: error
