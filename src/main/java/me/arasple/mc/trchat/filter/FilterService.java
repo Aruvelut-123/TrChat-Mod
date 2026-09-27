@@ -12,6 +12,9 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
+//? if >=26.3 {
+import net.minecraft.world.level.block.entity.SignTextSlot;
+//? }
 import net.minecraft.world.level.chunk.LevelChunk;
 import me.arasple.mc.trchat.platform.Platform;
 
@@ -130,6 +133,24 @@ public final class FilterService {
 
     private void filterSign(SignBlockEntity sign) {
         boolean changed = false;
+        //? if >=26.3 {
+        for (SignTextSlot slot : new SignTextSlot[]{SignTextSlot.FRONT, SignTextSlot.BACK}) {
+            SignText original = sign.getText(slot);
+            List<Component> messages = new ArrayList<>(original.getMessages(false));
+            List<Component> filteredMessages = new ArrayList<>(original.getMessages(true));
+            for (int line = 0; line < messages.size(); line++) {
+                Component message = messages.get(line);
+                TextFilter.Result result = filter(message.getString());
+                if (result.matches() > 0) {
+                    Component filtered = Component.literal(result.text()).setStyle(message.getStyle());
+                    messages.set(line, filtered);
+                    filteredMessages.set(line, filtered);
+                    changed = true;
+                }
+            }
+            sign.setText(new SignText(messages, filteredMessages, original.getColor(), original.hasGlowingText()), slot);
+        }
+        //? } else {
         for (boolean front : new boolean[]{true, false}) {
             SignText original = sign.getText(front);
             SignText filtered = original;
@@ -145,6 +166,7 @@ public final class FilterService {
                 sign.setText(filtered, front);
             }
         }
+        //? }
         if (changed && sign.getLevel() != null) {
             sign.getLevel().sendBlockUpdated(sign.getBlockPos(), sign.getBlockState(), sign.getBlockState(), 3);
         }
