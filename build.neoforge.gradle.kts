@@ -70,6 +70,13 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+// Pin the NFRT version: moddev 2.0.144 defaults to NFRT 2.0.24, which bundles
+// jst 2.0.10 and breaks javac on HolderSet's anonymous class (protected contents()
+// override). NFRT 2.0.31 bundles jst 2.0.11, which emits the correct public member.
+neoFormRuntime {
+    version = "2.0.31"
+}
+
 neoForge {
     version = project.property("neo_version") as String
 
