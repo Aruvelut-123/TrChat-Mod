@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  checks: write
 
 jobs:
   build:
@@ -65,7 +66,7 @@ jobs:
           name: Tests ${{ matrix.node }}
           path: versions/${{ matrix.node }}/build/test-results/test/TEST-*.xml
           reporter: java-junit
-          only-summary: 'true'
+          only-summary: 'false'
           report-title: ${{ matrix.node }}
           list-suites: 'all'
           list-tests: 'all'
