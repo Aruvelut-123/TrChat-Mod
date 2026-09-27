@@ -6,8 +6,8 @@ TrChat Bukkit 插件的多加载器多版本服务端移植版。支持以下加
 
 | 加载器 | 版本 |
 | --- | --- |
-| NeoForge | 1.21.1（21.1.233+）、1.21.11（21.1.x）、26.1.2、26.2 |
-| Fabric | 1.21.1、1.21.11、26.1.2、26.2 |
+| NeoForge | 1.21.1（21.1.233+）、1.21.11（21.11.x）、26.1.2、26.2、26.3 |
+| Fabric | 1.21.1、1.21.11、26.1.2、26.2、26.3 |
 | Forge（LTS） | 1.20.1（47.4.0+） |
 
 不包含 Bukkit、BungeeCord、Velocity、插件消息代理或 DiscordSRV；跨服只通过 Redis，并保持与 Bukkit TrChat `2.4.9` 的聊天协议互通。
@@ -21,7 +21,7 @@ TrChat Bukkit 插件的多加载器多版本服务端移植版。支持以下加
 | 版本 | Java | 加载器版本 |
 | --- | --- | --- |
 | 1.20.1 Forge（LTS） | 17 | Forge 47.4.0+ |
-| 1.21.x 系列 | 21 | NeoForge 21.1.233+ / Fabric Loader 0.16.0+ |
+| 1.21.x 系列 | 21 | NeoForge 21.1.233+（1.21.11 对应 21.11.x） / Fabric Loader 0.19.x |
 | 26.x 系列 | 25 | NeoForge / Fabric + Fabric API 对应版本 |
 
 只需安装在服务端，原版客户端可以直接加入。
@@ -78,6 +78,7 @@ config/trchat/
 ├── data.db
 ├── function.yml
 ├── filter.yml
+├── special-chars.yml
 ├── filters/
 ├── lang/
 │   ├── zh_CN.yml
@@ -106,7 +107,7 @@ config/trchat/
 本工程使用 [Stonecutter](https://stonecutter.kikugie.dev/) 管理多版本多加载器差异。构建所需 JDK 版本根据目标版本自动选择。
 
 ```powershell
-# 全部 9 个节点编译+测试
+# 全部 11 个节点编译+测试
 .\gradlew test
 
 # 仅编译特定节点

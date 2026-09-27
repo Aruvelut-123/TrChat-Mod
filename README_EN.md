@@ -6,8 +6,8 @@ A multi-loader, multi-version server-side port of the TrChat Bukkit plugin. Supp
 
 | Loader | Versions |
 | --- | --- |
-| NeoForge | 1.21.1 (21.1.233+), 1.21.11 (21.1.x), 26.1.2, 26.2 |
-| Fabric | 1.21.1, 1.21.11, 26.1.2, 26.2 |
+| NeoForge | 1.21.1 (21.1.233+), 1.21.11 (21.11.x), 26.1.2, 26.2, 26.3 |
+| Fabric | 1.21.1, 1.21.11, 26.1.2, 26.2, 26.3 |
 | Forge (LTS) | 1.20.1 (47.4.0+) |
 
 It does not include Bukkit, BungeeCord, Velocity, plugin-message proxy transport, or DiscordSRV. Redis is the only cross-server transport and remains wire-compatible with Bukkit TrChat `2.4.9`.
@@ -21,7 +21,7 @@ Repository and issues: [Aruvelut-123/TrChat-Mod](https://github.com/Aruvelut-123
 | Version family | Java | Loader version |
 | --- | --- | --- |
 | 1.20.1 Forge (LTS) | 17 | Forge 47.4.0+ |
-| 1.21.x | 21 | NeoForge 21.1.233+ / Fabric Loader 0.16.0+ |
+| 1.21.x | 21 | NeoForge 21.1.233+ (1.21.11 uses 21.11.x) / Fabric Loader 0.19.x |
 | 26.x | 25 | NeoForge / Fabric + Fabric API (corresponding version) |
 
 Server-side installation only; vanilla clients can join directly.
@@ -78,6 +78,7 @@ config/trchat/
 ├── data.db
 ├── function.yml
 ├── filter.yml
+├── special-chars.yml
 ├── filters/
 ├── lang/
 │   ├── zh_CN.yml
@@ -104,7 +105,7 @@ Public/global chat, private messages, private-spy, online-player-list, and globa
 This project uses [Stonecutter](https://stonecutter.kikugie.dev/) to manage multi-version multi-loader differences. The required JDK version is selected automatically.
 
 ```powershell
-# Build and test all 9 nodes
+# Build and test all 11 nodes
 .\gradlew test
 
 # Build a specific node
