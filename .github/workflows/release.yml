@@ -96,6 +96,59 @@ jobs:
             gh release upload "$TAG" "$f" --clobber
           done
 
+  pumpkin:
+    name: Build pumpkin (WASM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Check for pumpkin plugin
+        id: check
+        run: |
+          if [ -f pumpkin/Cargo.toml ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "pumpkin/ not present on this ref - skipping"
+          fi
+
+      - name: Set up Rust
+        if: steps.check.outputs.exists == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+
+      - name: Cache Rust build
+        if: steps.check.outputs.exists == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pumpkin
+
+      - name: Build plugin (WASM component)
+        if: steps.check.outputs.exists == 'true'
+        working-directory: pumpkin
+        run: cargo build --release --target wasm32-wasip2
+
+      - name: Verify WASM component
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          WASM=pumpkin/target/wasm32-wasip2/release/trchat_pumpkin.wasm
+          test -f "$WASM"
+          xxd -p -l 8 "$WASM" | grep -q "^0061736d0d000100" && echo "component magic OK"
+
+      - name: Upload pumpkin wasm to release
+        if: steps.check.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          cp pumpkin/target/wasm32-wasip2/release/trchat_pumpkin.wasm trchat-pumpkin.wasm
+          gh release upload "$TAG" trchat-pumpkin.wasm --clobber
+
   release-notes:
     name: Generate release notes
     runs-on: ubuntu-latest

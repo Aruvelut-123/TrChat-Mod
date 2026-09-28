@@ -1,12 +1,14 @@
-name: TrChat Mod build
+name: TrChat build
 
 on:
   push:
     branches:
       - v2
+      - pumpkin-experimental
   pull_request:
     branches:
       - v2
+      - pumpkin-experimental
 
 permissions:
   contents: read
@@ -90,4 +92,57 @@ jobs:
         with:
           name: TrChat-${{ matrix.node }}-${{ github.run_number }}
           path: versions/${{ matrix.node }}/build/libs/*.jar
+          if-no-files-found: error
+
+  pumpkin:
+    name: Build pumpkin (WASM)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check for pumpkin plugin
+        id: check
+        run: |
+          if [ -f pumpkin/Cargo.toml ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "pumpkin/ not present on this ref - skipping"
+          fi
+
+      - name: Set up Rust
+        if: steps.check.outputs.exists == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+
+      - name: Cache Rust build
+        if: steps.check.outputs.exists == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pumpkin
+
+      - name: Build plugin (WASM component)
+        if: steps.check.outputs.exists == 'true'
+        working-directory: pumpkin
+        run: cargo build --release --target wasm32-wasip2
+
+      - name: Verify WASM component
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          WASM=pumpkin/target/wasm32-wasip2/release/trchat_pumpkin.wasm
+          test -f "$WASM"
+          # A WASM component starts with \0asm + version 0d 00 01 00
+          xxd -p -l 8 "$WASM" | grep -q "^0061736d0d000100" && echo "component magic OK"
+          curl -sL https://github.com/bytecodealliance/wasm-tools/releases/download/v1.259.0/wasm-tools-1.259.0-x86_64-linux.tar.gz -o /tmp/wt.tgz
+          tar xzf /tmp/wt.tgz -C /tmp
+          /tmp/wasm-tools-1.259.0-x86_64-linux/wasm-tools component wit "$WASM" | head -3
+
+      - name: Upload pumpkin artifact
+        if: steps.check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: TrChat-pumpkin-${{ github.run_number }}
+          path: pumpkin/target/wasm32-wasip2/release/trchat_pumpkin.wasm
           if-no-files-found: error
