@@ -48,7 +48,10 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 
 ## 配置
 
-首次启动会在 `plugins/data/trchat/config.json` 生成默认配置：
+`config.json` 位于插件数据目录（`plugins/data/trchat/config.json`）。
+**文件不存在时**（首次启动，或管理员删除后重启）插件会自动创建它并写入下面的
+默认值，方便直接编辑；已存在的文件**不会被覆盖**。若文件存在但内容不是合法
+JSON，插件会**报错并拒绝初始化**（日志中可见具体解析错误），而不会静默回退到默认值。
 
 ```json
 {
@@ -68,6 +71,8 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 
 ## 说明
 
-* Pumpkin 插件 API 版本锁定为 git commit `fc780ec`（master，对应 `0.1.0-dev+26.2-26.45` 协议族）。
+* Pumpkin 插件 API 锁定为**最新 stable release** 标签 `0.2.0+26.3-26.51`
+  （commit `204a94e`）。不跟随 master/nightly：nightly 在下一次 stable 发布前
+  会有大量破坏性 WIT 变更，插件会随时无法加载。
 * 事件、命令、权限等 WIT 定义位于
   `crates/pumpkin-plugin-wit/v0.1/`（[Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) 仓库内）。
