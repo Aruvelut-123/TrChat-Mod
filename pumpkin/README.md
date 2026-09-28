@@ -9,7 +9,7 @@
 TrChat 是一个多平台聊天插件（Bukkit / Bungee / Velocity）。PumpkinMC 的插件机制与
 Bukkit 完全不同——插件是 **WASM Component**（Rust / Go / Kotlin 均可，本移植使用
 **Rust**，Pumpkin 官方首选语言）。因此本目录是一个 **独立 Rust crate**，不属于
-Gradle 构建，与 `project/` 下的 Kotlin 模块并存。
+Gradle 构建，与仓库根目录的 Kotlin 模块（`src/`、`versions/`）并存。
 
 | 维度 | Bukkit 版（TrChat v2） | Pumpkin 版（本目录） |
 | --- | --- | --- |
@@ -37,7 +37,7 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 > 无需再执行 `wasm-tools component new`。
 
 把 `target/wasm32-wasip2/release/trchat_pumpkin.wasm` 放入 Pumpkin 服务器的 `plugins/`
-目录即被加载。GitHub Actions 构建产物（`trchat-pumpkin` artifact）也可直接使用。
+目录即被加载。GitHub Actions 构建产物（`TrChat-pumpkin-<运行编号>` artifact）也可直接使用。
 
 ## 功能（当前）
 
