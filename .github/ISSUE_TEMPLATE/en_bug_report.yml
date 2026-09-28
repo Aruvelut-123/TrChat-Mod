@@ -1,0 +1,73 @@
+name: Error Report
+description: 'Warning: Failure to properly follow the prompts for feedback errors will be closed.'
+title: "[issue] "
+labels: ['Bug | 漏洞']
+body:
+  - type: input
+    id: latests
+    attributes:
+      label: 'Which platform and mod version are you using?'
+      description: 'Answer in format of <platform>:<version> thanks.'
+      placeholder: Neoforge:2.5.4.1
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: issues-reviewed
+    attributes:
+      label: 'Is there a duplicate issue'
+      description: 'Some features may have been mentioned by others, have you read it [Issues](https://github.com/Aruvelut-123/TrChat-Mod/issues)?'
+      options:
+        - label: 'I have looked through the existing issue and found no duplicate content, or a more detailed description of the existing issue.'
+          required: true
+
+  - type: checkboxes
+    id: proxy
+    attributes:
+      label: 'If using cross-server feature, r u really using redis?'
+      description: 'If not, then the cross-server feature may not woking'
+      options:
+        - label: 'I am sure that I am using redis.'
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 'Detailed description'
+      description: 'Actions and prerequisites that can be reproduced'
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: 'configuration file'
+      description: 'The channel file or settings.yml where the error occurred'
+      render: 'YAML'
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 'logs'
+      description: 'If there is a message/error in the server/client backend when an error occurs, please provide it'
+    validations:
+      required: false
+
+  - type: textarea
+    id: environments
+    attributes:
+      label: 'Server environment'
+      description: 'Paste the results of /version and /plugins here'
+      value: |
+        Server version:
+        ...
+        Plugin list:
+        ...
+    validations:
+      required: true

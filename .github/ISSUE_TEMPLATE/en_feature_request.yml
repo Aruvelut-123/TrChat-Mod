@@ -1,0 +1,27 @@
+name: Feature Request
+description: 'Warning: If you don’t follow the prompts to give feedback, this issue may be ignored or closed.'
+title: "[Feature] "
+labels: ['Enhancement | 新功能']
+body:
+  - type: checkboxes
+    id: issues-reviewed
+    attributes:
+      label: 'Is there a duplicate issue'
+      description: 'Some features may have been mentioned by others, have you read it [Issues](https://github.com/Aruvelut-123/TrChat-Mod/issues)?'
+      options:
+        - label: 'I have looked through the existing issue and found no duplicate content, or a more detailed description of the existing issue.'
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 'Detailed description'
+      description: 'Describe the function clearly.'
+      value: |
+        ```
+        1. ...
+        2. ...
+        3. ...
+        ```
+    validations:
+      required: true

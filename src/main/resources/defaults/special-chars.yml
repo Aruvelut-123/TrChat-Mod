@@ -1,0 +1,7 @@
+# TrChat NeoForge special characters
+# Compatible with the Bukkit TrChat special-chars.yml layout.
+# 与 Bukkit TrChat 的 special-chars.yml 兼容。
+# Enable in the channel's msg.special-char section (e.g. msg.special-char.Enabled: true).
+# 在频道的 msg.special-char 中启用（例如 msg.special-char.Enabled: true）。
+
+SpecialChars: []

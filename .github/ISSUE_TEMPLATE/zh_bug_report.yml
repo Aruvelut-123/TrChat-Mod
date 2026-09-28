@@ -1,0 +1,73 @@
+name: 错误报告
+description: '注意: 未正确根据提示进行反馈错误可能会被忽略或关闭.'
+title: "[问题] "
+labels: ['Bug | 漏洞']
+body:
+  - type: input
+    id: latests
+    attributes:
+      label: '正在使用的版本？（提交前请确保使用的最新版）'
+      description: '请使用以下格式回答：<平台>:<版本>'
+      placeholder: Neoforge:2.5.4.1
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: issues-reviewed
+    attributes:
+      label: '是否存在重复 issue'
+      description: '有些功能可能已经被别人提到过，你翻阅过吗 [Issues](https://github.com/Aruvelut-123/TrChat-Mod/issues)?'
+      options:
+        - label: '我已翻阅现有的 issue 没有发现内容重复, 亦或是对现有 issue 的更详细的描述.'
+          required: true
+
+  - type: checkboxes
+    id: proxy
+    attributes:
+      label: '如果使用跨服功能, 是否使用redis转发?'
+      description: '如果没有, 你将不能正常使用跨服功能'
+      options:
+        - label: '我使用了redis转发'
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: '详细描述'
+      description: '能够重现的动作及前提'
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: '配置文件'
+      description: '发生错误的频道文件或settings.yml'
+      render: 'YAML'
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: '日志'
+      description: '若发生错误时服务端/客户端后台出现信息/报错, 请提供'
+    validations:
+      required: false
+
+  - type: textarea
+    id: environments
+    attributes:
+      label: '服务器环境'
+      description: '在此处粘贴 /version 和 /plugins 的返回结果'
+      value: |
+        服务器版本:
+        ...
+        插件列表:
+        ...
+    validations:
+      required: true

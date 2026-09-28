@@ -1,0 +1,20 @@
+Options:
+  Join-Permission: ''
+  Listen-Permission: ''
+  Speak-Condition: ''
+  Always-Listen: false
+  Auto-Join: false
+  Private: false
+  Target: ALL
+  Proxy: false
+  Force-Proxy: false
+  Double-Transfer: false
+  Ports: []
+  Disabled-Functions: []
+Bindings:
+  Prefix: []
+  Command: []
+Formats: []
+Sender: []
+Receiver: []
+Console: []

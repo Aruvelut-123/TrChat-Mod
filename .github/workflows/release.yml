@@ -1,21 +1,18 @@
-name: TrChat Mod build
+name: TrChat Mod release
 
 on:
-  push:
-    branches:
-      - v2
-  pull_request:
-    branches:
-      - v2
+  release:
+    types: [published]
 
 permissions:
-  contents: read
+  contents: write
   checks: write
 
 jobs:
   build:
     name: Build ${{ matrix.node }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -32,10 +29,12 @@ jobs:
           - 26.2-fabric
           - 26.3-fabric
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
+
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
 
@@ -78,16 +77,48 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-reports-${{ matrix.node }}-${{ github.run_number }}
+          name: release-test-reports-${{ matrix.node }}-${{ github.event.release.tag_name }}
           path: |
             versions/${{ matrix.node }}/build/test-results/test/
             versions/${{ matrix.node }}/build/reports/tests/test/
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload artifacts ${{ matrix.node }}
-        uses: actions/upload-artifact@v7
+      - name: Upload ${{ matrix.node }} jar to release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          shopt -s nullglob
+          for f in versions/${{ matrix.node }}/build/libs/*.jar; do
+            [[ "$f" == *-sources.jar ]] && continue
+            gh release upload "$TAG" "$f" --clobber
+          done
+
+  release-notes:
+    name: Generate release notes
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
         with:
-          name: TrChat-${{ matrix.node }}-${{ github.run_number }}
-          path: versions/${{ matrix.node }}/build/libs/*.jar
-          if-no-files-found: error
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
+      - name: Generate release notes
+        run: |
+          git cliff --current --strip header --output RELEASE_NOTES.md
+
+      - name: Replace release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release edit "$TAG" --notes-file RELEASE_NOTES.md
