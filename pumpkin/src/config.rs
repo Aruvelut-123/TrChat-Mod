@@ -290,6 +290,14 @@ pub struct TrChatConfig {
     /// Private-message templates (legacy-flattened from the `Private` channel)
     /// consumed by the `/msg` command.
     pub msg: PrivateMessageFormats,
+    /// `datasource.yml` — where moderation/ignore state persists (Mod-side
+    /// `PlayerDataStore`); parsed for the future state-store wiring.
+    #[allow(dead_code)] // consumed by the state-store follow-up
+    pub datasource: DataSourceConfig,
+    /// `function.yml` — command controller rules + built-in/custom chat
+    /// functions; parsed for the future function-executor wiring.
+    #[allow(dead_code)] // consumed by the chat-functions follow-up
+    pub function: FunctionConfig,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -521,10 +529,27 @@ pub fn load_from_folder(folder: &str) -> Result<TrChatConfig, String> {
     let channels = parse_channels(&entries);
     let msg = private_formats(&channels);
 
+    // datasource.yml / function.yml — parsed for future wiring (state store,
+    // command controller, chat functions); defaults are seeded above.
+    let mut datasource = DataSourceConfig::default();
+    let raw = fs::read_to_string(root.join("datasource.yml"))
+        .map_err(|e| format!("read datasource.yml: {e}"))?;
+    if let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&raw) {
+        datasource = parse_datasource(&value);
+    }
+    let mut function = FunctionConfig::default();
+    let raw = fs::read_to_string(root.join("function.yml"))
+        .map_err(|e| format!("read function.yml: {e}"))?;
+    if let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&raw) {
+        function = parse_function(&value);
+    }
+
     Ok(TrChatConfig {
         settings,
         channels,
         msg,
+        datasource,
+        function,
     })
 }
 
@@ -533,6 +558,415 @@ fn write_default(path: &Path, content: &str, label: &str) -> Result<(), String> 
         fs::write(path, content).map_err(|e| format!("write {label}: {e}"))?;
     }
     Ok(())
+}
+
+// ---- datasource.yml (Mod `PlayerDataStore`) ---- //
+
+/// Connection settings of a network database section (MySQL/MariaDB/PostgreSQL).
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // consumed by the state-store follow-up
+pub struct NetworkDatabase {
+    pub host: String,
+    pub port: i64,
+    pub database: String,
+    pub user: String,
+    pub password: String,
+    pub parameters: String,
+}
+
+/// Advanced/custom JDBC section.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // consumed by the state-store follow-up
+pub struct JdbcDatabase {
+    pub driver: String,
+    pub url: String,
+    pub user: String,
+    pub password: String,
+    pub table_prefix: String,
+}
+
+/// `datasource.yml` — which store moderation/ignore state survives in.
+/// Parsed for the future state-store wiring; the WASM sandbox has no JDBC
+/// driver, so the values are kept as data only.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // consumed by the state-store follow-up
+pub struct DataSourceConfig {
+    /// `Type` — SQLite / MySQL / MariaDB / PostgreSQL / JDBC.
+    pub data_type: String,
+    /// `SQLite.File` (relative to the data folder when not absolute).
+    pub sqlite_file: String,
+    pub mysql: NetworkDatabase,
+    pub mariadb: NetworkDatabase,
+    pub postgresql: NetworkDatabase,
+    pub jdbc: JdbcDatabase,
+}
+
+impl DataSourceConfig {
+    /// The configured `Type`, lowercased (Mod treats it case-insensitively).
+    #[allow(dead_code)] // consumed by the state-store follow-up
+    pub fn kind(&self) -> String {
+        self.data_type.to_ascii_lowercase()
+    }
+}
+
+fn parse_network_database(v: Option<&serde_yaml::Value>) -> NetworkDatabase {
+    let Some(v) = v else {
+        return NetworkDatabase::default();
+    };
+    let get = |key: &str| {
+        v.get(key)
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let get_i = |key: &str| v.get(key).and_then(|x| x.as_i64()).unwrap_or(0);
+    NetworkDatabase {
+        host: get("Host"),
+        port: get_i("Port"),
+        database: get("Database"),
+        user: get("User"),
+        password: get("Password"),
+        parameters: get("Parameters"),
+    }
+}
+
+fn parse_datasource(v: &serde_yaml::Value) -> DataSourceConfig {
+    let get = |key: &str| {
+        v.get(key)
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    DataSourceConfig {
+        data_type: get("Type"),
+        sqlite_file: v
+            .get("SQLite")
+            .and_then(|s| s.get("File"))
+            .and_then(|f| f.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        mysql: parse_network_database(v.get("MySQL")),
+        mariadb: parse_network_database(v.get("MariaDB")),
+        postgresql: parse_network_database(v.get("PostgreSQL")),
+        jdbc: {
+            let j = v.get("JDBC");
+            JdbcDatabase {
+                driver: j
+                    .and_then(|x| x.get("Driver"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                url: j
+                    .and_then(|x| x.get("Url"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                user: j
+                    .and_then(|x| x.get("User"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                password: j
+                    .and_then(|x| x.get("Password"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                table_prefix: j
+                    .and_then(|x| x.get("Table-Prefix"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            }
+        },
+    }
+}
+
+// ---- function.yml (Mod `ChatFunctionService` / `CommandController`) ---- //
+
+/// One `General.Command-Controller.List` rule (a command pattern to intercept).
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // consumed by the chat-functions follow-up
+pub struct CommandRule {
+    /// The raw source entry (kept for docs/debugging).
+    pub source: String,
+    /// The pattern before the first `{…}` property block.
+    pub pattern: String,
+    /// `{exact: true}` → match the whole input, not just the command label.
+    pub exact: bool,
+    /// `{condition: …}` — not evaluated by this port yet.
+    pub condition: String,
+    /// `{cooldown: N}` in seconds, converted to milliseconds.
+    pub cooldown_millis: i64,
+}
+
+/// `General.Command-Controller`.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // consumed by the chat-functions follow-up
+pub struct CommandControllerConfig {
+    pub enabled: bool,
+    pub rules: Vec<CommandRule>,
+}
+
+/// A built-in general function (`Mention`, `Mention-All`, `Item-Show`, …).
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // consumed by the chat-functions follow-up
+pub struct GeneralFunctionConfig {
+    /// Section name under `General`, e.g. `Mention`.
+    pub name: String,
+    pub enabled: bool,
+    pub permission: String,
+    pub cooldown_millis: i64,
+    pub notify: bool,
+    pub self_mention: bool,
+    /// `Pattern` — only meaningful for `Mention`.
+    pub pattern: String,
+    pub keys: Vec<String>,
+    pub actions: Vec<String>,
+    /// `Origin-Name` / `Compatible` / `UI` — Item-Show only.
+    pub origin_name: bool,
+    pub compatible: bool,
+    pub ui: bool,
+}
+
+/// The clickable display of a custom function.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // consumed by the chat-functions follow-up
+pub struct FunctionDisplay {
+    pub text: String,
+    pub hover: String,
+    pub suggest: String,
+    pub command: String,
+    pub url: String,
+    pub copy: String,
+}
+
+/// A `Custom.<name>` entry (regex function).
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // consumed by the chat-functions follow-up
+pub struct CustomFunctionConfig {
+    pub name: String,
+    pub condition: String,
+    pub priority: i64,
+    pub pattern: String,
+    pub text_filter: String,
+    pub permission: String,
+    pub cooldown_millis: i64,
+    pub actions: Vec<String>,
+    pub display: FunctionDisplay,
+}
+
+/// `function.yml` — parsed for the future function-executor wiring.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // consumed by the chat-functions follow-up
+pub struct FunctionConfig {
+    pub command_controller: CommandControllerConfig,
+    /// Built-in `General` functions other than `Command-Controller`, in
+    /// declaration order.
+    pub general: Vec<GeneralFunctionConfig>,
+    /// `Custom` entries, sorted by priority descending (Mod behavior).
+    pub custom: Vec<CustomFunctionConfig>,
+}
+
+/// Parses `{key: value}` property blocks from a command-rule source string
+/// (Mod `CommandController.PROPERTY`).
+fn command_properties(source: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = source;
+    while let Some(start) = rest.find('{') {
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('}') else {
+            break;
+        };
+        let inner = &after[..end];
+        if let Some(colon) = inner.find(':') {
+            let key = inner[..colon].trim().to_ascii_lowercase();
+            let value = inner[colon + 1..].trim().to_string();
+            out.push((key, value));
+        }
+        rest = &after[end + 1..];
+    }
+    out
+}
+
+/// `30s` / `5m` / `2h` / `1d` / plain number → milliseconds (Mod `durationMillis`).
+fn duration_millis(value: &str) -> i64 {
+    let value = value.trim();
+    if value.is_empty() {
+        return 0;
+    }
+    let digits = value
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>();
+    let number: i64 = digits.parse().unwrap_or(0);
+    let unit = value[digits.len()..].to_ascii_lowercase();
+    match unit.as_str() {
+        "s" => number * 1_000,
+        "m" => number * 60_000,
+        "h" => number * 3_600_000,
+        "d" => number * 86_400_000,
+        // "" and anything unrecognised → plain milliseconds (Mod default arm).
+        _ => number,
+    }
+}
+
+/// `{cooldown: N}` — a plain number in *seconds* (Mod `secondsMillis`).
+fn seconds_millis(value: &str) -> i64 {
+    value
+        .trim()
+        .parse::<f64>()
+        .map(|f| (f * 1000.0).round() as i64)
+        .unwrap_or(0)
+}
+
+fn yaml_str(v: &serde_yaml::Value, key: &str) -> String {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn yaml_bool(v: &serde_yaml::Value, key: &str, fallback: bool) -> bool {
+    v.get(key).and_then(|x| x.as_bool()).unwrap_or(fallback)
+}
+
+fn yaml_strings(v: &serde_yaml::Value, key: &str) -> Vec<String> {
+    match v.get(key) {
+        Some(serde_yaml::Value::Sequence(seq)) => seq
+            .iter()
+            .filter_map(|x| x.as_str())
+            .map(|s| s.to_string())
+            .collect(),
+        Some(serde_yaml::Value::String(s)) => {
+            vec![s.to_string()]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn parse_general_function(name: &str, v: &serde_yaml::Value) -> GeneralFunctionConfig {
+    let mut actions = yaml_strings(v, "Action");
+    actions.extend(yaml_strings(v, "Actions"));
+    GeneralFunctionConfig {
+        name: name.to_string(),
+        enabled: yaml_bool(v, "Enabled", true),
+        permission: yaml_str(v, "Permission"),
+        // `Permission: 'none'` in defaults; treat as empty.
+        cooldown_millis: duration_millis(&yaml_str(v, "Cooldown")),
+        notify: yaml_bool(v, "Notify", true),
+        self_mention: yaml_bool(v, "Self-Mention", false),
+        pattern: yaml_str(v, "Pattern"),
+        keys: yaml_strings(v, "Keys"),
+        actions,
+        origin_name: yaml_bool(v, "Origin-Name", false),
+        compatible: yaml_bool(v, "Compatible", false),
+        ui: yaml_bool(v, "UI", false),
+    }
+}
+
+fn parse_function(v: &serde_yaml::Value) -> FunctionConfig {
+    let general = v.get("General").unwrap_or(&serde_yaml::Value::Null);
+    let controller = general
+        .get("Command-Controller")
+        .unwrap_or(&serde_yaml::Value::Null);
+    let mut rules = Vec::new();
+    if let Some(serde_yaml::Value::Sequence(list)) = controller.get("List") {
+        for item in list {
+            if let Some(source) = item.as_str() {
+                if source.is_empty() {
+                    continue;
+                }
+                let end = source.find('{').unwrap_or(source.len());
+                let pattern = source[..end].trim().to_string();
+                let mut exact = false;
+                let mut condition = String::new();
+                let mut cooldown = 0i64;
+                for (key, value) in command_properties(source) {
+                    match key.as_str() {
+                        "exact" => exact = value.eq_ignore_ascii_case("true"),
+                        "condition" => condition = value,
+                        "cooldown" => cooldown = seconds_millis(&value),
+                        _ => {}
+                    }
+                }
+                rules.push(CommandRule {
+                    source: source.to_string(),
+                    pattern,
+                    exact,
+                    condition,
+                    cooldown_millis: cooldown,
+                });
+            }
+        }
+    }
+
+    let mut general_functions = Vec::new();
+    if let Some(map) = general.as_mapping() {
+        for (key, value) in map {
+            let Some(name) = key.as_str() else {
+                continue;
+            };
+            if name == "Command-Controller" {
+                continue;
+            }
+            general_functions.push(parse_general_function(name, value));
+        }
+    }
+
+    let mut custom = Vec::new();
+    if let Some(map) = v.get("Custom").and_then(|c| c.as_mapping()) {
+        for (key, value) in map {
+            let Some(name) = key.as_str() else {
+                continue;
+            };
+            let display = value.get("display").unwrap_or(&serde_yaml::Value::Null);
+            let mut actions = yaml_strings(value, "action");
+            actions.extend(yaml_strings(value, "actions"));
+            actions.extend(yaml_strings(value, "Action"));
+            actions.extend(yaml_strings(value, "Actions"));
+            let text_filter = yaml_str(value, "text-filter");
+            custom.push(CustomFunctionConfig {
+                name: name.to_string(),
+                condition: yaml_str(value, "condition"),
+                priority: value.get("priority").and_then(|p| p.as_i64()).unwrap_or(0),
+                pattern: yaml_str(value, "pattern"),
+                text_filter,
+                permission: yaml_str(value, "permission"),
+                cooldown_millis: duration_millis(&yaml_str(value, "cooldown")),
+                actions,
+                display: FunctionDisplay {
+                    text: yaml_str(display, "text"),
+                    hover: display
+                        .get("hover")
+                        .and_then(|h| {
+                            h.as_str().map(|s| s.to_string()).or_else(|| {
+                                h.as_sequence().map(|seq| {
+                                    seq.iter()
+                                        .filter_map(|x| x.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                })
+                            })
+                        })
+                        .unwrap_or_default(),
+                    suggest: yaml_str(display, "suggest"),
+                    command: yaml_str(display, "command"),
+                    url: yaml_str(display, "url"),
+                    copy: yaml_str(display, "copy"),
+                },
+            });
+        }
+        custom.sort_by(|a, b| b.priority.cmp(&a.priority));
+    }
+
+    FunctionConfig {
+        command_controller: CommandControllerConfig {
+            enabled: yaml_bool(controller, "Enabled", true),
+            rules,
+        },
+        general: general_functions,
+        custom,
+    }
 }
 
 fn parse_channels(files: &[(String, String)]) -> Vec<ChannelConfig> {
@@ -1036,5 +1470,112 @@ mod tests {
             std::env::temp_dir().join(format!("trchat-pumpkin-test-{}-{tag}", std::process::id()));
         let _ = fs::remove_dir_all(&dir); // clean from a previous run
         dir.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn datasource_defaults_parse() {
+        let value: serde_yaml::Value = serde_yaml::from_str(defaults::DATASOURCE).unwrap();
+        let ds = parse_datasource(&value);
+        assert_eq!(ds.kind(), "sqlite");
+        assert_eq!(ds.sqlite_file, "data.db");
+        assert_eq!(ds.mysql.host, "127.0.0.1");
+        assert_eq!(ds.mysql.port, 3306);
+        assert_eq!(ds.mysql.database, "trchat");
+        assert_eq!(
+            ds.mysql.parameters,
+            "useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC"
+        );
+        assert_eq!(ds.postgresql.port, 5432);
+        assert_eq!(ds.mariadb.user, "root");
+        assert_eq!(ds.jdbc.table_prefix, "trchat_");
+        assert!(ds.jdbc.driver.is_empty()); // JDBC auto-discovery
+
+        // Type switches between sections without touching the others.
+        let mut switched = ds.clone();
+        switched.data_type = "MySQL".to_string();
+        assert_eq!(switched.kind(), "mysql");
+        assert_eq!(switched.sqlite_file, "data.db");
+    }
+
+    #[test]
+    fn function_defaults_parse() {
+        let value: serde_yaml::Value = serde_yaml::from_str(defaults::FUNCTION).unwrap();
+        let f = parse_function(&value);
+
+        // Command controller: 4 rules, exact + condition + cooldown props.
+        let cc = &f.command_controller;
+        assert!(cc.enabled);
+        assert_eq!(cc.rules.len(), 4);
+        let arasple = &cc.rules[0];
+        assert_eq!(arasple.pattern, "arasple");
+        assert!(arasple.exact);
+        assert_eq!(arasple.condition, "perm \"trchat.admin\"");
+        assert_eq!(arasple.cooldown_millis, 0);
+        let ver = &cc.rules[1];
+        assert!(!ver.exact);
+        assert_eq!(ver.pattern, "ver(sion)?(s)?");
+        let shout = &cc.rules[3];
+        assert_eq!(shout.pattern, "shout");
+        assert_eq!(shout.cooldown_millis, 3000); // `{cooldown: 3}` seconds
+
+        // General functions keep declaration order.
+        let names: Vec<&str> = f.general.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "Mention",
+                "Mention-All",
+                "Item-Show",
+                "Inventory-Show",
+                "EnderChest-Show"
+            ]
+        );
+        let mentionall = f.general.iter().find(|g| g.name == "Mention-All").unwrap();
+        assert!(mentionall.enabled);
+        assert_eq!(mentionall.permission, "trchat.function.mentionall");
+        assert_eq!(mentionall.cooldown_millis, 300_000); // '5m'
+        assert_eq!(
+            mentionall.keys,
+            vec!["@all", "@everyone", "@everybody", "@所有人", "@全体成员"]
+        );
+
+        // Custom functions sorted by priority descending.
+        assert_eq!(f.custom.first().unwrap().name, "shareUrl");
+        assert_eq!(f.custom.first().unwrap().priority, 100);
+        assert_eq!(f.custom.first().unwrap().display.text, "&8[&f&l网站&8]");
+        assert_eq!(
+            f.custom.first().unwrap().display.hover.contains("点击进入"),
+            true
+        );
+        assert_eq!(f.custom.first().unwrap().display.url, "{0}");
+        let glow_email = f.custom.iter().find(|c| c.name == "glowEmail").unwrap();
+        assert_eq!(glow_email.cooldown_millis, 5000); // '5s'
+        assert_eq!(glow_email.display.copy, "{0}");
+        // hidePhoneNumber has no priority → sorts after the priority-100 ones.
+        let hide_phone = f
+            .custom
+            .iter()
+            .find(|c| c.name == "hidePhoneNumber")
+            .unwrap();
+        assert_eq!(hide_phone.priority, 0);
+        assert_eq!(hide_phone.display.text, "&8[&c&m-&8]");
+    }
+
+    #[test]
+    fn properties_parsed_from_rule_source() {
+        let props = command_properties("arasple{exact: true}{condition: perm \"trchat.admin\"}");
+        assert_eq!(
+            props,
+            vec![
+                ("exact".to_string(), "true".to_string()),
+                ("condition".to_string(), "perm \"trchat.admin\"".to_string()),
+            ]
+        );
+        assert_eq!(duration_millis("30s"), 30_000);
+        assert_eq!(duration_millis("5m"), 300_000);
+        assert_eq!(duration_millis("2h"), 7_200_000);
+        assert_eq!(duration_millis("1d"), 86_400_000);
+        assert_eq!(duration_millis(""), 0);
+        assert_eq!(seconds_millis("3"), 3000);
     }
 }
