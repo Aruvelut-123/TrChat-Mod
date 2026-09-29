@@ -141,10 +141,14 @@ impl EventHandler<PlayerChatEvent> for ChatHandler {
         mut event: EventData<PlayerChatEvent>,
     ) -> EventData<PlayerChatEvent> {
         let config = self.config.read();
-        let _ = chat_pipeline(&server, &event.player, &event.message, &config);
+        // A disabled world must yield to vanilla chat: return *without*
+        // cancelling, so the original broadcast still happens (§1.1 step 2).
+        if let ChatOutcome::DisabledWorld = chat_pipeline(&server, &event.player, &event.message, &config) {
+            return event;
+        }
 
-        // Every path intercepted here suppresses the vanilla broadcast; the
-        // plugin's own rendering has already reached the allowed receivers.
+        // Every other path intercepted here suppresses the vanilla broadcast;
+        // the plugin's own rendering has already reached the allowed receivers.
         event.cancelled = true;
         event.message = String::new();
         event.recipients = Vec::new();
@@ -163,15 +167,28 @@ pub fn dispatch_as_chat(server: &Server, player: &Player, message: &str) {
     let _ = chat_pipeline(server, player, message, &config);
 }
 
+/// The result of a chat-pipeline run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatOutcome {
+    /// The message was accepted and broadcast to its receivers.
+    Accepted,
+    /// A guard rejected it, or the message was swallowed.
+    Rejected,
+    /// The world is disabled in `chat.disabledWorlds`, so the plugin must not
+    /// touch the event and vanilla chat keeps the message (§1.1 step 2).
+    DisabledWorld,
+}
+
 /// The full guard → filter → route → render → broadcast flow.
-/// Returns `true` when the message was accepted (broadcast), `false` when a
-/// guard rejected it (the event is cancelled either way).
+///
+/// [`ChatOutcome::DisabledWorld`] asks the caller to leave the event alone;
+/// every other outcome means the vanilla broadcast must be suppressed.
 fn chat_pipeline(
     server: &Server,
     player: &Player,
     raw_message: &str,
     config: &TrChatConfig,
-) -> bool {
+) -> ChatOutcome {
     let _ = server;
     let name = player.get_name();
     let locale = player.get_locale();
@@ -179,7 +196,13 @@ fn chat_pipeline(
 
     // 1. Empty message → silently swallowed (Bukkit: `return` without hint).
     if message.is_empty() {
-        return false;
+        return ChatOutcome::Rejected;
+    }
+
+    // 1b. Disabled world — hand the message back to vanilla chat. Checked
+    //     before every guard so a disabled world never sees a hint either.
+    if config.settings.chat.is_disabled_world(&player.get_world().get_name()) {
+        return ChatOutcome::DisabledWorld;
     }
 
     // 2. Length guard — UTF-16 code units (Java `String.length()`), not chars.
@@ -198,7 +221,7 @@ fn chat_pipeline(
             TextComponent::from_legacy_string_with_code(&text, '&'),
             false,
         );
-        return false;
+        return ChatOutcome::Rejected;
     }
 
     // 3. Mute guards: global mute first, then the player's own mute.
@@ -223,7 +246,7 @@ fn chat_pipeline(
                 TextComponent::from_legacy_string_with_code(&text, '&'),
                 false,
             );
-            return false;
+            return ChatOutcome::Rejected;
         }
     }
 
@@ -244,7 +267,7 @@ fn chat_pipeline(
                     TextComponent::from_legacy_string_with_code(&text, '&'),
                     false,
                 );
-                return false;
+                return ChatOutcome::Rejected;
             }
         }
     }
@@ -279,7 +302,7 @@ fn chat_pipeline(
                 TextComponent::from_legacy_string_with_code(&text, '&'),
                 false,
             );
-            return false;
+            return ChatOutcome::Rejected;
         }
         state.recent.push_back(RecentMessage {
             text: message.to_string(),
@@ -323,7 +346,7 @@ fn chat_pipeline(
                 TextComponent::from_legacy_string_with_code(&text, '&'),
                 false,
             );
-            return false;
+            return ChatOutcome::Rejected;
         }
     }
 
@@ -520,7 +543,7 @@ fn chat_pipeline(
             state.last_sent_at = Some(Instant::now());
         }
     }
-    true
+    ChatOutcome::Accepted
 }
 
 /// Renders a format template with the built-in placeholders (`{player}`,

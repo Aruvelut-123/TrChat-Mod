@@ -111,6 +111,26 @@ pub struct ChatSection {
     pub disabled_worlds: Vec<String>,
 }
 
+impl ChatSection {
+    /// §1.1 step 2 — whether TrChat must yield this world back to vanilla chat.
+    ///
+    /// An empty list disables the check. Each entry is a
+    /// `Pattern.CASE_INSENSITIVE` **full match** against the world dimension id
+    /// (e.g. `minecraft:overworld`), so `overworld` alone does *not* match.
+    /// An entry that fails to compile never matches.
+    pub fn is_disabled_world(&self, world_id: &str) -> bool {
+        if self.disabled_worlds.is_empty() {
+            return false;
+        }
+        self.disabled_worlds.iter().any(|pattern| {
+            regex::RegexBuilder::new(&format!("^(?:{pattern})$"))
+                .case_insensitive(true)
+                .build()
+                .is_ok_and(|re| re.is_match(world_id))
+        })
+    }
+}
+
 /// `logging:` — daily plain-text chat logs under `logs/`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -1692,6 +1712,52 @@ mod tests {
             ch.target(),
             ChannelTarget::Distance(d) if d < 0.0
         ));
+    }
+
+    /// §1.1 step 2 — `chat.disabledWorlds` entries are case-insensitive full
+    /// matches against the world dimension id.
+    #[test]
+    fn disabled_world_matches_case_insensitive_full_id() {
+        let mut chat = ChatSection::default();
+        assert!(
+            !chat.is_disabled_world("minecraft:overworld"),
+            "an empty list disables the check"
+        );
+
+        chat.disabled_worlds = vec!["minecraft:overworld".into()];
+        assert!(chat.is_disabled_world("minecraft:overworld"));
+        assert!(
+            chat.is_disabled_world("MINECRAFT:OVERWORLD"),
+            "matching is case-insensitive"
+        );
+        assert!(
+            !chat.is_disabled_world("minecraft:the_nether"),
+            "an unrelated world is untouched"
+        );
+        // `matches()` is a full match, not a substring search.
+        assert!(
+            !chat.is_disabled_world("minecraft:overworld_nether"),
+            "a longer id must not match"
+        );
+        assert!(
+            !chat.is_disabled_world("overworld"),
+            "the bare name does not match the namespaced id"
+        );
+    }
+
+    /// A regex entry is honoured, and an uncompilable one never matches.
+    #[test]
+    fn disabled_world_supports_regex_and_ignores_bad_patterns() {
+        let mut chat = ChatSection::default();
+        chat.disabled_worlds = vec!["minecraft:.+".into()];
+        assert!(chat.is_disabled_world("minecraft:overworld"));
+        assert!(!chat.is_disabled_world("custom:overworld"));
+
+        chat.disabled_worlds = vec!["(".into()];
+        assert!(
+            !chat.is_disabled_world("minecraft:overworld"),
+            "an invalid pattern must not disable the world"
+        );
     }
 
     /// §2.3 — membership is case-insensitive against the lowercased channel id.
