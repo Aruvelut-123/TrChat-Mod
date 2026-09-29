@@ -172,6 +172,14 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         "yaw" => format_number(player.get_yaw() as f64),
         "pitch" => format_number(player.get_pitch() as f64),
         "direction" => cardinal_direction(player.get_yaw()),
+        // Compass target (spec lines 255–262). `get_compass_target` is the
+        // spawn/lodestone a compass points at, not an optional respawn point.
+        "compass_x" => format_number(player.get_compass_target().0),
+        "compass_y" => format_number(player.get_compass_target().1),
+        "compass_z" => format_number(player.get_compass_target().2),
+        // Abilities (spec line 203) — `player-abilities` carries both flags.
+        "allow_flight" => yes_no(player.get_abilities().allow_flying),
+        "is_flying" => yes_no(player.get_abilities().flying),
 
         // Health / hunger.
         "health" => format_number(player.get_health() as f64),
