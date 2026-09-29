@@ -722,8 +722,9 @@ pub struct CommandControllerConfig {
 }
 
 /// A built-in general function (`Mention`, `Mention-All`, `Item-Show`, …).
+/// `Mention` / `Mention-All` are consumed by the chat pipeline
+/// (`functions::process`); the remaining fields belong to the follow-ups.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)] // consumed by the chat-functions follow-up
 pub struct GeneralFunctionConfig {
     /// Section name under `General`, e.g. `Mention`.
     pub name: String,
@@ -735,10 +736,14 @@ pub struct GeneralFunctionConfig {
     /// `Pattern` — only meaningful for `Mention`.
     pub pattern: String,
     pub keys: Vec<String>,
+    #[allow(dead_code)] // `actions` — consumed by the runActions follow-up
     pub actions: Vec<String>,
     /// `Origin-Name` / `Compatible` / `UI` — Item-Show only.
+    #[allow(dead_code)] // Item-Show follow-up
     pub origin_name: bool,
+    #[allow(dead_code)] // Item-Show follow-up
     pub compatible: bool,
+    #[allow(dead_code)] // Item-Show follow-up
     pub ui: bool,
 }
 

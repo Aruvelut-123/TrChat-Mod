@@ -27,6 +27,7 @@ use std::time::Instant;
 
 use crate::config::{color_code, ChannelConfig, Route, SharedConfig, TrChatConfig};
 use crate::filter::{MessageGuard, TextFilter};
+use crate::functions;
 use crate::lang;
 use crate::playerdata::SessionPlayers;
 use crate::special;
@@ -261,15 +262,40 @@ fn chat_pipeline(
         }
     }
 
-    // 8. Render — one template string, then one component per receiver.
+    // 8. Chat functions (§1.3 step 6) — `Mention` / `Mention-All` scanning,
+    //    permission + cooldown gating, and span rendering. Runs after the
+    //    speak-permission check and before any receiver sees the message; it
+    //    also strips legacy codes, so a `None` outcome keeps the plain
+    //    template render (the Mod's no-component path, §3.1).
+    let disabled: &[String] = channel
+        .map(|c| c.options.disabled_functions.as_slice())
+        .unwrap_or(&[]);
+    let outcome = functions::process(server, &event.player, &body, config, disabled);
+
+    // 8b. Render — one template string, then one component per receiver.
     let server_name = config.server_name();
     let world = event.player.get_world().get_name();
-    let template = match channel {
-        Some(ch) => {
+    let template = match (&outcome, channel) {
+        // A processed body carries its own styled component, so the body text
+        // is *not* interpolated into the template; the caller passes the
+        // component instead (§3.1: "若调用方传入了 messageComponent").
+        (Some(_), Some(ch)) => {
+            render_template(&ch.template, &name, "", &ch.id, server_name, &world, "")
+        }
+        (Some(_), None) => render_template(
+            &config.plain_template(),
+            &name,
+            "",
+            "",
+            server_name,
+            &world,
+            "",
+        ),
+        (None, Some(ch)) => {
             let body = wrap_special_characters(ch, &body);
             render_template(&ch.template, &name, &body, &ch.id, server_name, &world, "")
         }
-        None => render_template(
+        (None, None) => render_template(
             &config.plain_template(),
             &name,
             &body,
@@ -284,7 +310,11 @@ fn chat_pipeline(
     //    distance (Bukkit `DISTANCE` semantics; 0.0 = unlimited).
     let radius = channel.map(|c| c.radius()).unwrap_or(0.0f64);
     let origin = event.player.get_position();
-    for player in server.get_all_players() {
+    // Receivers that really got the message, in broadcast order — the notify
+    // pass (§1.3 step 9) only ever touches these players.
+    let mut receivers: Vec<&pumpkin_plugin_api::player::Player> = Vec::new();
+    let players = server.get_all_players();
+    for player in &players {
         if radius > 0.0 {
             let pos = player.get_position();
             let dx = pos.0 - origin.0;
@@ -294,8 +324,28 @@ fn chat_pipeline(
                 continue;
             }
         }
-        let component = TextComponent::from_legacy_string_with_code(&template, '&');
+        let component = match &outcome {
+            Some(out) => functions::build_body_component(&template, out, &name, &locale),
+            None => TextComponent::from_legacy_string_with_code(&template, '&'),
+        };
         let _ = player.send_system_message(component, false);
+        receivers.push(player);
+    }
+
+    // 9b. `notifyMentioned` (§1.3 step 9, §2.9) — titles/sound for mentioned
+    //     players that actually received the broadcast.
+    if let Some(out) = &outcome {
+        if !out.mentioned.is_empty() {
+            for player in &receivers {
+                let receiver = player.get_name().to_ascii_lowercase();
+                if receiver.eq_ignore_ascii_case(&name) {
+                    continue;
+                }
+                if out.mentioned.contains(&receiver) {
+                    functions::notify_mentioned(player, &name, &player.get_locale());
+                }
+            }
+        }
     }
 
     // Accepted — update the cooldown timestamp.
