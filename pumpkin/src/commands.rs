@@ -548,14 +548,24 @@ impl CommandHandler for BoundAliasCommand {
                 return Ok(0);
             };
             if message_body.trim().is_empty() {
-                // No target → treat the alias as a plain channel switch.
-                return switch_channel(&sender, &sender_player.get_name(), &channel_id);
+                // §2.2/§2.3 — a bare private alias cannot join or toggle the
+                // channel, so it reports the target requirement instead.
+                send(
+                    &sender,
+                    &message("Channel-Private-Target", &sender, &[&channel_id]),
+                );
+                return Ok(0);
             }
             let mut parts = message_body.splitn(2, char::is_whitespace);
             let target_name = parts.next().unwrap_or_default().to_string();
             let text = parts.next().unwrap_or_default().trim().to_string();
             if text.is_empty() {
-                return switch_channel(&sender, &sender_player.get_name(), &channel_id);
+                // A target with no body has nothing to send either.
+                send(
+                    &sender,
+                    &message("Channel-Private-Target", &sender, &[&channel_id]),
+                );
+                return Ok(0);
             }
             let online = server.get_all_players();
             let Some(target) = online
@@ -574,9 +584,9 @@ impl CommandHandler for BoundAliasCommand {
             return Ok(0);
         }
 
-        // A non-private alias with no body just switches the active channel.
+        // A non-private alias with no body toggles the active channel (§2.4).
         if message_body.trim().is_empty() {
-            return switch_channel(&sender, &sender.get_name(), &channel_id);
+            return toggle_channel(&sender, &sender.get_name(), &channel_id);
         }
         // With a body the alias behaves exactly like typing the channel's own
         // prefix, so the message is rewritten into that form and handed to the
@@ -606,18 +616,78 @@ impl CommandHandler for BoundAliasCommand {
     }
 }
 
-/// Switches `name`'s active channel to `channel_id`, reporting `Channel-Join`.
-fn switch_channel(sender: &CommandSender, name: &str, channel_id: &str) -> Result<i32, CommandError> {
-    let mut players = SessionPlayers::global()
-        .write()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(state) = players.state_mut(name) {
-        state.active_channel = channel_id.to_string();
-        state.joined_channels.insert(channel_id.to_ascii_lowercase());
+/// §2.4 `toggleChannel` — joining when elsewhere, quitting when already there.
+///
+/// A channel with `Always-Listen` keeps its `joined` record on exit, so the
+/// player stops sending to it but still receives from it.
+fn toggle_channel(sender: &CommandSender, name: &str, channel_id: &str) -> Result<i32, CommandError> {
+    let always_listen = {
+        let config = config::global_config();
+        let config = config.read();
+        config
+            .channel_by_id(channel_id)
+            .is_some_and(|c| c.always_listen())
+    };
+    // `None` means the player quit; `Some(fallback)` means they joined.
+    let outcome = {
+        let mut players = SessionPlayers::global()
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        let state = players.state_mut(name);
+        state.map(|s| apply_channel_toggle(s, channel_id, always_listen))
+    };
+
+    match outcome {
+        Some(ChannelToggle::Quit { fallback }) => {
+            send(sender, &message("Channel-Quit", sender, &[channel_id]));
+            // A different active channel after quitting is announced too.
+            if !fallback.eq_ignore_ascii_case(channel_id) {
+                send(sender, &message("Channel-Join", sender, &[&fallback]));
+            }
+        }
+        _ => send(sender, &message("Channel-Join", sender, &[channel_id])),
     }
-    drop(players);
-    send(sender, &message("Channel-Join", sender, &[channel_id]));
     Ok(0)
+}
+
+/// The result of a [`toggle_channel`] state transition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ChannelToggle {
+    /// The player was already in the channel and left it.
+    Quit { fallback: String },
+    /// The player is now in the channel.
+    Join,
+}
+
+/// Applies the §2.4 toggle to one player's state.
+///
+/// Split out from the command so the `Always-Listen` retention rule can be
+/// tested without a live `CommandSender`.
+fn apply_channel_toggle(
+    state: &mut crate::playerdata::PlayerState,
+    channel_id: &str,
+    always_listen: bool,
+) -> ChannelToggle {
+    let lower = channel_id.to_ascii_lowercase();
+    if state.joined_channels.contains(&lower) {
+        // Quit — an `Always-Listen` channel keeps its membership record.
+        if !always_listen {
+            state.joined_channels.remove(&lower);
+        }
+        // Fall back to Normal when the channel being quit is the active one.
+        let fallback = if state.active_channel.eq_ignore_ascii_case(channel_id)
+            || state.active_channel.is_empty()
+        {
+            "Normal".to_string()
+        } else {
+            state.active_channel.clone()
+        };
+        state.active_channel = fallback.clone();
+        return ChannelToggle::Quit { fallback };
+    }
+    state.active_channel = channel_id.to_string();
+    state.joined_channels.insert(lower);
+    ChannelToggle::Join
 }
 
 /// `/trreply <message>` (aliases `/r`, `/reply`) — §2.6.
@@ -767,5 +837,105 @@ impl CommandHandler for ViewCommand {
         }
         player.open_gui(gui);
         Ok(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_channel_toggle, ChannelToggle};
+    use crate::playerdata::PlayerState;
+
+    /// §2.4 — joining a channel records membership and makes it active.
+    #[test]
+    fn toggle_joins_when_not_a_member() {
+        let mut state = PlayerState {
+            active_channel: "Normal".into(),
+            ..Default::default()
+        };
+
+        let outcome = apply_channel_toggle(&mut state, "Global", false);
+
+        assert_eq!(outcome, ChannelToggle::Join);
+        assert_eq!(state.active_channel, "Global");
+        assert!(state.joined_channels.contains("global"));
+    }
+
+    /// §2.4 — toggling a joined channel quits it and falls back to Normal.
+    #[test]
+    fn toggle_quits_and_falls_back_to_normal() {
+        let mut state = PlayerState {
+            active_channel: "Global".into(),
+            ..Default::default()
+        };
+        state.joined_channels.insert("global".into());
+
+        let outcome = apply_channel_toggle(&mut state, "Global", false);
+
+        assert_eq!(
+            outcome,
+            ChannelToggle::Quit {
+                fallback: "Normal".into()
+            }
+        );
+        assert_eq!(state.active_channel, "Normal");
+        assert!(
+            !state.joined_channels.contains("global"),
+            "a non Always-Listen channel drops its membership"
+        );
+    }
+
+    /// §2.3 — `Always-Listen` keeps the joined record on exit, so the player
+    /// still *receives* the channel even though they no longer send to it.
+    #[test]
+    fn always_listen_retains_membership_on_exit() {
+        let mut state = PlayerState {
+            active_channel: "Global".into(),
+            ..Default::default()
+        };
+        state.joined_channels.insert("global".into());
+
+        let outcome = apply_channel_toggle(&mut state, "Global", true);
+
+        assert!(matches!(outcome, ChannelToggle::Quit { .. }));
+        assert_eq!(state.active_channel, "Normal");
+        assert!(
+            state.joined_channels.contains("global"),
+            "Always-Listen must retain membership on exit"
+        );
+    }
+
+    /// Switching away from a *different* channel keeps that other channel
+    /// active, so quitting `Global` from `Staff` does not jump to Normal.
+    #[test]
+    fn quit_keeps_an_unrelated_active_channel() {
+        let mut state = PlayerState {
+            active_channel: "Staff".into(),
+            ..Default::default()
+        };
+        state.joined_channels.insert("global".into());
+
+        let outcome = apply_channel_toggle(&mut state, "Global", false);
+
+        assert_eq!(
+            outcome,
+            ChannelToggle::Quit {
+                fallback: "Staff".into()
+            }
+        );
+        assert_eq!(state.active_channel, "Staff");
+    }
+
+    /// Joining with a differently-cased id is idempotent on the stored key.
+    #[test]
+    fn toggle_membership_is_case_insensitive() {
+        let mut state = PlayerState::default();
+        apply_channel_toggle(&mut state, "GLOBAL", false);
+        assert_eq!(state.active_channel, "GLOBAL");
+        assert!(state.joined_channels.contains("global"));
+
+        // The same channel under a different case is recognised as joined.
+        let outcome = apply_channel_toggle(&mut state, "global", false);
+        assert!(matches!(outcome, ChannelToggle::Quit { .. }));
+        assert!(state.joined_channels.is_empty());
     }
 }
