@@ -816,14 +816,20 @@ pub fn build_body_component(
                 registry_key,
                 snapshot,
             } => {
-                // §2.10 — `[<name> x<count>]` in AQUA. An empty slot already
-                // carries the `Function-Item-Air` text and has no item hover.
+                // §2.10 steps 2 & 5 — a present item renders `[<name> x<count>]`
+                // in AQUA; an empty slot renders `Function-Item-Air` in GRAY and
+                // carries no item hover.
                 let label = if count == &0 {
                     name.clone()
                 } else {
                     format!("[{name} x{count}]")
                 };
-                let mut c = TextComponent::text(&label).color_named(NamedColor::Aqua);
+                let colour = if count == &0 {
+                    NamedColor::Gray
+                } else {
+                    NamedColor::Aqua
+                };
+                let mut c = TextComponent::text(&label).color_named(colour);
                 if !registry_key.is_empty() {
                     // `Compatible: true` already substituted stone upstream.
                     c = c.hover_show_item(registry_key);
