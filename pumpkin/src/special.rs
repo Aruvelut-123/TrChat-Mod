@@ -25,16 +25,29 @@ pub fn reload(folder: &Path) -> Result<(), String> {
     let mut set = HashSet::new();
     if let Some(list) = value.get("SpecialChars").and_then(|v| v.as_sequence()) {
         for item in list {
-            if let Some(s) = item.as_str() {
-                let s = s.trim();
-                if !s.is_empty() {
-                    set.insert(s.to_string());
-                }
+            // §7 — elements go through `String.valueOf`, so a YAML scalar such
+            // as `- 123` contributes `"123"` rather than being dropped.
+            let s = scalar_to_string(item);
+            let s = s.trim();
+            if !s.is_empty() {
+                set.insert(s.to_string());
             }
         }
     }
     *table().write().unwrap_or_else(|e| e.into_inner()) = set;
     Ok(())
+}
+
+/// §7 — `String.valueOf` coercion for a YAML list element. Strings pass
+/// through unchanged; other scalars use their literal YAML text; a `null`/`~`
+/// entry (or a nested collection) contributes nothing.
+fn scalar_to_string(value: &serde_yaml::Value) -> String {
+    match value {
+        serde_yaml::Value::String(s) => s.clone(),
+        serde_yaml::Value::Number(n) => n.to_string(),
+        serde_yaml::Value::Bool(b) => b.to_string(),
+        _ => String::new(),
+    }
 }
 
 /// Whether `text` contains any configured special character (code-point scan,
@@ -135,6 +148,27 @@ mod tests {
         .unwrap();
         reload(dir.path()).unwrap();
         (guard, dir)
+    }
+
+    #[test]
+    fn non_string_scalars_are_coerced_like_string_value_of() {
+        let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile_dir::TempDir::new();
+        // §7 — `String.valueOf` on each element, then drop blanks; `~`/null
+        // entries contribute nothing. `hasSpecialChars` scans single code
+        // points, so the assertions use one-character entries.
+        std::fs::write(
+            dir.path().join("special-chars.yml"),
+            "SpecialChars:\n  - 7\n  - true\n  - '★'\n  - '   '\n  - ~\n",
+        )
+        .unwrap();
+        reload(dir.path()).unwrap();
+        let table_len = table().read().unwrap().len();
+        assert_eq!(table_len, 3, "numeric, bool and glyph entries kept, blanks dropped");
+        assert!(has_special_chars("7"), "numeric scalar coerced to a string");
+        assert!(has_special_chars("★"));
+        assert!(!has_special_chars("~"), "null entry contributes nothing");
+        assert!(!has_special_chars("   "));
     }
 
     #[test]
