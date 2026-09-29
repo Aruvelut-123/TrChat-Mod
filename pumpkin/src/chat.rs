@@ -24,10 +24,11 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-use crate::config::{Route, SharedConfig, TrChatConfig};
+use crate::config::{color_code, ChannelConfig, Route, SharedConfig, TrChatConfig};
 use crate::filter::TextFilter;
 use crate::lang;
 use crate::playerdata::SessionPlayers;
+use crate::special;
 
 /// Per-player transient chat state (cooldown + recent messages). In the Bukkit
 /// plugin the same data lives in `ChatService` maps keyed by UUID; here the
@@ -249,7 +250,10 @@ fn chat_pipeline(
     let server_name = config.server_name();
     let world = event.player.get_world().get_name();
     let template = match channel {
-        Some(ch) => render_template(&ch.template, &name, &body, &ch.id, server_name, &world, ""),
+        Some(ch) => {
+            let body = wrap_special_characters(ch, &body);
+            render_template(&ch.template, &name, &body, &ch.id, server_name, &world, "")
+        }
         None => render_template(
             &config.plain_template(),
             &name,
@@ -309,6 +313,24 @@ fn render_template(
         .replace("{server}", server)
         .replace("{world}", world)
         .replace("{target}", target)
+}
+
+/// Applies the channel's special-character wrap to the message body (Mod
+/// `ChannelRenderer` behavior): configured resource-pack glyphs get the
+/// channel's `msg.special-char-color`, with the message default color
+/// restored after each glyph run. `special-chars.yml` is loaded process-wide
+/// by [`crate::special::reload`]; an empty table or an empty color leaves the
+/// body untouched.
+fn wrap_special_characters(ch: &ChannelConfig, body: &str) -> String {
+    let Some(layer) = ch.render_layer() else {
+        return body.to_string();
+    };
+    if layer.special_char_color.is_empty() || !special::has_special_chars(body) {
+        return body.to_string();
+    }
+    let color = color_code(&layer.special_char_color);
+    let default = color_code(&layer.msg_default_color);
+    special::wrap_special_chars(body, &color, &default)
 }
 
 /// Normalized similarity in `[0, 1]` (a plain-normalized Jaro–Winkler stand-in

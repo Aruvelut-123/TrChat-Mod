@@ -231,6 +231,9 @@ pub struct FormatLayer {
     pub prefix: Vec<PrefixPart>,
     /// `msg.default-color` — message text color (`7`, `&f`, …).
     pub msg_default_color: String,
+    /// `msg.special-char-color` — color applied to configured special
+    /// characters (resource-pack glyphs); empty = wrap disabled.
+    pub special_char_color: String,
 }
 
 /// A single prefix component; `text` is the legacy plain-text payload.
@@ -265,6 +268,16 @@ impl ChannelConfig {
                 .unwrap_or(0.0);
         }
         0.0
+    }
+
+    /// The tier the legacy renderer actually uses: the first unconditional
+    /// tier, else the first tier as a fallback (same selection as
+    /// [`legacy_template`]).
+    pub fn render_layer(&self) -> Option<&FormatLayer> {
+        self.formats
+            .iter()
+            .find(|l| l.condition.is_empty() || l.condition == "~")
+            .or_else(|| self.formats.first())
     }
 }
 
@@ -397,6 +410,7 @@ impl SharedConfig {
         let config = load_from_folder(&folder)?;
         let default_language = config.default_language().to_string();
         crate::lang::lang_init(&folder, &default_language);
+        crate::special::reload(Path::new(&folder))?;
         Ok(Self(Arc::new(RwLock::new(config))))
     }
 
@@ -405,6 +419,7 @@ impl SharedConfig {
         let config = load_from_folder(folder)?;
         let default_language = config.default_language().to_string();
         crate::lang::lang_init(folder, &default_language);
+        crate::special::reload(Path::new(folder))?;
         *self.0.write().unwrap_or_else(|e| e.into_inner()) = config;
         Ok(())
     }
@@ -637,6 +652,8 @@ fn parse_layers(v: Option<&serde_yaml::Value>) -> Vec<FormatLayer> {
     };
     let mut layers = Vec::with_capacity(seq.len());
     for tier in seq {
+        let msg = tier.get("msg");
+        let special = msg.and_then(|m| m.get("special-char"));
         layers.push(FormatLayer {
             condition: tier
                 .get("condition")
@@ -645,12 +662,24 @@ fn parse_layers(v: Option<&serde_yaml::Value>) -> Vec<FormatLayer> {
                 .to_string(),
             priority: tier.get("priority").and_then(|p| p.as_i64()).unwrap_or(0),
             prefix: parse_prefix(tier.get("prefix")),
-            msg_default_color: tier
-                .get("msg")
+            msg_default_color: msg
                 .and_then(|m| m.get("default-color"))
                 .and_then(|c| c.as_str())
                 .unwrap_or_default()
                 .to_string(),
+            special_char_color: if special
+                .and_then(|s| s.get("enabled"))
+                .and_then(|e| e.as_bool())
+                .unwrap_or(false)
+            {
+                special
+                    .and_then(|s| s.get("special-char-color"))
+                    .and_then(|c| c.as_str())
+                    .unwrap_or_default()
+                    .to_string()
+            } else {
+                String::new()
+            },
         });
     }
     layers
@@ -749,7 +778,7 @@ fn legacy_template(layers: &[FormatLayer]) -> Option<String> {
 }
 
 /// `7` / `f` / `&7` / `&f` → `&7` / `&f`; anything else (or empty) → `""`.
-fn color_code(color: &str) -> String {
+pub(crate) fn color_code(color: &str) -> String {
     let c = color.strip_prefix('&').unwrap_or(color).trim();
     if c.chars().count() == 1 {
         format!("&{c}")

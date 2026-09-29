@@ -16,6 +16,7 @@ mod config;
 mod filter;
 mod lang;
 mod playerdata;
+mod special;
 
 use pumpkin_plugin_api::{
     permissions::{
