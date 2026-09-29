@@ -25,6 +25,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard};
 
+use pumpkin_plugin_api::text::TextComponent;
 use pumpkin_plugin_api::Context;
 use serde::Deserialize;
 
@@ -278,7 +279,6 @@ pub struct PrefixPart {
 
 /// The click action a component part contributes, if any.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ClickAction {
     Suggest(String),
     RunCommand(String),
@@ -287,11 +287,26 @@ pub enum ClickAction {
     OpenFile(String),
 }
 
+impl ClickAction {
+    /// Applies this action to a component, returning the rebound handle.
+    ///
+    /// Every `TextComponent` mutator consumes the handle, so the caller threads
+    /// the component through instead of mutating in place (§4.5).
+    pub fn apply(&self, component: TextComponent) -> TextComponent {
+        match self {
+            ClickAction::Suggest(c) => component.click_suggest_command(c),
+            ClickAction::RunCommand(c) => component.click_run_command(c),
+            ClickAction::OpenUrl(u) => component.click_open_url(u),
+            ClickAction::CopyToClipboard(t) => component.click_copy_to_clipboard(t),
+            ClickAction::OpenFile(p) => component.click_open_file(p),
+        }
+    }
+}
+
 impl PrefixPart {
     /// §4.5 — the first non-empty click action in the Mod's priority order:
     /// `suggest` > `command` > `url` > `copy` > `file`. A `url` is trimmed and
     /// cut at the first space, and must parse as a `URI` or it is dropped.
-    #[allow(dead_code)]
     pub fn click_action(&self) -> Option<ClickAction> {
         if !self.suggest.is_empty() {
             return Some(ClickAction::Suggest(self.suggest.clone()));
@@ -1421,10 +1436,7 @@ fn map_str<'a>(m: &'a serde_yaml::Mapping, key: &str) -> &'a str {
 /// current string renderer understands. Hover / click / condition features
 /// are deliberately lost here and documented as a format-parser follow-up.
 fn legacy_template(layers: &[FormatLayer]) -> Option<String> {
-    let layer = layers
-        .iter()
-        .find(|l| l.condition.is_empty() || l.condition == "~")
-        .or_else(|| layers.first())?;
+    let layer = select_layer(layers)?;
     let mut out = String::new();
     for part in &layer.prefix {
         if !part.condition.is_empty() && part.condition != "~" {
@@ -1435,6 +1447,24 @@ fn legacy_template(layers: &[FormatLayer]) -> Option<String> {
     out.push_str(&color_code(&layer.msg_default_color));
     out.push_str("{message}");
     Some(normalize_placeholders(&out))
+}
+
+/// Picks the tier the legacy renderer uses: the first unconditional tier, or
+/// the first tier at all when none is unconditional.
+fn select_layer(layers: &[FormatLayer]) -> Option<&FormatLayer> {
+    layers
+        .iter()
+        .find(|l| l.condition.is_empty() || l.condition == "~")
+        .or_else(|| layers.first())
+}
+
+/// The renderable prefix parts of the tier the legacy renderer picks, in YAML
+/// order. `chat.rs` walks these to attach each part's hover/click event, which
+/// the flattened [`legacy_template`] string cannot carry.
+pub fn selected_prefix_parts(layers: &[FormatLayer]) -> Vec<PrefixPart> {
+    select_layer(layers)
+        .map(|layer| layer.prefix.iter().filter(|p| p.is_rendered()).cloned().collect())
+        .unwrap_or_default()
 }
 
 /// `7` / `f` / `&7` / `&f` → `&7` / `&f`; anything else (or empty) → `""`.
@@ -1569,6 +1599,59 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(bad.click_action(), None);
+    }
+
+    /// §4.4/§4.5 — `selected_prefix_parts` feeds the click/hover wiring in
+    /// `chat.rs`, so it must pick the same tier and order as the flattened
+    /// template and skip conditional parts.
+    #[test]
+    fn selected_prefix_parts_matches_the_flattened_tier() {
+        let layers = vec![
+            FormatLayer {
+                condition: "perm \"trchat.staff\"".into(),
+                priority: 10,
+                prefix: vec![PrefixPart {
+                    text: "&c[Staff]".into(),
+                    ..Default::default()
+                }],
+                msg_default_color: "f".into(),
+                special_char_color: String::new(),
+            },
+            FormatLayer {
+                condition: "~".into(),
+                priority: 0,
+                prefix: vec![
+                    PrefixPart {
+                        text: "&8[&fSite&8] ".into(),
+                        hover: "Click".into(),
+                        url: "https://example.com/".into(),
+                        ..Default::default()
+                    },
+                    PrefixPart {
+                        // A conditional part cannot be evaluated, so it is
+                        // dropped from the renderable set.
+                        condition: "player op".into(),
+                        text: "&7[OP]".into(),
+                        ..Default::default()
+                    },
+                ],
+                msg_default_color: "7".into(),
+                special_char_color: String::new(),
+            },
+        ];
+
+        let parts = selected_prefix_parts(&layers);
+        assert_eq!(parts.len(), 1, "only the unconditional, renderable part");
+        assert_eq!(parts[0].text, "&8[&fSite&8] ");
+        assert_eq!(parts[0].hover, "Click");
+        assert_eq!(
+            parts[0].click_action(),
+            Some(ClickAction::OpenUrl("https://example.com/".into())),
+            "the part keeps its click action for the renderer to attach"
+        );
+
+        // An empty list renders no parts and no clickable prefix.
+        assert!(selected_prefix_parts(&[]).is_empty());
     }
 
     /// §4.4/§4.5 — the component-part fields survive parsing from YAML.

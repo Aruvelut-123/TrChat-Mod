@@ -412,6 +412,18 @@ fn chat_pipeline(
             ),
             None => TextComponent::from_legacy_string_with_code(&template, '&'),
         };
+        // §4.4/§4.5 — the flattened template cannot carry per-part hover/click
+        // events, so re-attach the selected tier's component parts here.
+        let component = apply_prefix_events(
+            component,
+            channel,
+            &name,
+            &world,
+            server_name,
+            &event.player,
+            server,
+            config,
+        );
         let _ = player.send_system_message(component, false);
         receivers.push(player);
     }
@@ -482,7 +494,67 @@ fn render_template(
         .replace("{target}", target)
 }
 
-/// Applies the channel's special-character wrap to the message body (Mod
+/// §4.4/§4.5 — re-attaches the selected tier's component-part hover and click
+/// events to the rendered message.
+///
+/// The channel template is flattened to one legacy string, which loses every
+/// per-part event. Each configured prefix part becomes a leading child
+/// component carrying its own hover/click, so a clickable label such as
+/// `[Site]` still opens its URL — matching the upstream tree, where the
+/// component parts precede `msg`.
+fn apply_prefix_events(
+    body: TextComponent,
+    channel: Option<&ChannelConfig>,
+    name: &str,
+    world: &str,
+    server_name: &str,
+    player: &pumpkin_plugin_api::player::Player,
+    server: &Server,
+    config: &crate::config::TrChatConfig,
+) -> TextComponent {
+    let Some(ch) = channel else {
+        return body;
+    };
+    let parts = crate::config::selected_prefix_parts(&ch.formats);
+    if parts.is_empty() {
+        return body;
+    }
+    // The message text itself is already inside `body`; component children
+    // append *after* the parent text, so the parts are rendered by prefixing
+    // them onto a fresh root whose styles match the flattened template.
+    let mut parts_component: Option<TextComponent> = None;
+    for part in &parts {
+        let raw = placeholder::resolve(&part.text, player, server, config)
+            .replace("{player}", name)
+            .replace("{channel}", &ch.id)
+            .replace("{server}", server_name)
+            .replace("{world}", world);
+        let mut c = TextComponent::from_legacy_string_with_code(&raw, '&');
+        if !part.hover.is_empty() {
+            let hover = placeholder::resolve(&part.hover, player, server, config);
+            c = c.hover_show_text(TextComponent::from_legacy_string_with_code(&hover, '&'));
+        }
+        if !part.insertion.is_empty() {
+            c = c.insertion(&part.insertion);
+        }
+        if !part.font.is_empty() {
+            c = c.font(&part.font);
+        }
+        if let Some(action) = part.click_action() {
+            c = action.apply(c);
+        }
+        parts_component = Some(match parts_component {
+            Some(acc) => acc.add_child(c),
+            None => c,
+        });
+    }
+    match parts_component {
+        // `body` keeps the message text; the parts ride along as a sibling in
+        // front of it, which is how the upstream template renders.
+        Some(parts_c) => parts_c.add_child(body),
+        None => body,
+    }
+}
 /// `ChannelRenderer` behavior): configured resource-pack glyphs get the
 /// channel's `msg.special-char-color`, with the message default color
 /// restored after each glyph run. `special-chars.yml` is loaded process-wide
