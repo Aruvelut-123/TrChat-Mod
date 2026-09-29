@@ -172,6 +172,16 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         "saturation" => format_number(player.get_saturation() as f64),
         "absorption" => format_number(player.get_absorption() as f64),
         "exp" => format_number(player.get_experience_progress() as f64),
+        // §1.6 exp family (spec lines 273–274, 287): `player_exp_to_level` is
+        // the points still needed for the next level, `player_total_exp` the
+        // accumulated points, and `player_current_exp` the level itself.
+        "exp_to_level" => exp_to_level(player).to_string(),
+        "total_exp" => player.get_experience_points().to_string(),
+        "current_exp" => player.get_experience_level().to_string(),
+        // §1.6 — `player_time_offset` and `player_max_no_damage_ticks` are
+        // documented constants (spec line 692).
+        "time_offset" => "0".to_string(),
+        "max_no_damage_ticks" => "20".to_string(),
 
         // Session / connection.
         "ping" => player.get_ping().to_string(),
@@ -208,6 +218,32 @@ fn player_ping(name: &str, server: &Server) -> String {
         Some(target) => target.get_ping().to_string(),
         None => "0".to_string(),
     }
+}
+
+/// §1.6 `player_exp_to_level` — the experience points still needed to reach the
+/// next level, derived from the bar progress and the vanilla cost curve.
+///
+/// The sandbox exposes the progress fraction but not the level's total cost, so
+/// the vanilla formula (`2·level + 7` below 16, then `5·level − 38`, then
+/// `9·level − 158`) supplies the missing denominator.
+fn exp_to_level(player: &Player) -> i64 {
+    exp_to_level_from(
+        player.get_experience_level(),
+        player.get_experience_progress(),
+    )
+}
+
+/// The pure part of [`exp_to_level`]: the vanilla level-cost curve plus the bar
+/// progress, split out so it is testable without a live `Player`.
+fn exp_to_level_from(level: i32, progress: f32) -> i64 {
+    let cost = match level {
+        i32::MIN..=15 => 2 * level + 7,
+        16..=30 => 5 * level - 38,
+        _ => 9 * level - 158,
+    };
+    let progress = progress.clamp(0.0, 1.0);
+    let remaining = (f64::from(cost) * (1.0 - f64::from(progress))).round() as i64;
+    remaining.max(0)
 }
 
 fn is_op(player: &Player) -> bool {
@@ -364,8 +400,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn format_number_drops_trailing_zero() {
-        assert_eq!(format_number(123.0), "123");
+    fn format_number_drops_trailing_zero() {        assert_eq!(format_number(123.0), "123");
         assert_eq!(format_number(-7.0), "-7");
         assert_eq!(format_number(12.5), "12.5");
     }
@@ -431,5 +466,27 @@ mod tests {
     fn yes_no_shape() {
         assert_eq!(yes_no(true), "yes");
         assert_eq!(yes_no(false), "no");
+    }
+
+    /// §1.6 `player_exp_to_level` — the three vanilla level-cost branches; a
+    /// full bar needs nothing and an empty bar needs the whole level cost.
+    #[test]
+    fn exp_to_level_uses_vanilla_cost_curve() {
+        // Levels 0–15: `2·level + 7`.
+        assert_eq!(exp_to_level_from(0, 0.0), 7);
+        assert_eq!(exp_to_level_from(15, 0.0), 37);
+        // Levels 16–30: `5·level − 38`.
+        assert_eq!(exp_to_level_from(16, 0.0), 42);
+        assert_eq!(exp_to_level_from(30, 0.0), 112);
+        // Level 31+: `9·level − 158`.
+        assert_eq!(exp_to_level_from(31, 0.0), 121);
+        assert_eq!(exp_to_level_from(50, 0.0), 292);
+
+        // Bar progress reduces what is still needed; a full bar needs zero.
+        assert_eq!(exp_to_level_from(0, 1.0), 0);
+        assert_eq!(exp_to_level_from(0, 0.5), 4, "7 · (1 − 0.5) rounds to 4");
+        // Out-of-range progress is clamped rather than producing negatives.
+        assert_eq!(exp_to_level_from(0, 5.0), 0);
+        assert_eq!(exp_to_level_from(0, -1.0), 7);
     }
 }
