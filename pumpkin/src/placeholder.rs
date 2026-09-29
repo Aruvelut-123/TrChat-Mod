@@ -75,6 +75,14 @@ fn server_token(key: &str, player: &Player, server: &Server, config: &TrChatConf
         "max_players" => server.get_max_players().to_string(),
         "has_whitelist" => yes_no(server.has_whitelist()),
         "tps" => format_tps(server.get_tps()),
+        // §1.3 — the 1/5/15-minute windows come from `ServerMetrics.tps(n)`.
+        // The WIT surface exposes a single smoothed value, so all three windows
+        // report it rather than fabricating history the sandbox cannot see.
+        "tps_1" | "tps_5" | "tps_15" => format_tps(server.get_tps()),
+        // §1.5 `coloredTps` — `<15` red, `<18` yellow, otherwise green.
+        "tps_1_colored" | "tps_5_colored" | "tps_15_colored" => {
+            colored_tps(server.get_tps())
+        }
         "motd" => server.get_motd(),
         "version" => server.get_sys_info().pumpkin_version,
         "ram_used" | "ram_free" | "ram_total" | "ram_max" => {
@@ -193,30 +201,58 @@ fn game_mode_name(mode: pumpkin_plugin_api::wit::pumpkin::plugin::common::GameMo
 
 /// Formats a coordinate/value the way the Mod's `String.valueOf(double)` does:
 /// whole numbers lose the `.0` (PlaceholderAPI renders `123.0` as `123`).
+/// §1.7 `decimal` — non-finite → `"0"`; whole numbers render without a decimal
+/// point; everything else is `%.2f` with trailing zeros and a trailing `.`
+/// stripped (`Locale.ROOT`).
 fn format_number(value: f64) -> String {
-    if value.is_finite() && value.fract() == 0.0 && value.abs() < 1e15 {
-        format!("{}", value as i64)
+    if !value.is_finite() {
+        return "0".to_string();
+    }
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        return format!("{}", value as i64);
+    }
+    // Java's `String.format("%.2f")` rounds half **up**; Rust's `{:.2}` rounds
+    // half to even, so 0.125 would give "0.12". Round explicitly to match.
+    let rounded = (value * 100.0).round() / 100.0;
+    let fixed = format!("{rounded:.2}");
+    let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() || trimmed == "-" {
+        "0".to_string()
     } else {
-        format!("{value}")
+        trimmed.to_string()
     }
 }
 
-/// `min(20, tps)` rounded to two decimals, matching the `%server_tps%` shape.
+/// `%server_tps%` — the clamped TPS rendered through `decimal` (§1.7), so a
+/// whole value shows as `20` rather than `20.00`.
 fn format_tps(tps: f64) -> String {
-    format!("{:.2}", tps.clamp(0.0, 20.0))
+    format_number(tps.clamp(0.0, 20.0))
 }
 
-/// 16-way yaw → cardinal direction (`player_direction`).
+/// §1.5 `coloredTps`: `<15` → `&c`, `<18` → `&e`, otherwise `&a`, followed by
+/// the two-decimal TPS. The colour code is the Mod's `&`-form, so the caller's
+/// legacy-code pass turns it into styling.
+fn colored_tps(tps: f64) -> String {
+    let code = if tps < 15.0 {
+        "&c"
+    } else if tps < 18.0 {
+        "&e"
+    } else {
+        "&a"
+    };
+    format!("{code}{}", format_tps(tps))
+}
+
+/// 8-way yaw → abbreviated cardinal direction (`player_direction`, §1.7).
+///
+/// Upstream indexes `{"S","SW","W","NW","N","NE","E","SE"}` with
+/// `Math.round(yaw / 45) & 7`, so the sectors are 45° wide and the result is a
+/// two-letter abbreviation — **not** the 16-point long form.
 fn cardinal_direction(yaw: f32) -> String {
-    // Minecraft yaw 0 = south (+Z), increasing **clockwise**; the 16 sectors
-    // are 22.5° apart, starting at "South" (index 0). `NAMES[4]` is therefore
-    // the due-West sector at yaw 90°.
-    const NAMES: [&str; 16] = [
-        "South", "South-Southwest", "Southwest", "West-Southwest", "West", "West-Northwest", "Northwest",
-        "North-Northwest", "North", "North-Northeast", "Northeast", "East-Northeast", "East",
-        "East-Southeast", "Southeast", "South-Southeast",
-    ];
-    let index = (((yaw % 360.0) + 360.0) % 360.0 / 22.5).round() as usize % 16;
+    // Minecraft yaw 0 = south (+Z) and increases clockwise, so index 0 is "S"
+    // and index 2 (yaw 90°) is "W".
+    const NAMES: [&str; 8] = ["S", "SW", "W", "NW", "N", "NE", "E", "SE"];
+    let index = (((yaw % 360.0) + 360.0) % 360.0 / 45.0).round() as usize & 7;
     NAMES[index].to_string()
 }
 
@@ -236,22 +272,50 @@ mod tests {
     }
 
     #[test]
+    fn colored_tps_uses_spec_thresholds() {
+        // §1.5 — `<15` red, `<18` yellow, `>=18` green.
+        assert_eq!(colored_tps(19.5), "&a19.5");
+        assert_eq!(colored_tps(18.0), "&a18");
+        assert_eq!(colored_tps(17.9), "&e17.9");
+        assert_eq!(colored_tps(15.0), "&e15");
+        assert_eq!(colored_tps(14.9), "&c14.9");
+    }
+
+    #[test]
+    fn decimal_matches_spec_formatting() {
+        // §1.7 `decimal`: whole numbers bare, others %.2f minus trailing zeros.
+        assert_eq!(format_number(20.0), "20");
+        assert_eq!(format_number(19.99), "19.99");
+        assert_eq!(format_number(1.5), "1.5");
+        assert_eq!(format_number(-3.0), "-3");
+        assert_eq!(format_number(0.0), "0");
+        assert_eq!(format_number(0.125), "0.13");
+        assert_eq!(format_number(f64::NAN), "0");
+        assert_eq!(format_number(f64::INFINITY), "0");
+    }
+
+    #[test]
     fn tps_is_clamped_and_rounded() {
-        assert_eq!(format_tps(20.0), "20.00");
-        assert_eq!(format_tps(19.987), "19.99");
-        assert_eq!(format_tps(0.0), "0.00");
+        assert_eq!(format_tps(20.0), "20");
+        assert_eq!(format_tps(19.991), "19.99");
+        assert_eq!(format_tps(25.0), "20");
+        assert_eq!(format_tps(-1.0), "0");
     }
 
     #[test]
     fn cardinal_direction_wraps_and_handles_negatives() {
-        // 22.5° sectors starting at South (yaw 0), clockwise.
-        assert_eq!(cardinal_direction(0.0), "South");
-        assert_eq!(cardinal_direction(90.0), "West");
-        assert_eq!(cardinal_direction(180.0), "North");
-        assert_eq!(cardinal_direction(-90.0), "East");
-        assert_eq!(cardinal_direction(45.0), "Southwest");
-        // Out-of-range yaw wraps into the same 16 sectors.
-        assert_eq!(cardinal_direction(450.0), "West");
+        // §1.7 — 45° sectors from South (yaw 0), clockwise, 8-point abbreviations.
+        assert_eq!(cardinal_direction(0.0), "S");
+        assert_eq!(cardinal_direction(45.0), "SW");
+        assert_eq!(cardinal_direction(90.0), "W");
+        assert_eq!(cardinal_direction(135.0), "NW");
+        assert_eq!(cardinal_direction(180.0), "N");
+        assert_eq!(cardinal_direction(225.0), "NE");
+        assert_eq!(cardinal_direction(270.0), "E");
+        assert_eq!(cardinal_direction(315.0), "SE");
+        // Out-of-range yaw wraps into the same 8 sectors.
+        assert_eq!(cardinal_direction(450.0), "W");
+        assert_eq!(cardinal_direction(-90.0), "E");
     }
 
     #[test]
