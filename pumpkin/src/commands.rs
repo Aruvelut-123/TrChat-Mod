@@ -134,6 +134,53 @@ pub fn register_commands(context: &Context) {
             .execute(ReplyCommand),
     );
     context.register_command(reply, PERM_USE);
+
+    register_bound_aliases(context);
+}
+
+/// §2.2 — registers every channel alias declared in `Bindings.Command`.
+///
+/// The command tree is built from config, so `/global`, `/all`, `/shout`,
+/// `/staff` and the private `/msg`, `/tell`, `/w` … spellings all exist
+/// without hardcoding channel names here.
+///
+/// The registered node takes an optional greedy `message`; an omitted body
+/// makes the alias switch the active channel instead of sending.
+fn register_bound_aliases(context: &Context) {
+    let aliases: Vec<String> = {
+        let config = config::global_config();
+        let config = config.read();
+        config
+            .channels()
+            .iter()
+            .flat_map(|c| c.bindings.command.iter().cloned())
+            .collect()
+    };
+    for alias in aliases {
+        // `/msg` and friends are already registered explicitly above with a
+        // dedicated handler; re-registering them would panic on the duplicate.
+        if is_reserved_alias(&alias) {
+            continue;
+        }
+        let command = Command::new(
+            std::slice::from_ref(&alias),
+            "Send to a channel bound to this alias",
+        )
+        .then(
+            CommandNode::argument("message", &ArgumentType::String(StringType::Greedy))
+                .execute(BoundAliasCommand {
+                    alias: alias.clone(),
+                }),
+        );
+        context.register_command(command, PERM_USE);
+    }
+}
+
+/// Aliases that already have a hand-written registration earlier in
+/// [`register_commands`] and must not be registered twice.
+fn is_reserved_alias(alias: &str) -> bool {
+    const RESERVED: &[&str] = &["msg", "tell", "r", "reply", "trreply", "channel", "trchat"];
+    RESERVED.iter().any(|r| r.eq_ignore_ascii_case(alias))
 }
 
 /// Extracts a plain string argument (`Arg::Simple`/`Arg::Msg`).
@@ -455,6 +502,122 @@ impl CommandHandler for MsgCommand {
         }
         Ok(0)
     }
+}
+
+/// `/global`, `/all`, `/shout`, `/staff`, … — §2.2 `executeBoundAlias`.
+///
+/// Every alias declared in a channel's `Bindings.Command` routes here; the
+/// channel is resolved by case-insensitive lookup at dispatch time, so the
+/// bundled `Global`/`Staff`/`Private` bindings work without hardcoding names.
+///
+/// `arguments` is the raw text after the alias: empty switches the active
+/// channel (`toggleChannel`), otherwise the text is sent as a message.
+struct BoundAliasCommand {
+    /// The alias this node was registered under, captured at registration time
+    /// because the command tree is built from config before dispatch.
+    alias: String,
+}
+
+impl CommandHandler for BoundAliasCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let alias = self.alias.clone();
+        let message_body = arg_string(&args, "message").unwrap_or_default();
+        let config = config::global_config();
+        let guard = config.read();
+        let Some(channel) = guard.channel_by_command(&alias) else {
+            send(
+                &sender,
+                &message("Channel-Command-Unbound", &sender, &[&alias]),
+            );
+            return Ok(0);
+        };
+        let channel_id = channel.id.clone();
+        // §2.2 — a private channel alias with a message body is a `/msg` in
+        // disguise: the first word is the target, the rest is the message.
+        let is_private = channel.options.private;
+        drop(guard);
+
+        if is_private {
+            let Some(sender_player) = sender.as_player() else {
+                send(&sender, &message("General-Player-Only", &sender, &[]));
+                return Ok(0);
+            };
+            if message_body.trim().is_empty() {
+                // No target → treat the alias as a plain channel switch.
+                return switch_channel(&sender, &sender_player.get_name(), &channel_id);
+            }
+            let mut parts = message_body.splitn(2, char::is_whitespace);
+            let target_name = parts.next().unwrap_or_default().to_string();
+            let text = parts.next().unwrap_or_default().trim().to_string();
+            if text.is_empty() {
+                return switch_channel(&sender, &sender_player.get_name(), &channel_id);
+            }
+            let online = server.get_all_players();
+            let Some(target) = online
+                .iter()
+                .find(|p| p.get_name().eq_ignore_ascii_case(&target_name))
+            else {
+                send(
+                    &sender,
+                    &message("General-Player-Not-Found", &sender, &[&target_name]),
+                );
+                return Ok(0);
+            };
+            if !crate::private_msg::deliver(&server, &sender_player, target, &text) {
+                send(&sender, &format!("&c{target_name} is ignoring you."));
+            }
+            return Ok(0);
+        }
+
+        // A non-private alias with no body just switches the active channel.
+        if message_body.trim().is_empty() {
+            return switch_channel(&sender, &sender.get_name(), &channel_id);
+        }
+        // With a body the alias behaves exactly like typing the channel's own
+        // prefix, so the message is rewritten into that form and handed to the
+        // normal chat pipeline — guards, filtering and rendering therefore stay
+        // byte-identical to the prefixed spelling (§2.2).
+        let Some(player) = sender.as_player() else {
+            send(&sender, &message("General-Player-Only", &sender, &[]));
+            return Ok(0);
+        };
+        let prefixed = match crate::config::global_config()
+            .read()
+            .channel_by_id(&channel_id)
+            .and_then(|c| c.bindings.prefix.first().cloned())
+        {
+            Some(prefix) if !prefix.is_empty() => format!("{prefix}{message_body}"),
+            // No prefix configured → the alias cannot stand in for one.
+            _ => {
+                send(
+                    &sender,
+                    &message("Channel-Command-Unbound", &sender, &[&alias]),
+                );
+                return Ok(0);
+            }
+        };
+        crate::chat::dispatch_as_chat(&server, &player, &prefixed);
+        Ok(0)
+    }
+}
+
+/// Switches `name`'s active channel to `channel_id`, reporting `Channel-Join`.
+fn switch_channel(sender: &CommandSender, name: &str, channel_id: &str) -> Result<i32, CommandError> {
+    let mut players = SessionPlayers::global()
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(state) = players.state_mut(name) {
+        state.active_channel = channel_id.to_string();
+        state.joined_channels.insert(channel_id.to_ascii_lowercase());
+    }
+    drop(players);
+    send(sender, &message("Channel-Join", sender, &[channel_id]));
+    Ok(0)
 }
 
 /// `/trreply <message>` (aliases `/r`, `/reply`) — §2.6.

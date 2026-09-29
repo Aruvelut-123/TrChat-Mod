@@ -21,6 +21,7 @@ use pumpkin_plugin_api::{
         player::{PlayerChatEvent, PlayerCommandPreprocessEvent},
         EventData, EventHandler, EventPriority,
     },
+    player::Player,
     text::TextComponent,
     Context, Server,
 };
@@ -138,7 +139,7 @@ impl EventHandler<PlayerChatEvent> for ChatHandler {
         mut event: EventData<PlayerChatEvent>,
     ) -> EventData<PlayerChatEvent> {
         let config = self.config.read();
-        let _ = chat_pipeline(&server, &mut event, &config);
+        let _ = chat_pipeline(&server, &event.player, &event.message, &config);
 
         // Every path intercepted here suppresses the vanilla broadcast; the
         // plugin's own rendering has already reached the allowed receivers.
@@ -149,18 +150,30 @@ impl EventHandler<PlayerChatEvent> for ChatHandler {
     }
 }
 
+/// Sends `message` *as if* `player` had typed it, outside an event context.
+///
+/// Bound channel aliases (`/global hello`) use this so a body sent through an
+/// alias takes exactly the same guard → filter → route → render → broadcast
+/// path as the prefixed spelling (`!all hello`), with no duplicate logic.
+pub fn dispatch_as_chat(server: &Server, player: &Player, message: &str) {
+    let config = crate::config::global_config();
+    let config = config.read();
+    let _ = chat_pipeline(server, player, message, &config);
+}
+
 /// The full guard → filter → route → render → broadcast flow.
 /// Returns `true` when the message was accepted (broadcast), `false` when a
 /// guard rejected it (the event is cancelled either way).
 fn chat_pipeline(
     server: &Server,
-    event: &mut EventData<PlayerChatEvent>,
+    player: &Player,
+    raw_message: &str,
     config: &TrChatConfig,
 ) -> bool {
     let _ = server;
-    let name = event.player.get_name();
-    let locale = event.player.get_locale();
-    let message = event.message.trim();
+    let name = player.get_name();
+    let locale = player.get_locale();
+    let message = raw_message.trim();
 
     // 1. Empty message → silently swallowed (Bukkit: `return` without hint).
     if message.is_empty() {
@@ -179,7 +192,7 @@ fn chat_pipeline(
                 &locale,
                 &[&length.to_string(), &max_len.to_string()],
             );
-        let _ = event.player.send_system_message(
+        let _ = player.send_system_message(
             TextComponent::from_legacy_string_with_code(&text, '&'),
             false,
         );
@@ -204,7 +217,7 @@ fn chat_pipeline(
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
                 .format(key, &locale, &[&expiry, &reason]);
-            let _ = event.player.send_system_message(
+            let _ = player.send_system_message(
                 TextComponent::from_legacy_string_with_code(&text, '&'),
                 false,
             );
@@ -225,7 +238,7 @@ fn chat_pipeline(
                     .read()
                     .unwrap_or_else(|e| e.into_inner())
                     .format("Cooldowns-Chat", &locale, &[&cooldown.to_string()]);
-                let _ = event.player.send_system_message(
+                let _ = player.send_system_message(
                     TextComponent::from_legacy_string_with_code(&text, '&'),
                     false,
                 );
@@ -260,7 +273,7 @@ fn chat_pipeline(
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
                 .format("General-Too-Similar", &locale, &[]);
-            let _ = event.player.send_system_message(
+            let _ = player.send_system_message(
                 TextComponent::from_legacy_string_with_code(&text, '&'),
                 false,
             );
@@ -299,12 +312,12 @@ fn chat_pipeline(
     };
 
     if let Some(channel) = channel {
-        if !channel.permission().is_empty() && !event.player.has_permission(channel.permission()) {
+        if !channel.permission().is_empty() && !player.has_permission(channel.permission()) {
             let text = lang::lang()
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
                 .format("Channel-No-Speak-Permission", &locale, &[]);
-            let _ = event.player.send_system_message(
+            let _ = player.send_system_message(
                 TextComponent::from_legacy_string_with_code(&text, '&'),
                 false,
             );
@@ -320,11 +333,11 @@ fn chat_pipeline(
     let disabled: &[String] = channel
         .map(|c| c.options.disabled_functions.as_slice())
         .unwrap_or(&[]);
-    let outcome = functions::process(server, &event.player, &body, config, disabled);
+    let outcome = functions::process(server, player, &body, config, disabled);
 
     // 8b. Render — one template string, then one component per receiver.
     let server_name = config.server_name();
-    let world = event.player.get_world().get_name();
+    let world = player.get_world().get_name();
     let template = match (&outcome, channel) {
         // A processed body carries its own styled component, so the body text
         // is *not* interpolated into the template; the caller passes the
@@ -337,7 +350,7 @@ fn chat_pipeline(
             server_name,
             &world,
             "",
-            &event.player,
+            player,
             server,
             config,
         ),
@@ -349,7 +362,7 @@ fn chat_pipeline(
             server_name,
             &world,
             "",
-            &event.player,
+            player,
             server,
             config,
         ),
@@ -363,7 +376,7 @@ fn chat_pipeline(
                 server_name,
                 &world,
                 "",
-                &event.player,
+                player,
                 server,
                 config,
             )
@@ -376,7 +389,7 @@ fn chat_pipeline(
             server_name,
             &world,
             "",
-            &event.player,
+            player,
             server,
             config,
         ),
@@ -385,7 +398,7 @@ fn chat_pipeline(
     // 9. Broadcast — every online player; radius-limited channels use squared
     //    distance (Bukkit `DISTANCE` semantics; 0.0 = unlimited).
     let radius = channel.map(|c| c.radius()).unwrap_or(0.0f64);
-    let origin = event.player.get_position();
+    let origin = player.get_position();
     // Receivers that really got the message, in broadcast order — the notify
     // pass (§1.3 step 9) only ever touches these players.
     let mut receivers: Vec<&pumpkin_plugin_api::player::Player> = Vec::new();
@@ -406,7 +419,7 @@ fn chat_pipeline(
                 out,
                 &name,
                 &locale,
-                &event.player,
+                player,
                 server,
                 config,
             ),
@@ -420,7 +433,7 @@ fn chat_pipeline(
             &name,
             &world,
             server_name,
-            &event.player,
+            player,
             server,
             config,
         );
@@ -438,7 +451,7 @@ fn chat_pipeline(
                     continue;
                 }
                 if out.mentioned.contains(&receiver) {
-                    functions::notify_mentioned(player, &name, &player.get_locale());
+                    functions::notify_mentioned(player, name.as_str(), &player.get_locale());
                 }
             }
         }

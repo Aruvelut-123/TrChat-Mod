@@ -498,6 +498,14 @@ impl TrChatConfig {
         "&f{player}: {message}".to_string()
     }
 
+    /// §2.2 `ChannelManager.byCommand` — the first channel (in id order) whose
+    /// `Bindings.Command` contains `command`, compared case-insensitively.
+    pub fn channel_by_command(&self, command: &str) -> Option<&ChannelConfig> {
+        self.channels
+            .iter()
+            .find(|c| c.bindings.command.iter().any(|a| a.eq_ignore_ascii_case(command)))
+    }
+
     /// Routes a chat message: longest matching prefix wins, unprefixed
     /// messages fall through to the default (auto-join) channel.
     pub fn route(&self, message: &str) -> Route<'_> {
@@ -1539,6 +1547,54 @@ fn private_formats(channels: &[ChannelConfig]) -> PrivateMessageFormats {
 mod tests {
     use super::defaults;
     use super::*;
+
+    /// §2.2 `ChannelManager.byCommand` — the factory bindings resolve to the
+    /// right channel, matching is case-insensitive, and unbound aliases miss.
+    #[test]
+    fn channel_by_command_resolves_factory_bindings() {
+        let dir = temp_dir("by_command");
+        let config = load_from_folder(&dir).expect("defaults must load");
+
+        // Global is bound to global/all/shout.
+        for alias in ["global", "all", "shout"] {
+            let found = config
+                .channel_by_command(alias)
+                .unwrap_or_else(|| panic!("{alias} should resolve"));
+            assert_eq!(found.id, "Global", "alias {alias}");
+        }
+        // Case-insensitive (Java `equalsIgnoreCase`).
+        assert_eq!(config.channel_by_command("GLOBAL").unwrap().id, "Global");
+        assert_eq!(config.channel_by_command("Shout").unwrap().id, "Global");
+
+        // Staff and Private are likewise bound.
+        assert_eq!(config.channel_by_command("staff").unwrap().id, "Staff");
+        assert_eq!(config.channel_by_command("tell").unwrap().id, "Private");
+
+        // Normal has no `Command` binding, and unknown aliases miss.
+        assert!(config.channel_by_command("normal").is_none());
+        assert!(config.channel_by_command("nope").is_none());
+        // An empty alias never matches a configured binding.
+        assert!(config.channel_by_command("").is_none());
+    }
+
+    /// Every channel alias is distinct across channels, so `byCommand` never
+    /// depends on iteration order for the factory set.
+    #[test]
+    fn factory_command_aliases_are_unique() {
+        let dir = temp_dir("aliases_unique");
+        let config = load_from_folder(&dir).expect("defaults must load");
+        let mut seen: Vec<&str> = Vec::new();
+        for channel in config.channels() {
+            for alias in &channel.bindings.command {
+                assert!(
+                    !seen.iter().any(|s| s.eq_ignore_ascii_case(alias)),
+                    "alias {alias} bound to more than one channel"
+                );
+                seen.push(alias);
+            }
+        }
+        assert!(!seen.is_empty(), "factory config should bind some aliases");
+    }
 
     /// §4.5 — click actions are consulted in the Mod's priority order:
     /// `suggest` > `command` > `url` > `copy` > `file`.
