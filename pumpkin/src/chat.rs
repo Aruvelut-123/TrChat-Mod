@@ -29,7 +29,9 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-use crate::config::{color_code, ChannelConfig, Route, SharedConfig, TrChatConfig};
+use crate::config::{
+    color_code, ChannelConfig, ChannelTarget, Route, SharedConfig, TrChatConfig,
+};
 use crate::filter::{MessageGuard, TextFilter};
 use crate::functions;
 use crate::lang;
@@ -395,24 +397,78 @@ fn chat_pipeline(
         ),
     };
 
-    // 9. Broadcast — every online player; radius-limited channels use squared
-    //    distance (Bukkit `DISTANCE` semantics; 0.0 = unlimited).
-    let radius = channel.map(|c| c.radius()).unwrap_or(0.0f64);
+    // 9. Broadcast — every online player, subject to the four §2.3 receiver
+    //    checks: ignore list, channel membership, listen permission, and the
+    //    `Target` reach (SELF / WORLD / DISTANCE, squared comparison).
+    let target = channel.map(|c| c.target()).unwrap_or(ChannelTarget::All);
     let origin = player.get_position();
+    let origin_world = player.get_world().get_name();
     // Receivers that really got the message, in broadcast order — the notify
     // pass (§1.3 step 9) only ever touches these players.
     let mut receivers: Vec<&pumpkin_plugin_api::player::Player> = Vec::new();
     let players = server.get_all_players();
     for player in &players {
-        if radius > 0.0 {
-            let pos = player.get_position();
-            let dx = pos.0 - origin.0;
-            let dy = pos.1 - origin.1;
-            let dz = pos.2 - origin.2;
-            if dx * dx + dy * dy + dz * dz > radius * radius {
+        let receiver_name = player.get_name();
+
+        // (1) A player who ignored the sender never receives their chat.
+        {
+            let session = SessionPlayers::global();
+            let session = session.read().unwrap_or_else(|e| e.into_inner());
+            if session.ignores(&receiver_name, &name) {
                 continue;
             }
         }
+
+        if let Some(channel) = channel {
+            // (2) Membership — `Always-Listen` bypasses the join requirement.
+            if !channel.always_listen() {
+                let session = SessionPlayers::global();
+                let session = session.read().unwrap_or_else(|e| e.into_inner());
+                let joined = session
+                    .state(&receiver_name)
+                    .map(|s| s.joined_channels.clone())
+                    .unwrap_or_default();
+                drop(session);
+                if !channel.is_joined_by(&joined) {
+                    continue;
+                }
+            }
+
+            // (3) Receive permission — empty means everyone.
+            let listen = channel.listen_permission();
+            if !listen.is_empty() && !player.has_permission(listen) {
+                continue;
+            }
+
+            // (4) Reach — SELF / WORLD / DISTANCE.
+            match target {
+                ChannelTarget::All => {}
+                ChannelTarget::SelfOnly => {
+                    if !receiver_name.eq_ignore_ascii_case(&name) {
+                        continue;
+                    }
+                }
+                ChannelTarget::SameWorld => {
+                    if player.get_world().get_name() != origin_world {
+                        continue;
+                    }
+                }
+                ChannelTarget::Distance(limit) => {
+                    // A negative limit (unparsable `DISTANCE;`) matches nobody.
+                    if limit < 0.0 || player.get_world().get_name() != origin_world {
+                        continue;
+                    }
+                    let pos = player.get_position();
+                    let dx = pos.0 - origin.0;
+                    let dy = pos.1 - origin.1;
+                    let dz = pos.2 - origin.2;
+                    if dx * dx + dy * dy + dz * dz > limit * limit {
+                        continue;
+                    }
+                }
+            }
+        }
+
         let component = match &outcome {
             Some(out) => functions::build_body_component(
                 &template,

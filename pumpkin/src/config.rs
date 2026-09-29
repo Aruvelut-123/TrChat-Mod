@@ -175,6 +175,20 @@ pub struct ChannelConfig {
     pub template: String,
 }
 
+/// §2.3 `Options.Target` — who may receive a channel's broadcast.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ChannelTarget {
+    /// `ALL` (and any unrecognised value) — no filtering.
+    All,
+    /// `SELF` — only the sender receives their own message.
+    SelfOnly,
+    /// `SINGLE_WORLD` / `WORLD` — receivers in the sender's world.
+    SameWorld,
+    /// `DISTANCE;<blocks>` — same world within `<blocks>`; a negative value
+    /// (including a failed parse) matches nobody.
+    Distance(f64),
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ChannelOptions {
     pub join_permission: String,
@@ -376,17 +390,44 @@ impl ChannelConfig {
         self.options.auto_join
     }
 
-    /// Broadcast reach from `Options.Target`; `0.0` = unlimited.
-    pub fn radius(&self) -> f64 {
-        let t = self.options.target.trim();
-        if let Some(rest) = t.strip_prefix("DISTANCE;") {
-            return rest
-                .trim_end_matches(';')
-                .trim()
-                .parse::<f64>()
-                .unwrap_or(0.0);
+    /// Permission required to *receive* this channel (§2.3 `canListen`).
+    ///
+    /// An empty `Listen-Permission` inherits `Join-Permission`; an empty string
+    /// means everyone may listen, matching Bukkit `hasPermission("")` → true.
+    pub fn listen_permission(&self) -> &str {
+        if self.options.listen_permission.is_empty() {
+            &self.options.join_permission
+        } else {
+            &self.options.listen_permission
         }
-        0.0
+    }
+
+    /// §2.3 — `Always-Listen` lets a player receive without joining.
+    pub fn always_listen(&self) -> bool {
+        self.options.always_listen
+    }
+
+    /// Whether `joined` records membership of this channel (broadcast step 2).
+    pub fn is_joined_by(&self, joined: &std::collections::HashSet<String>) -> bool {
+        joined.contains(&self.id.to_ascii_lowercase())
+    }
+
+    /// §2.3 `Target` — the parsed reach kind of this channel.
+    pub fn target(&self) -> ChannelTarget {
+        let t = self.options.target.trim();
+        // `Target` splits on `;` into at most two segments.
+        let mut parts = t.splitn(2, ';');
+        let kind = parts.next().unwrap_or("ALL").trim();
+        let distance = parts
+            .next()
+            .and_then(|d| d.trim_end_matches(';').trim().parse::<f64>().ok());
+        match kind.to_ascii_uppercase().as_str() {
+            "SELF" => ChannelTarget::SelfOnly,
+            "SINGLE_WORLD" | "WORLD" => ChannelTarget::SameWorld,
+            // A failed distance parse yields -1, making DISTANCE always false.
+            "DISTANCE" => ChannelTarget::Distance(distance.unwrap_or(-1.0)),
+            _ => ChannelTarget::All,
+        }
     }
 
     /// The tier the legacy renderer actually uses: the first unconditional
@@ -1596,6 +1637,77 @@ mod tests {
         assert!(!seen.is_empty(), "factory config should bind some aliases");
     }
 
+    /// §2.3 — `Listen-Permission` falls back to `Join-Permission`, and an
+    /// empty result means "everyone may listen".
+    #[test]
+    fn listen_permission_falls_back_to_join() {
+        let mut ch = test_channel("A", vec![], Default::default());
+        assert_eq!(ch.listen_permission(), "", "both empty → public");
+
+        ch.options.join_permission = "trchat.global".into();
+        assert_eq!(
+            ch.listen_permission(),
+            "trchat.global",
+            "empty listen inherits join"
+        );
+
+        ch.options.listen_permission = "trchat.listen".into();
+        assert_eq!(
+            ch.listen_permission(),
+            "trchat.listen",
+            "explicit listen wins"
+        );
+    }
+
+    /// §2.3 — `Target` parses into the four reach kinds, with an unparsable
+    /// distance collapsing to a negative limit (matches nobody).
+    #[test]
+    fn target_parses_into_reach_kinds() {
+        let mut ch = test_channel("A", vec![], Default::default());
+
+        ch.options.target = "ALL".into();
+        assert_eq!(ch.target(), ChannelTarget::All);
+        // Unrecognised values behave like ALL.
+        ch.options.target = "weird".into();
+        assert_eq!(ch.target(), ChannelTarget::All);
+
+        ch.options.target = "SELF".into();
+        assert_eq!(ch.target(), ChannelTarget::SelfOnly);
+
+        for world in ["SINGLE_WORLD", "WORLD", "world"] {
+            ch.options.target = world.into();
+            assert_eq!(ch.target(), ChannelTarget::SameWorld, "{world}");
+        }
+
+        ch.options.target = "DISTANCE;30".into();
+        assert_eq!(ch.target(), ChannelTarget::Distance(30.0));
+        // A trailing `;` and surrounding space are tolerated.
+        ch.options.target = "DISTANCE; 12.5 ;".into();
+        assert_eq!(ch.target(), ChannelTarget::Distance(12.5));
+
+        // A failed parse is negative, so DISTANCE never matches.
+        ch.options.target = "DISTANCE;".into();
+        assert_eq!(ch.target(), ChannelTarget::Distance(-1.0));
+        assert!(matches!(
+            ch.target(),
+            ChannelTarget::Distance(d) if d < 0.0
+        ));
+    }
+
+    /// §2.3 — membership is case-insensitive against the lowercased channel id.
+    #[test]
+    fn joined_membership_is_case_insensitive() {
+        let ch = test_channel("Global", vec![], Default::default());
+        let mut joined = std::collections::HashSet::new();
+
+        assert!(!ch.is_joined_by(&joined));
+        joined.insert("global".to_string());
+        assert!(ch.is_joined_by(&joined), "stored lowercased id matches");
+        // An unrelated channel is not a member.
+        let other = test_channel("Staff", vec![], Default::default());
+        assert!(!other.is_joined_by(&joined));
+    }
+
     /// §4.5 — click actions are consulted in the Mod's priority order:
     /// `suggest` > `command` > `url` > `copy` > `file`.
     #[test]
@@ -1883,17 +1995,6 @@ font: "minecraft:default"
         assert!(config.channel_by_id("normal").is_some());
         assert!(config.channel_by_id("NORMAL").is_some());
         assert!(config.channel_by_id("Missing").is_none());
-    }
-
-    #[test]
-    fn radius_parses_from_target() {
-        let mut ch = test_channel("A", vec![], Default::default());
-        ch.options.target = "DISTANCE;30".to_string();
-        assert_eq!(ch.radius(), 30.0);
-        ch.options.target = "ALL".to_string();
-        assert_eq!(ch.radius(), 0.0);
-        ch.options.target = "DISTANCE;".to_string();
-        assert_eq!(ch.radius(), 0.0);
     }
 
     fn sample_config(edit: impl FnOnce(&mut TrChatConfig)) -> TrChatConfig {
