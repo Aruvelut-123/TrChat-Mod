@@ -102,21 +102,30 @@ pub fn open(id: &str) -> Option<(String, usize, SlotContents)> {
 
 /// §2.10 `createItemSnapshot` for `Item-Show` with `UI: true`.
 ///
-/// The 3×9 viewer shows the *item's* container: 13 leading empty slots put the
-/// item itself at index 13 (the centre of a 3×9), followed by whatever the
-/// item's `CONTAINER` component holds.
+/// §2.10 `createItemSnapshot` — the 3×9 viewer for an Item-Show click.
+///
+/// `item` is the displayed stack itself (`registry_key`, `count`); `container`
+/// is whatever the item's `CONTAINER` component holds, if it could be read.
+///
+/// Layout (spec §2.10): 13 leading empty slots put the item at index 13 (the
+/// centre of a 3×9), then the container contents follow.
 ///
 /// Deliberately **not** subject to [`MAX_SNAPSHOTS`]: the spec notes that
 /// `createItemSnapshot` skips the cap that `createSnapshot` applies.
 pub fn create_item_snapshot(
     title: String,
+    item: SlotEntry,
     container: SlotContents,
 ) -> String {
     expire_snapshots();
     let id = super::functions::create_snapshot_id();
     let mut items: SlotContents = vec![None; ITEM_SNAPSHOT_CENTER];
-    items.push(Some(container_first(container)));
+    // The item itself sits at the centre; its own container contents, when
+    // known, follow after it.
+    items.push(item);
+    items.extend(container);
     // Pad to the full 3×9 grid; `truncate` alone would leave a short vector.
+    items.truncate(ITEM_SNAPSHOT_SIZE);
     items.resize(ITEM_SNAPSHOT_SIZE, None);
     let mut s = lock();
     s.push_back(Snapshot {
@@ -133,17 +142,6 @@ pub fn create_item_snapshot(
 const ITEM_SNAPSHOT_SIZE: usize = 27;
 /// Index 13 is the centre of a 3×9 grid.
 const ITEM_SNAPSHOT_CENTER: usize = 13;
-
-/// Returns the first present entry of `container`, or a placeholder when the
-/// item carries no container contents. The viewer only needs the centre slot
-/// to be occupied for the common case.
-fn container_first(container: SlotContents) -> (String, u8) {
-    container
-        .into_iter()
-        .flatten()
-        .next()
-        .unwrap_or_else(|| (String::new(), 0))
-}
 
 /// Test-only helper: how many snapshots are live right now.
 #[cfg(test)]
@@ -182,13 +180,38 @@ mod tests {
     fn item_snapshot_centres_the_item() {
         let _serial = reset();
         // §2.10 — the item itself sits at index 13 of a 3×9 grid.
-        let id = create_item_snapshot("Steve's Item - Diamond".into(), Vec::new());
+        let item = Some(("minecraft:diamond".to_string(), 1u8));
+        let id = create_item_snapshot("Steve's Item - Diamond".into(), item, Vec::new());
         let (title, size, items) = open(&id).expect("item snapshot opens");
         assert_eq!(title, "Steve's Item - Diamond");
         assert_eq!(size, 27);
         assert_eq!(items.len(), 27);
-        assert!(items[13].is_some(), "centre slot holds the item");
+        assert_eq!(
+            items[13],
+            Some(("minecraft:diamond".to_string(), 1)),
+            "centre slot holds the item itself"
+        );
         assert!(items[12].is_none(), "slots before the centre stay empty");
+    }
+
+    #[test]
+    fn item_snapshot_appends_container_after_the_item() {
+        let _serial = reset();
+        // §2.10 — container contents follow the centre item and the whole grid
+        // is clamped to 3×9 even when the container overflows it.
+        let container: SlotContents = (0..40)
+            .map(|i| Some((format!("minecraft:item{i}"), 1u8)))
+            .collect();
+        let id = create_item_snapshot(
+            "t".into(),
+            Some(("minecraft:shulker_box".to_string(), 1u8)),
+            container,
+        );
+        let (_, size, items) = open(&id).expect("item snapshot opens");
+        assert_eq!(size, 27);
+        assert_eq!(items.len(), 27, "grid is clamped to 3×9");
+        assert_eq!(items[13], Some(("minecraft:shulker_box".to_string(), 1)));
+        assert_eq!(items[14], Some(("minecraft:item0".to_string(), 1)));
     }
 
     #[test]
@@ -197,7 +220,7 @@ mod tests {
         // §2.10 — `createItemSnapshot` has no 100-entry trim, so creating more
         // than the cap leaves every id openable.
         let ids: Vec<String> = (0..(MAX_SNAPSHOTS + 5))
-            .map(|i| create_item_snapshot(format!("t{i}"), Vec::new()))
+            .map(|i| create_item_snapshot(format!("t{i}"), None, Vec::new()))
             .collect();
         assert_eq!(len(), MAX_SNAPSHOTS + 5);
         assert!(open(&ids[0]).is_some(), "oldest item snapshot survived");

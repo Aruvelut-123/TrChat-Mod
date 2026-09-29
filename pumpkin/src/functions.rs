@@ -412,7 +412,16 @@ pub fn process(
                                 &locale,
                                 &[sender_name.as_str(), name.as_str()],
                             );
-                            Some(crate::snapshot::create_item_snapshot(title, Vec::new()))
+                            // §2.10 — the centre slot holds the displayed item
+                            // itself; the WIT surface cannot decode the
+                            // `CONTAINER` component's postcard bytes, so the
+                            // container is empty and the item sits alone at
+                            // index 13, which is the documented layout.
+                            Some(crate::snapshot::create_item_snapshot(
+                                title,
+                                Some((key.clone(), count)),
+                                Vec::new(),
+                            ))
                         } else {
                             None
                         };
