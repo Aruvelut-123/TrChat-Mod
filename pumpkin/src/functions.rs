@@ -42,6 +42,8 @@ use crate::lang;
 /// here are listed; custom functions would live below these.
 const PRIORITY_MENTION_ALL: i64 = 600;
 const PRIORITY_MENTION: i64 = 500;
+const PRIORITY_INVENTORY: i64 = 550;
+const PRIORITY_ENDER_CHEST: i64 = 540;
 const PRIORITY_ITEM: i64 = 530;
 
 /// Name of the built-in `General` section for player mentions.
@@ -50,6 +52,14 @@ pub const NAME_MENTION: &str = "Mention";
 pub const NAME_MENTION_ALL: &str = "Mention-All";
 /// Name of the built-in `General` section for held-item display.
 pub const NAME_ITEM_SHOW: &str = "Item-Show";
+/// Name of the built-in `General` section for inventory snapshots.
+pub const NAME_INVENTORY_SHOW: &str = "Inventory-Show";
+/// Name of the built-in `General` section for ender-chest snapshots.
+pub const NAME_ENDER_CHEST_SHOW: &str = "EnderChest-Show";
+/// §2.11 — the inventory viewer is a 9×6 container.
+pub const INVENTORY_SIZE: usize = 54;
+/// §2.11 — the ender-chest viewer is a 9×3 container.
+pub const ENDER_CHEST_SIZE: usize = 27;
 
 /// Outcome of running the function pipeline over one message body.
 pub struct FunctionOutcome {
@@ -87,6 +97,15 @@ pub enum SpanKind {
         /// `UI: true` requests the `/trchat view <snapshotId>` click event.
         snapshot: Option<String>,
     },
+    /// `Inventory-Show` / `EnderChest-Show` — the already-formatted
+    /// `Function-Inventory-Format` / `Function-EnderChest-Format` label in
+    /// AQUA, a `SHOW_TEXT` hover, and the `/trchat view <snapshotId>` click
+    /// (§2.11). The hover is a one-line hint, **not** an item list.
+    Snapshot {
+        text: String,
+        hover: String,
+        snapshot: String,
+    },
 }
 
 /// A token collected from the body before sorting/overlap resolution.
@@ -104,6 +123,9 @@ enum TokenKind {
     MentionAll,
     /// `Item-Show` — `argument` is the optional explicit hotbar slot (`1`–`9`).
     Item { argument: Option<u8> },
+    /// `Inventory-Show` / `EnderChest-Show` — the two differ only in which
+    /// container is snapshotted.
+    Snapshot { ender_chest: bool },
 }
 
 /// §2.7 — the permission node and cooldown of the owning function.
@@ -147,7 +169,20 @@ pub fn process(
         .general
         .iter()
         .find(|f| f.name == NAME_ITEM_SHOW && f.enabled && !disabled.contains(&f.name));
-    if mention.is_none() && mention_all.is_none() && item_show.is_none() {
+    let inventory_show = fns
+        .general
+        .iter()
+        .find(|f| f.name == NAME_INVENTORY_SHOW && f.enabled && !disabled.contains(&f.name));
+    let ender_chest_show = fns
+        .general
+        .iter()
+        .find(|f| f.name == NAME_ENDER_CHEST_SHOW && f.enabled && !disabled.contains(&f.name));
+    if mention.is_none()
+        && mention_all.is_none()
+        && item_show.is_none()
+        && inventory_show.is_none()
+        && ender_chest_show.is_none()
+    {
         return None;
     }
 
@@ -221,6 +256,33 @@ pub fn process(
                     priority: PRIORITY_ITEM,
                     function: f.name.clone(),
                     kind: TokenKind::Item { argument },
+                    gate: gate.clone(),
+                });
+            }
+        }
+    }
+    for (function, ender_chest) in [
+        (inventory_show, false),
+        (ender_chest_show, true),
+    ] {
+        let Some(f) = function else { continue };
+        let gate = Gate {
+            permission: f.permission.clone(),
+            cooldown_millis: f.cooldown_millis,
+        };
+        let priority = if ender_chest {
+            PRIORITY_ENDER_CHEST
+        } else {
+            PRIORITY_INVENTORY
+        };
+        for key in &f.keys {
+            for (start, end) in scan_literal_ci(body, key) {
+                tokens.push(Token {
+                    start,
+                    end,
+                    priority,
+                    function: f.name.clone(),
+                    kind: TokenKind::Snapshot { ender_chest },
                     gate: gate.clone(),
                 });
             }
@@ -360,6 +422,45 @@ pub fn process(
                         });
                     }
                 }
+            }
+            TokenKind::Snapshot { ender_chest } => {
+                // §2.11 — capture the container contents, register a snapshot,
+                // and render the one-line AQUA hint + text hover + click.
+                let (title_key, format_key, hover_key, size, items) = if *ender_chest {
+                    (
+                        "Function-EnderChest-Title",
+                        "Function-EnderChest-Format",
+                        "Function-EnderChest-Hover",
+                        ENDER_CHEST_SIZE,
+                        snapshot_ender_chest(sender),
+                    )
+                } else {
+                    (
+                        "Function-Inventory-Title",
+                        "Function-Inventory-Format",
+                        "Function-Inventory-Hover",
+                        INVENTORY_SIZE,
+                        snapshot_inventory(sender),
+                    )
+                };
+                let table2 = lang::lang().read().unwrap_or_else(|e| e.into_inner());
+                // §2.11 — titles/formats are localised with the *sender's* locale.
+                let locale = sender.get_locale();
+                let title = table2.format(title_key, &locale, &[sender_name.as_str()]);
+                let id = crate::snapshot::create(title, size, items);
+                let text = table2.format(format_key, &locale, &[sender_name.as_str()]);
+                let hover = table2.format(hover_key, &locale, &[]);
+                let start = out_body.len();
+                out_body.push_str(&text);
+                spans.push(Span {
+                    start,
+                    end: out_body.len(),
+                    kind: SpanKind::Snapshot {
+                        text,
+                        hover,
+                        snapshot: id,
+                    },
+                });
             }
         }
         cursor = t.end;
@@ -598,7 +699,7 @@ fn item_display_name(registry_key: &str, _origin_name: bool) -> String {
 }
 
 /// §2.11 — snapshot ids are 12 hexadecimal characters.
-fn create_snapshot_id() -> String {
+pub fn create_snapshot_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     // The sandbox exposes no RNG; a counter mixed with the host clock keeps
@@ -618,6 +719,38 @@ fn create_snapshot_id() -> String {
 /// `Component.empty()` + legacy formatting + `append(messageComponent)`).
 /// `TextComponent` is a WIT resource handle whose mutators consume it, so the
 /// caller passes the template in and receives a ready-to-send component.
+/// §2.11 — captures the player inventory into a 54-slot snapshot: main
+/// storage slots 0–35, then offhand, helmet, chestplate, leggings, boots
+/// (indices 36–40). The remaining slots are padding so the viewer opens as a
+/// 9×6 container.
+fn snapshot_inventory(player: &Player) -> Vec<Option<(String, u8)>> {
+    let inv = player.get_inventory();
+    // §2.11 — slots 0–35 are the hotbar + main storage of the generic handle.
+    let main = inv.as_inventory();
+    let mut out: Vec<Option<(String, u8)>> = Vec::with_capacity(INVENTORY_SIZE);
+    for slot in 0..36u32 {
+        out.push(main.get_item(slot).map(|s| (s.get_registry_key(), s.get_count())));
+    }
+    out.push(inv.get_off_hand().map(|s| (s.get_registry_key(), s.get_count())));
+    out.push(inv.get_helmet().map(|s| (s.get_registry_key(), s.get_count())));
+    out.push(inv.get_chestplate().map(|s| (s.get_registry_key(), s.get_count())));
+    out.push(inv.get_leggings().map(|s| (s.get_registry_key(), s.get_count())));
+    out.push(inv.get_boots().map(|s| (s.get_registry_key(), s.get_count())));
+    // Pad to the full 9×6 size.
+    out.resize(INVENTORY_SIZE, None);
+    out
+}
+
+/// §2.11 — captures the ender chest into a 27-slot (9×3) snapshot.
+fn snapshot_ender_chest(player: &Player) -> Vec<Option<(String, u8)>> {
+    let inv = player.get_ender_chest();
+    let mut out: Vec<Option<(String, u8)>> = Vec::with_capacity(ENDER_CHEST_SIZE);
+    for slot in 0..ENDER_CHEST_SIZE as u32 {
+        out.push(inv.get_item(slot).map(|s| (s.get_registry_key(), s.get_count())));
+    }
+    out
+}
+
 /// Builds the styled body component for the broadcast (prefix/suffix handled
 /// by the caller). Mention spans become AQUA + hover, Mention-All becomes
 /// GOLD + BOLD + hover; plain text between them inherits the surrounding
@@ -687,6 +820,14 @@ pub fn build_body_component(
                 }
                 c
             }
+            SpanKind::Snapshot {
+                text,
+                hover,
+                snapshot: id,
+            } => TextComponent::text(text)
+                .color_named(NamedColor::Aqua)
+                .hover_show_text(TextComponent::from_legacy_string_with_code(hover, '&'))
+                .click_run_command(&format!("/trchat view {id}")),
         };
         root = root.add_child(seg);
         cursor = span.end;

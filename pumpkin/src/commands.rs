@@ -9,6 +9,7 @@
 //! * `/trchat unmute <player>` — unmute a player (`trchat.admin`)
 //! * `/trchat ignore <player>` — toggle ignoring a player (`trchat.use`)
 //! * `/trchat channel <id>`  — switch the active channel (`trchat.use`)
+//! * `/trchat view <snapshot>` — open a read-only inventory snapshot (§2.11)
 //! * `/channel <id>`         — alias of `trchat channel`
 //! * `/msg <target> <msg>`   — private message (`tell` alias, `trchat.use`)
 //!
@@ -22,8 +23,9 @@ use pumpkin_plugin_api::{
         StringType,
     },
     commands::CommandHandler,
+    gui::Gui,
     text::TextComponent,
-    Context, Server,
+    Context, ItemStack, Screen, Server,
 };
 
 use crate::config;
@@ -71,6 +73,13 @@ pub fn register_commands(context: &Context) {
         CommandNode::literal("channel").then(
             CommandNode::argument("name", &ArgumentType::String(StringType::SingleWord))
                 .execute(ChannelCommand),
+        ),
+    )
+    // §2.11 — `/trchat view <snapshot>` opens the read-only container view.
+    .then(
+        CommandNode::literal("view").then(
+            CommandNode::argument("snapshot", &ArgumentType::String(StringType::SingleWord))
+                .execute(ViewCommand),
         ),
     );
     context.register_command(trchat, PERM_USE);
@@ -444,4 +453,58 @@ fn render_msg(template: &str, from: &str, to: &str, text: &str) -> String {
         .replace("{player}", from)
         .replace("{target}", to)
         .replace("{message}", text)
+}
+
+/// `/trchat view <snapshot>` — §2.11 `openSnapshot`.
+///
+/// Opens a **read-only** 9×6 or 9×3 container holding the captured contents.
+/// An unknown or expired id reports `Function-Snapshot-Expired`; the entry is
+/// consumed on a successful open, matching the Mod's one-shot snapshots.
+struct ViewCommand;
+
+impl CommandHandler for ViewCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let Some(id) = arg_string(&args, "snapshot") else {
+            send(&sender, "&cUsage: /trchat view <snapshot>");
+            return Ok(0);
+        };
+        let Some(player) = sender.as_player() else {
+            send(&sender, "&cOnly players can open a snapshot.");
+            return Ok(0);
+        };
+        let locale = player.get_locale();
+        let Some((title, size, items)) = crate::snapshot::open(&id) else {
+            // §2.11 — expired or unknown → `Function-Snapshot-Expired`.
+            let text = lang::lang()
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .format("Function-Snapshot-Expired", &locale, &[]);
+            send(&sender, &text);
+            return Ok(0);
+        };
+
+        // §2.11 — 54 slots → `GENERIC_9x6`, otherwise `GENERIC_9x3`.
+        let screen = if size == crate::functions::INVENTORY_SIZE {
+            Screen::Generic9x6
+        } else {
+            Screen::Generic9x3
+        };
+        let gui = Gui::new(screen, TextComponent::from_legacy_string_with_code(&title, '&'));
+        // `ReadOnlyChestMenu`: no taking, no placing.
+        gui.set_allow_grab_items(false);
+        gui.set_allow_put_items(false);
+        // Repopulate only the live slots; padding stays empty.
+        for (slot, entry) in items.iter().enumerate() {
+            if let Some((registry_key, count)) = entry {
+                gui.set_item(slot as u32, ItemStack::new(registry_key, *count));
+            }
+        }
+        player.open_gui(gui);
+        Ok(0)
+    }
 }

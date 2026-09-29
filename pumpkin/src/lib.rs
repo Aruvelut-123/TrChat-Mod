@@ -20,6 +20,7 @@ mod functions;
 mod lang;
 mod placeholder;
 mod playerdata;
+mod snapshot;
 mod special;
 
 use pumpkin_plugin_api::{
