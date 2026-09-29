@@ -36,6 +36,8 @@ use crate::playerdata::SessionPlayers;
 const PERM_USE: &str = "trchat.use";
 /// Permission of administrators (reload, mute, muteall).
 const PERM_ADMIN: &str = "trchat.admin";
+/// Permission for private-message spy (also granted to OPs, spec §2.6).
+const PERM_SPY: &str = "trchat.spy";
 
 /// Registers every TrChat command with the given context.
 ///
@@ -82,6 +84,16 @@ pub fn register_commands(context: &Context) {
                 .execute(ViewCommand),
         ),
     );
+    // `/trchat spy [on|off]` — the optional argument means the bare command
+    // toggles the current state (spec §2.6, `TRC:535-542`).
+    let trchat = trchat.then(
+        CommandNode::literal("spy")
+            .then(
+                CommandNode::argument("state", &ArgumentType::String(StringType::SingleWord))
+                    .execute(SpyCommand),
+            )
+            .execute(SpyCommand),
+    );
     context.register_command(trchat, PERM_USE);
 
     // ---- /channel <name> ----
@@ -107,6 +119,21 @@ pub fn register_commands(context: &Context) {
         ),
     );
     context.register_command(msg, PERM_USE);
+
+    // ---- /trreply <message> (aliases /r, /reply) ----
+    let reply = Command::new(
+        &[
+            String::from("trreply"),
+            String::from("r"),
+            String::from("reply"),
+        ],
+        "Reply to the last player who privately messaged you",
+    )
+    .then(
+        CommandNode::argument("message", &ArgumentType::String(StringType::Greedy))
+            .execute(ReplyCommand),
+    );
+    context.register_command(reply, PERM_USE);
 }
 
 /// Extracts a plain string argument (`Arg::Simple`/`Arg::Msg`).
@@ -400,7 +427,6 @@ impl CommandHandler for MsgCommand {
         server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        let me = sender.get_name();
         let Some(target) = arg_string(&args, "target") else {
             send(&sender, "&cUsage: /msg <player> <message>");
             return Ok(0);
@@ -409,20 +435,10 @@ impl CommandHandler for MsgCommand {
             send(&sender, "&cUsage: /msg <player> <message>");
             return Ok(0);
         };
-        if sender.is_console() {
-            send(&sender, "&cConsole cannot use private messages yet.");
+        let Some(sender_player) = sender.as_player() else {
+            send(&sender, &message("General-Player-Only", &sender, &[]));
             return Ok(0);
-        }
-        // The receiver ignores the sender → the message is swallowed.
-        {
-            let players = SessionPlayers::global()
-                .read()
-                .unwrap_or_else(|e| e.into_inner());
-            if players.ignores(&target, &me) {
-                send(&sender, &format!("&c{target} is ignoring you."));
-                return Ok(0);
-            }
-        }
+        };
         let online = server.get_all_players();
         let Some(target_player) = online
             .iter()
@@ -432,27 +448,109 @@ impl CommandHandler for MsgCommand {
             return Ok(0);
         };
 
-        let config = config::global_config();
-        let sender_tpl = config.read().msg.sender.clone();
-        let receiver_tpl = config.read().msg.receiver.clone();
-
-        let rendered_sender = render_msg(&sender_tpl, &me, &target, &text);
-        let rendered_receiver = render_msg(&receiver_tpl, &me, &target, &text);
-        send(&sender, &rendered_sender);
-        let _ = target_player.send_system_message(
-            TextComponent::from_legacy_string_with_code(&rendered_receiver, '&'),
-            false,
-        );
+        // §1.6 — one shared delivery path so `/msg` and `/trreply` behave
+        // identically (ignore check, rendering, spy echo).
+        if !crate::private_msg::deliver(&server, &sender_player, target_player, &text) {
+            send(&sender, &format!("&c{target} is ignoring you."));
+        }
         Ok(0)
     }
 }
 
-/// Renders a `/msg` template (`{player}`, `{target}`, `{message}`).
-fn render_msg(template: &str, from: &str, to: &str, text: &str) -> String {
-    template
-        .replace("{player}", from)
-        .replace("{target}", to)
-        .replace("{message}", text)
+/// `/trreply <message>` (aliases `/r`, `/reply`) — §2.6.
+///
+/// Replies to whoever last privately messaged the sender; with no recorded
+/// correspondent it reports `Private-Message-No-Reply`.
+struct ReplyCommand;
+
+impl CommandHandler for ReplyCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let Some(player) = sender.as_player() else {
+            send(&sender, &message("General-Player-Only", &sender, &[]));
+            return Ok(0);
+        };
+        let Some(text) = arg_string(&args, "message") else {
+            send(&sender, "&cUsage: /trreply <message>");
+            return Ok(0);
+        };
+        let me = player.get_name();
+        let Some(target_name) = crate::private_msg::reply_target(&me) else {
+            crate::private_msg::no_reply_hint(&player);
+            return Ok(0);
+        };
+        // The correspondent may have gone offline since the last message.
+        let online = server.get_all_players();
+        let Some(target) = online
+            .iter()
+            .find(|p| p.get_name().eq_ignore_ascii_case(&target_name))
+        else {
+            send(
+                &sender,
+                &message("General-Player-Not-Found", &sender, &[&target_name]),
+            );
+            return Ok(0);
+        };
+        if !crate::private_msg::deliver(&server, &player, target, &text) {
+            return Ok(0);
+        }
+        Ok(0)
+    }
+}
+
+/// `/trchat spy [on|off]` — §2.6 private-message spy toggle.
+///
+/// Registration carries no `requires`; the check happens at runtime, where an
+/// OP or the `trchat.spy` node is accepted (`TRC:535-542`).
+struct SpyCommand;
+
+impl CommandHandler for SpyCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let Some(player) = sender.as_player() else {
+            send(&sender, &message("General-Player-Only", &sender, &[]));
+            return Ok(0);
+        };
+        if !player.has_permission(PERM_SPY) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
+            return Ok(0);
+        }
+        let _ = server;
+        let name = player.get_name();
+        // An explicit on/off wins; a bare `/trchat spy` toggles.
+        let enabled = match arg_string(&args, "state") {
+            Some(raw) if raw.eq_ignore_ascii_case("on") => {
+                if !crate::private_msg::is_spying(&name) {
+                    crate::private_msg::toggle_spy(&name);
+                }
+                true
+            }
+            Some(raw) if raw.eq_ignore_ascii_case("off") => {
+                if crate::private_msg::is_spying(&name) {
+                    crate::private_msg::toggle_spy(&name);
+                }
+                false
+            }
+            Some(other) => {
+                send(
+                    &sender,
+                    &format!("&cUnknown state '{other}' (expected on/off)."),
+                );
+                return Ok(0);
+            }
+            None => crate::private_msg::toggle_spy(&name),
+        };
+        crate::private_msg::announce_spy(&player, enabled);
+        Ok(0)
+    }
 }
 
 /// `/trchat view <snapshot>` — §2.11 `openSnapshot`.

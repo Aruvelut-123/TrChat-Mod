@@ -29,6 +29,11 @@ pub struct PlayerState {
     pub ignored: HashSet<String>,
     /// Chosen chat colour code (single char, no `&`).
     pub colour: String,
+    /// Last player who privately messaged this player, lowercased — the target
+    /// of `/trreply` (spec §1.6 `lastPrivateSender`).
+    pub last_private_sender: String,
+    /// True while private-message spy is enabled (`/trchat spy`).
+    pub private_spy: bool,
 }
 
 /// Session-wide registry: the online players' [`PlayerState`] plus the global

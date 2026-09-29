@@ -20,6 +20,7 @@ mod functions;
 mod lang;
 mod placeholder;
 mod playerdata;
+mod private_msg;
 mod snapshot;
 mod special;
 
