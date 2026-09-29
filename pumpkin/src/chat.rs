@@ -1,12 +1,56 @@
-//! Chat interception, rendering and broadcast — the local TrChat core ported to Pumpkin.
+//! Chat pipeline — the Bukkit v2 `ChatService.handleChat` flow ported to Pumpkin.
+//!
+//! Order of operations (mirroring `guardMessage`, see `docs/spec/chat.md`):
+//!
+//! 1. trim; empty message → swallowed,
+//! 2. length guard (`messageMaxLength`, counted in UTF-16 code units),
+//! 3. global mute → per-player mute,
+//! 4. cooldown (`cooldownMillis`, measured from the last *accepted* message),
+//! 5. anti-repeat similarity guard,
+//! 6. blocked-word filtering (`TextFilter`),
+//! 7. channel routing (longest prefix), speak-permission check, radius check,
+//! 8. rendering with the channel format + built-in placeholders,
+//! 9. broadcast to every eligible online player.
+//!
+//! `TextComponent` is a WIT resource handle (not `Clone`), so the rendered
+//! component is built once per receiver from the same template string.
 
 use pumpkin_plugin_api::{
     events::{player::PlayerChatEvent, EventData, EventHandler, EventPriority},
     text::TextComponent,
     Context, Server,
 };
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
-use crate::config::{SharedConfig, TrChatConfig};
+use crate::config::{Route, SharedConfig, TrChatConfig};
+use crate::filter::TextFilter;
+use crate::lang;
+use crate::playerdata::SessionPlayers;
+
+/// Per-player transient chat state (cooldown + recent messages). In the Bukkit
+/// plugin the same data lives in `ChatService` maps keyed by UUID; here the
+/// lowercased player name is the key (unique per server session, and the WIT
+/// `uuid` type has no string form yet).
+#[derive(Default)]
+struct PlayerChatState {
+    /// When the last *accepted* message was sent (cooldown source).
+    last_sent_at: Option<Instant>,
+    /// Recently sent messages for the anti-repeat guard.
+    recent: VecDeque<RecentMessage>,
+}
+
+struct RecentMessage {
+    text: String,
+    at: Instant,
+}
+
+static PLAYER_STATES: OnceLock<Mutex<HashMap<String, PlayerChatState>>> = OnceLock::new();
+
+fn states() -> &'static Mutex<HashMap<String, PlayerChatState>> {
+    PLAYER_STATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// Owns chat wiring for the plugin.
 pub struct ChatManager;
@@ -15,6 +59,9 @@ impl ChatManager {
     /// Loads the configuration and registers the chat event handler.
     pub fn init(context: Context) -> Result<(), String> {
         let config = SharedConfig::load(&context)?;
+        // Seed the process-wide config handle used by the command surface
+        // (`commands::ChannelCommand`, `MsgCommand`) before any command runs.
+        crate::config::init_global(&config, context.get_data_folder());
         context
             .register_event_handler::<PlayerChatEvent, ChatHandler>(
                 ChatHandler { config },
@@ -26,9 +73,7 @@ impl ChatManager {
     }
 }
 
-/// Handles `PlayerChatEvent`: renders the message according to the format and
-/// broadcasts it to every online player (the experimental Pumpkin port of the
-/// TrChat local chat pipeline).
+/// Handles `PlayerChatEvent` — the whole `handleChat` pipeline.
 struct ChatHandler {
     config: SharedConfig,
 }
@@ -39,25 +84,11 @@ impl EventHandler<PlayerChatEvent> for ChatHandler {
         server: Server,
         mut event: EventData<PlayerChatEvent>,
     ) -> EventData<PlayerChatEvent> {
-        let name = event.player.get_name();
-        let raw_message = event.message.clone();
+        let config = self.config.read();
+        let _ = chat_pipeline(&server, &mut event, &config);
 
-        // Phase 1 (this branch, experimental):
-        //   render + broadcast to all online players.
-        // Phase 2 (roadmap):
-        //   channel prefix routing (#global / @local), /msg private chat,
-        //   and Redis cross-server relay (network.* permissions pre-declared).
-        // Note: TextComponent is a WIT handle (not Clone), so we render per player.
-        for player in server.get_all_players() {
-            let text = render(
-                &self.config.0.read().unwrap_or_else(|e| e.into_inner()),
-                &name,
-                &raw_message,
-            );
-            let _ = player.send_system_message(text, false);
-        }
-
-        // Suppress the server's own formatting so only our rendered message shows.
+        // Every path intercepted here suppresses the vanilla broadcast; the
+        // plugin's own rendering has already reached the allowed receivers.
         event.cancelled = true;
         event.message = String::new();
         event.recipients = Vec::new();
@@ -65,18 +96,243 @@ impl EventHandler<PlayerChatEvent> for ChatHandler {
     }
 }
 
-/// Builds the displayed chat component from the configured template.
-///
-/// The template supports `&` color codes (parsed via the legacy string parser)
-/// plus the `{player}` / `{message}` placeholders.
-fn render(config: &TrChatConfig, name: &str, message: &str) -> TextComponent {
-    let template = placeholders(&config.format, name, message);
-    TextComponent::from_legacy_string_with_code(&template, '&')
+/// The full guard → filter → route → render → broadcast flow.
+/// Returns `true` when the message was accepted (broadcast), `false` when a
+/// guard rejected it (the event is cancelled either way).
+fn chat_pipeline(
+    server: &Server,
+    event: &mut EventData<PlayerChatEvent>,
+    config: &TrChatConfig,
+) -> bool {
+    let _ = server;
+    let name = event.player.get_name();
+    let locale = event.player.get_locale();
+    let message = event.message.trim();
+
+    // 1. Empty message → silently swallowed (Bukkit: `return` without hint).
+    if message.is_empty() {
+        return false;
+    }
+
+    // 2. Length guard — UTF-16 code units (Java `String.length()`), not chars.
+    let max_len = config.message_max_length.max(1) as usize;
+    if message.encode_utf16().count() > max_len {
+        let text = lang::lang()
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .format("General-Too-Long", &locale, &[&max_len.to_string()]);
+        let _ = event
+            .player
+            .send_system_message(TextComponent::from_legacy_string_with_code(&text, '&'), false);
+        return false;
+    }
+
+    // 3. Mute guards: global mute first, then the player's own mute.
+    {
+        let session = SessionPlayers::global();
+        let session = session.read().unwrap_or_else(|e| e.into_inner());
+        if session.is_global_muted() || session.is_muted(&name) {
+            let key = if session.is_global_muted() {
+                "General-Global-Muting"
+            } else {
+                "General-Muted"
+            };
+            let text = lang::lang()
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .format(key, &locale, &[]);
+            let _ = event
+                .player
+                .send_system_message(TextComponent::from_legacy_string_with_code(&text, '&'), false);
+            return false;
+        }
+    }
+
+    let player_key = name.to_ascii_lowercase();
+
+    // 4. Cooldown — measured from the last accepted message.
+    {
+        let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
+        let state = guard.entry(player_key.clone()).or_default();
+        if let Some(last) = state.last_sent_at {
+            let cooldown = config.cooldown_millis.max(0) as u128;
+            if last.elapsed().as_millis() < cooldown {
+                let text = lang::lang()
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .format("General-Too-Fast", &locale, &[]);
+                let _ = event
+                    .player
+                    .send_system_message(TextComponent::from_legacy_string_with_code(&text, '&'), false);
+                return false;
+            }
+        }
+    }
+
+    // 5. Anti-repeat — only similar messages are recorded; with
+    //    `antiRepeatMaxPerPeriod: 0` any similar message is blocked.
+    {
+        let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
+        let state = guard.get_mut(&player_key).expect("state exists after cooldown");
+        let period = config.anti_repeat_period_millis.max(1) as u128;
+        let now = Instant::now();
+        while state
+            .recent
+            .front()
+            .is_some_and(|m| now.duration_since(m.at).as_millis() > period)
+        {
+            state.recent.pop_front();
+        }
+        let similarity = config.anti_repeat_similarity.max(0.0).min(1.0);
+        let too_similar = state
+            .recent
+            .iter()
+            .any(|m| similarity_score(&m.text, message) >= similarity);
+        if too_similar {
+            let text = lang::lang()
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .format("General-Too-Similar", &locale, &[]);
+            let _ = event
+                .player
+                .send_system_message(TextComponent::from_legacy_string_with_code(&text, '&'), false);
+            return false;
+        }
+        state.recent.push_back(RecentMessage {
+            text: message.to_string(),
+            at: now,
+        });
+    }
+
+    // 6. Filtering — blocked words replaced by the configured character
+    //    repeated to the matched word length (non-overlapping, case-insensitive).
+    let filter = TextFilter::new(&config.blocked_words, &config.filter_replacement);
+    let message = filter.filter(message);
+
+    // 7. Channel routing (longest prefix wins) + speak permission check.
+    let route = config.route(&message);
+    let (channel, body) = match route {
+        Route::Channel(channel, body) => (Some(channel), body),
+        Route::Plain(body) => (None, body),
+    };
+
+    if let Some(channel) = channel {
+        if !channel.permission.is_empty() && !event.player.has_permission(&channel.permission) {
+            let text = lang::lang()
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .format("Channel-No-Speak-Permission", &locale, &[]);
+            let _ = event
+                .player
+                .send_system_message(TextComponent::from_legacy_string_with_code(&text, '&'), false);
+            return false;
+        }
+    }
+
+    // 8. Render — one template string, then one component per receiver.
+    let template = match channel {
+        Some(ch) => render_template(&ch.format, &name, body, &ch.id),
+        None => render_template(&config.format, &name, body, ""),
+    };
+
+    // 9. Broadcast — every online player; radius-limited channels use squared
+    //    distance (Bukkit `DISTANCE` semantics; 0.0 = unlimited).
+    let radius = channel.map(|c| c.radius).unwrap_or(0.0f64);
+    let origin = event.player.get_position();
+    for player in server.get_all_players() {
+        if radius > 0.0 {
+            let pos = player.get_position();
+            let dx = pos.0 - origin.0;
+            let dy = pos.1 - origin.1;
+            let dz = pos.2 - origin.2;
+            if dx * dx + dy * dy + dz * dz > radius * radius {
+                continue;
+            }
+        }
+        let component = TextComponent::from_legacy_string_with_code(&template, '&');
+        let _ = player.send_system_message(component, false);
+    }
+
+    // Accepted — update the cooldown timestamp.
+    {
+        let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = guard.get_mut(&player_key) {
+            state.last_sent_at = Some(Instant::now());
+        }
+    }
+    true
 }
 
-/// Replaces `{player}` / `{message}` placeholders in the format template.
-fn placeholders(template: &str, name: &str, message: &str) -> String {
+/// Renders a format template with the built-in placeholders (`{player}`,
+/// `{message}`, `{channel}`, `{target}` for private chat).
+fn render_template(template: &str, name: &str, message: &str, channel: &str) -> String {
     template
         .replace("{player}", name)
         .replace("{message}", message)
+        .replace("{channel}", channel)
+        .replace("{target}", "")
+}
+
+/// Normalized similarity in `[0, 1]` (a plain-normalized Jaro–Winkler stand-in
+/// for the ordered similarity used by the Bukkit anti-repeat guard).
+fn similarity_score(a: &str, b: &str) -> f64 {
+    if a == b {
+        return 1.0;
+    }
+    let ca: Vec<char> = a.chars().collect();
+    let cb: Vec<char> = b.chars().collect();
+    if ca.is_empty() || cb.is_empty() {
+        return 0.0;
+    }
+    let max_dist = (ca.len().max(cb.len()) / 2).saturating_sub(1);
+    let mut a_matched = vec![false; ca.len()];
+    let mut b_matched = vec![false; cb.len()];
+    let mut matches = 0usize;
+    for (i, &ca_i) in ca.iter().enumerate() {
+        let lo = i.saturating_sub(max_dist);
+        let hi = (i + max_dist + 1).min(cb.len());
+        for j in lo..hi {
+            if !b_matched[j] && cb[j] == ca_i {
+                a_matched[i] = true;
+                b_matched[j] = true;
+                matches += 1;
+                break;
+            }
+        }
+    }
+    if matches == 0 {
+        return 0.0;
+    }
+    let mut t = 0usize;
+    let mut j = 0usize;
+    for (i, matched) in a_matched.iter().enumerate() {
+        if !*matched {
+            continue;
+        }
+        while j < b_matched.len() && !b_matched[j] {
+            j += 1;
+        }
+        if j >= b_matched.len() {
+            break;
+        }
+        if ca[i] != cb[j] {
+            t += 1;
+        }
+        j += 1;
+    }
+    let m = matches as f64;
+    let t = t as f64 / 2.0;
+    (m / ca.len() as f64 + m / cb.len() as f64 + (m - t) / m) / 3.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::similarity_score;
+
+    #[test]
+    fn similarity_basics() {
+        assert_eq!(similarity_score("hello", "hello"), 1.0);
+        assert!(similarity_score("hello", "helloo") > 0.9);
+        assert!(similarity_score("hello", "world") < 0.5);
+    }
 }

@@ -11,7 +11,11 @@
 //! declares the network permissions the future proxy code will need.
 
 mod chat;
+mod commands;
 mod config;
+mod filter;
+mod lang;
+mod playerdata;
 
 use pumpkin_plugin_api::{
     permissions::{
@@ -51,6 +55,9 @@ impl Plugin for TrChatPlugin {
     }
 
     fn on_load(&self, context: Context) -> Result<(), String> {
+        // Commands are registered before the chat pipeline so both borrow
+        // the context without conflict.
+        crate::commands::register_commands(&context);
         ChatManager::init(context)
     }
 }
