@@ -237,10 +237,114 @@ pub struct FormatLayer {
 }
 
 /// A single prefix component; `text` is the legacy plain-text payload.
+///
+/// §4.4/§4.5 — a component part may also carry a hover and exactly one click
+/// action. The click actions are consulted in the spec's priority order
+/// (`suggest` > `command` > `url` > `copy` > `file`) by
+/// [`PrefixPart::click_action`].
+///
+/// The component renderer still emits plain legacy text, so these fields are
+/// parsed and validated now but not yet attached to the outgoing component;
+/// [`PrefixPart::click_action`] is the accessor that wiring will call.
 #[derive(Debug, Clone, Default)]
 pub struct PrefixPart {
     pub condition: String,
     pub text: String,
+    /// `hover` — hover text (multi-line `|-` supported upstream).
+    #[allow(dead_code)]
+    pub hover: String,
+    /// `suggest` — click inserts this command into the chat box.
+    #[allow(dead_code)]
+    pub suggest: String,
+    /// `command` — click runs this command.
+    #[allow(dead_code)]
+    pub command: String,
+    /// `url` — click opens this link (trimmed, cut at the first space).
+    #[allow(dead_code)]
+    pub url: String,
+    /// `copy` — click copies this text to the clipboard.
+    #[allow(dead_code)]
+    pub copy: String,
+    /// `file` — click opens this local path.
+    #[allow(dead_code)]
+    pub file: String,
+    /// `insertion` — shift-click inserted text.
+    #[allow(dead_code)]
+    pub insertion: String,
+    /// `font` — resource font (`ResourceLocation`).
+    #[allow(dead_code)]
+    pub font: String,
+}
+
+/// The click action a component part contributes, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum ClickAction {
+    Suggest(String),
+    RunCommand(String),
+    OpenUrl(String),
+    CopyToClipboard(String),
+    OpenFile(String),
+}
+
+impl PrefixPart {
+    /// §4.5 — the first non-empty click action in the Mod's priority order:
+    /// `suggest` > `command` > `url` > `copy` > `file`. A `url` is trimmed and
+    /// cut at the first space, and must parse as a `URI` or it is dropped.
+    #[allow(dead_code)]
+    pub fn click_action(&self) -> Option<ClickAction> {
+        if !self.suggest.is_empty() {
+            return Some(ClickAction::Suggest(self.suggest.clone()));
+        }
+        if !self.command.is_empty() {
+            return Some(ClickAction::RunCommand(self.command.clone()));
+        }
+        if !self.url.is_empty() {
+            return valid_url(&self.url).map(ClickAction::OpenUrl);
+        }
+        if !self.copy.is_empty() {
+            return Some(ClickAction::CopyToClipboard(self.copy.clone()));
+        }
+        if !self.file.is_empty() {
+            return Some(ClickAction::OpenFile(self.file.clone()));
+        }
+        None
+    }
+
+    /// Whether this part should be rendered at all: the legacy renderer keeps
+    /// unconditional parts and parts whose condition it cannot evaluate.
+    #[allow(dead_code)]
+    pub fn is_rendered(&self) -> bool {
+        self.condition.is_empty() || self.condition == "~"
+    }
+}
+
+/// §4.5 — `url`: `trim()`, truncate at the first space, then require that the
+/// result parses as a `URI` (`new URI(url)` succeeding upstream). Anything
+/// else yields no click event at all.
+#[allow(dead_code)]
+pub fn valid_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let candidate = trimmed.split(' ').next().unwrap_or("").trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    // A URI needs a scheme and no illegal characters; the sandbox has no URI
+    // parser, so accept only well-formed absolute URLs.
+    let (scheme, rest) = candidate.split_once(':')?;
+    if scheme.is_empty() || rest.is_empty() {
+        return None;
+    }
+    if !scheme
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+    {
+        return None;
+    }
+    if candidate.chars().any(|c| c.is_whitespace() || c == '"' || c == '<' || c == '>') {
+        return None;
+    }
+    Some(candidate.to_string())
 }
 
 impl ChannelConfig {
@@ -1269,9 +1373,10 @@ fn parse_prefix(v: Option<&serde_yaml::Value>) -> Vec<PrefixPart> {
     for (_, v) in entries {
         match v {
             serde_yaml::Value::String(text) if !text.is_empty() => {
+                // A bare string entry carries no hover/click fields.
                 parts.push(PrefixPart {
-                    condition: String::new(),
                     text: text.clone(),
+                    ..Default::default()
                 });
             }
             serde_yaml::Value::Mapping(m) => {
@@ -1293,6 +1398,15 @@ fn part_from_map(m: &serde_yaml::Mapping) -> PrefixPart {
     PrefixPart {
         text: map_str(m, "text").to_string(),
         condition: map_str(m, "condition").to_string(),
+        // §4.4/§4.5 — the optional hover and click/insertion/font fields.
+        hover: map_str(m, "hover").to_string(),
+        suggest: map_str(m, "suggest").to_string(),
+        command: map_str(m, "command").to_string(),
+        url: map_str(m, "url").to_string(),
+        copy: map_str(m, "copy").to_string(),
+        file: map_str(m, "file").to_string(),
+        insertion: map_str(m, "insertion").to_string(),
+        font: map_str(m, "font").to_string(),
     }
 }
 
@@ -1395,6 +1509,94 @@ fn private_formats(channels: &[ChannelConfig]) -> PrivateMessageFormats {
 mod tests {
     use super::defaults;
     use super::*;
+
+    /// §4.5 — click actions are consulted in the Mod's priority order:
+    /// `suggest` > `command` > `url` > `copy` > `file`.
+    #[test]
+    fn click_action_follows_spec_priority() {
+        let all = PrefixPart {
+            suggest: "/s".into(),
+            command: "/c".into(),
+            url: "https://e.com/".into(),
+            copy: "cp".into(),
+            file: "/f".into(),
+            ..Default::default()
+        };
+        assert_eq!(all.click_action(), Some(ClickAction::Suggest("/s".into())));
+
+        let no_suggest = PrefixPart {
+            suggest: String::new(),
+            ..all.clone()
+        };
+        assert_eq!(
+            no_suggest.click_action(),
+            Some(ClickAction::RunCommand("/c".into()))
+        );
+
+        let only_url = PrefixPart {
+            command: String::new(),
+            url: "https://e.com/".into(),
+            ..no_suggest
+        };
+        assert_eq!(
+            only_url.click_action(),
+            Some(ClickAction::OpenUrl("https://e.com/".into()))
+        );
+
+        // A part with no action yields none, and `console`/`text` alone is fine.
+        assert_eq!(PrefixPart::default().click_action(), None);
+    }
+
+    /// §4.5 — `url` is trimmed, cut at the first space, and must be a valid URI
+    /// or the part contributes no click event at all.
+    #[test]
+    fn url_is_trimmed_cut_and_validated() {
+        assert_eq!(valid_url("  https://a.com/x  "), Some("https://a.com/x".into()));
+        assert_eq!(
+            valid_url("https://a.com/x with spaces"),
+            Some("https://a.com/x".into())
+        );
+        // No scheme / empty / illegal characters → dropped.
+        assert_eq!(valid_url("not a url"), None);
+        assert_eq!(valid_url(""), None);
+        assert_eq!(valid_url("   "), None);
+        assert_eq!(valid_url("https:"), None);
+        assert_eq!(valid_url("sch eme://x"), None);
+
+        // A part whose only action is an invalid url has no click action.
+        let bad = PrefixPart {
+            url: "not a url".into(),
+            ..Default::default()
+        };
+        assert_eq!(bad.click_action(), None);
+    }
+
+    /// §4.4/§4.5 — the component-part fields survive parsing from YAML.
+    #[test]
+    fn component_part_fields_are_parsed() {
+        let yaml = r#"
+text: "&8[&fSite&8]"
+hover: "Click me"
+url: "https://example.com/"
+insertion: "inserted"
+font: "minecraft:default"
+"#;
+        let m = match serde_yaml::from_str::<serde_yaml::Value>(yaml).unwrap() {
+            serde_yaml::Value::Mapping(m) => m,
+            other => panic!("expected a mapping, got {other:?}"),
+        };
+        let part = part_from_map(&m);
+        assert_eq!(part.text, "&8[&fSite&8]");
+        assert_eq!(part.hover, "Click me");
+        assert_eq!(part.url, "https://example.com/");
+        assert_eq!(part.insertion, "inserted");
+        assert_eq!(part.font, "minecraft:default");
+        assert_eq!(
+            part.click_action(),
+            Some(ClickAction::OpenUrl("https://example.com/".into()))
+        );
+        assert!(part.is_rendered(), "an unconditional part must render");
+    }
 
     /// Every bundled default must be parseable YAML so a fresh data folder
     /// never ships a broken file.
