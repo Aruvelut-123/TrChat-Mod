@@ -17,7 +17,10 @@
 //! component is built once per receiver from the same template string.
 
 use pumpkin_plugin_api::{
-    events::{player::PlayerChatEvent, EventData, EventHandler, EventPriority},
+    events::{
+        player::{PlayerChatEvent, PlayerCommandPreprocessEvent},
+        EventData, EventHandler, EventPriority,
+    },
     text::TextComponent,
     Context, Server,
 };
@@ -67,12 +70,58 @@ impl ChatManager {
         crate::config::init_global(&config, context.get_data_folder());
         context
             .register_event_handler::<PlayerChatEvent, ChatHandler>(
-                ChatHandler { config },
+                ChatHandler {
+                    config: config.clone(),
+                },
+                EventPriority::High,
+                true,
+            )
+            .map_err(|e| e.to_string())?;
+        // The command guard rides the preprocess hook so a denied command
+        // never reaches the server (`ChatFunctionService.checkCommand`).
+        context
+            .register_event_handler::<PlayerCommandPreprocessEvent, CommandGuardHandler>(
+                CommandGuardHandler { config },
                 EventPriority::High,
                 true,
             )
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+}
+
+/// Handles `PlayerCommandPreprocessEvent` — the `Command-Controller` guard.
+struct CommandGuardHandler {
+    config: SharedConfig,
+}
+
+impl EventHandler<PlayerCommandPreprocessEvent> for CommandGuardHandler {
+    fn handle(
+        &self,
+        _server: Server,
+        mut event: EventData<PlayerCommandPreprocessEvent>,
+    ) -> EventData<PlayerCommandPreprocessEvent> {
+        let verdict =
+            crate::command_controller::check_command(&event.player, &event.command, &self.config);
+
+        let key = match verdict {
+            crate::command_controller::Verdict::Allow => return event,
+            crate::command_controller::Verdict::Deny => "Command-Controller-Deny",
+            crate::command_controller::Verdict::Cooldown => "Command-Controller-Cooldown",
+        };
+
+        let locale = event.player.get_locale();
+        let text = lang::lang().read().unwrap_or_else(|e| e.into_inner()).format(
+            key,
+            &locale,
+            &[],
+        );
+        let _ = event.player.send_system_message(
+            TextComponent::from_legacy_string_with_code(&text, '&'),
+            false,
+        );
+        event.cancelled = true;
+        event
     }
 }
 

@@ -318,9 +318,18 @@ impl CommandHandler for ChannelCommand {
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
         let me = sender.get_name();
+        let config = config::global_config();
+        // §2.4 — switching channels is a Command-Controller-managed action;
+        // with the controller off (or ruleless) the sub-command is unavailable.
+        if !crate::command_controller::is_command_managed(&config) {
+            send(
+                &sender,
+                &message("Command-Controller-Disabled", &sender, &["channel"]),
+            );
+            return Ok(0);
+        }
         let Some(name) = arg_string(&args, "name") else {
             // List the available channels when no argument is consumed.
-            let config = config::global_config();
             let ids: Vec<String> = config
                 .read()
                 .channels()
@@ -333,7 +342,6 @@ impl CommandHandler for ChannelCommand {
             );
             return Ok(0);
         };
-        let config = config::global_config();
         let guard = config.read();
         let Some(channel) = guard.channel_by_id(&name) else {
             let ids: Vec<&str> = guard.channels().iter().map(|c| c.id.as_str()).collect();
