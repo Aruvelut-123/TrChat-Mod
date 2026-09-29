@@ -18,6 +18,7 @@ use pumpkin_plugin_api::player::Player;
 use pumpkin_plugin_api::Server;
 
 use pumpkin_plugin_api::wit::pumpkin::plugin::common::Hand;
+use pumpkin_plugin_api::wit::pumpkin::plugin::world::BlockPos;
 use pumpkin_plugin_api::ItemStack;
 
 use crate::config::TrChatConfig;
@@ -172,6 +173,13 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         "yaw" => format_number(player.get_yaw() as f64),
         "pitch" => format_number(player.get_pitch() as f64),
         "direction" => cardinal_direction(player.get_yaw()),
+        // §1.6 biome (spec line 131) — the WIT `biome` enum names the biome in
+        // kebab-case (`dark-forest`); the Mod reports `minecraft:dark_forest`
+        // and its capitalized form.
+        "biome" => biome_id(player),
+        "biome_capitalized" => biome_capitalized(player),
+        // §1.6 light level — the block light at the player's feet.
+        "light_level" => player_world_block_light(player).to_string(),
         // Compass target (spec lines 255–262). `get_compass_target` is the
         // spawn/lodestone a compass points at, not an optional respawn point.
         "compass_x" => format_number(player.get_compass_target().0),
@@ -262,6 +270,74 @@ fn exp_to_level_from(level: i32, progress: f32) -> i64 {
     let progress = progress.clamp(0.0, 1.0);
     let remaining = (f64::from(cost) * (1.0 - f64::from(progress))).round() as i64;
     remaining.max(0)
+}
+
+/// §1.6 `player_biome` — the biome key as `minecraft:<snake_case>`, matching
+/// the Mod's `Biome.toString()`. The WIT enum carries kebab-case names.
+fn biome_id(player: &Player) -> String {
+    format!("minecraft:{}", biome_name(player).replace('-', "_"))
+}
+
+/// §1.6 `player_biome_capitalized` — the biome name with word-initial capitals
+/// (`dark-forest` → `Dark Forest`).
+fn biome_capitalized(player: &Player) -> String {
+    capitalize_words(&biome_name(player))
+}
+
+/// Word-initial capitals for a kebab/underscore-separated key.
+fn capitalize_words(key: &str) -> String {
+    key.split(['-', '_'])
+        .filter(|w| !w.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The block containing the player, as the WIT position record.
+fn player_block_pos(player: &Player) -> BlockPos {
+    let pos = player.get_position();
+    BlockPos {
+        x: pos.0.floor() as i32,
+        y: pos.1.floor() as i32,
+        z: pos.2.floor() as i32,
+    }
+}
+
+/// The biome under the player, read from the block at their feet.
+fn biome_name(player: &Player) -> String {
+    biome_key(player.get_world().get_biome(player_block_pos(player)))
+}
+
+/// `DeepDark` → `deep-dark` (WIT enum variant names are PascalCase).
+///
+/// The generated enum's `Debug` prints the path-qualified variant
+/// (`biome::DeepDark`), so the last `::` segment is the name to convert.
+fn biome_key(biome: pumpkin_plugin_api::wit::pumpkin::plugin::biomes::Biome) -> String {
+    let debug = format!("{biome:?}");
+    let variant = debug.rsplit("::").next().unwrap_or(&debug);
+    let mut out = String::new();
+    for (i, ch) in variant.chars().enumerate() {
+        if ch.is_uppercase() {
+            if i > 0 {
+                out.push('-');
+            }
+            out.extend(ch.to_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// §1.6 `player_light_level` — block light at the player's position.
+fn player_world_block_light(player: &Player) -> u8 {
+    player.get_world().get_block_light(player_block_pos(player))
 }
 
 fn is_op(player: &Player) -> bool {
@@ -506,5 +582,25 @@ mod tests {
         // Out-of-range progress is clamped rather than producing negatives.
         assert_eq!(exp_to_level_from(0, 5.0), 0);
         assert_eq!(exp_to_level_from(0, -1.0), 7);
+    }
+
+    /// §1.6 `player_biome` / `player_biome_capitalized` — the WIT enum variant
+    /// `DeepDark` becomes `deep-dark`, so the id is `minecraft:deep_dark` and
+    /// the capitalized form is `Deep Dark`.
+    #[test]
+    fn biome_key_and_capitalization_follow_the_mod_shape() {
+        let key = biome_key(pumpkin_plugin_api::wit::pumpkin::plugin::biomes::Biome::DeepDark);
+        assert_eq!(key, "deep-dark");
+        assert_eq!(format!("minecraft:{}", key.replace('-', "_")), "minecraft:deep_dark");
+        assert_eq!(capitalize_words(&key), "Deep Dark");
+
+        // Single-word variants stay one word.
+        let plain = biome_key(pumpkin_plugin_api::wit::pumpkin::plugin::biomes::Biome::Beach);
+        assert_eq!(plain, "beach");
+        assert_eq!(capitalize_words(&plain), "Beach");
+
+        // Already-capitalized and empty-ish keys do not panic.
+        assert_eq!(capitalize_words(""), "");
+        assert_eq!(capitalize_words("--"), "");
     }
 }
