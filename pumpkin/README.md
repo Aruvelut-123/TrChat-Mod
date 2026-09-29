@@ -42,8 +42,17 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 ## 功能（当前）
 
 * 拦截 `PlayerChatEvent`（最高优先级、阻塞模式）
-* 按 `config.json` 中的 `format` 模板渲染聊天消息（支持 `{player}` / `{message}` 占位符）
+* 按 `config.json` 中的 `format` 模板渲染聊天消息（支持 `{player}` / `{message}` / `{channel}` 占位符）
 * 将渲染结果广播给所有在线玩家，并抑制服务器默认聊天
+* **频道系统**：`channels[].prefixes` 前缀路由（最长前缀优先，对齐 Bukkit 版 `ChannelManager.byPrefix`）、`is_default` 回退频道、`Join-Permission` 发言权限、`DISTANCE` 说话半径
+* **消息守卫**：`messageMaxLength` 长度限制、`cooldownMillis` 冷却、`antiRepeatSimilarity`/`antiRepeatPeriodMillis` 反重复、全局禁言（`/trchat muteall`）、单玩家禁言（`/trchat mute/unmute`）、忽略（`/trchat ignore`）
+* **过滤**：`blockedWords` + `filterReplacement` 敏感词过滤（大小写不敏感、等长替换）
+* **语言**：`lang/` 语言表（内置 `en_us` / `zh_cn`），回退链 玩家语言 → 默认语言 → `en_us` → 原始 key
+* **命令**：`/trchat`（reload / version / muteall / mute / unmute / ignore / channel）、`/channel <id>`、`/msg <目标> <消息>`（别名 `/tell`）
+* **私聊**：`msg.sender` / `msg.receiver` 模板渲染，遵循忽略列表
+* **玩家数据**：`SessionPlayers` 会话注册表（活跃频道、已加入频道、禁言、忽略、全局禁言）
+* **权限**：命令注册权限（`trchat.use`）与 `CommandSender::has_permission` 管理权限检查（`trchat.admin`）、频道 `Join-Permission`
+* **配置热重载**：`/trchat reload` 重新读取 `config.json`
 * 声明了 Redis 互通所需的全部网络权限（`network.tcp.*`、`network.dns`、`network.loopback`）
 
 ## 配置
@@ -56,18 +65,48 @@ JSON，插件会**报错并拒绝初始化**（日志中可见具体解析错误
 ```json
 {
   "format": "&7<&f{player}&7> &f{message}",
+  "channels": [
+    { "id": "normal", "prefixes": [], "format": "&7<&f{player}&7> &f{message}", "permission": "", "radius": 0.0, "is_default": true },
+    { "id": "global", "prefixes": ["!"], "format": "&6[&eGlobal&6] &f{player}&7: &f{message}", "permission": "", "radius": 0.0, "is_default": false }
+  ],
+  "msg": {
+    "sender": "&7[&f{player} &7-> &f{target}&7] &f{message}",
+    "receiver": "&7[&f{player} &7-> &f{target}&7] &f{message}"
+  },
   "redis_enabled": false,
-  "redis_url": "redis://127.0.0.1:6379/"
+  "redis_url": "redis://127.0.0.1:6379/",
+  "blocked_words": [],
+  "filter_replacement": "*",
+  "message_max_length": 256,
+  "cooldown_millis": 2000,
+  "anti_repeat_similarity": 0.85,
+  "anti_repeat_period_millis": 60000
 }
 ```
 
+## 命令
+
+| 命令 | 权限 | 说明 |
+| --- | --- | --- |
+| `/trchat reload` | `trchat.admin` | 重新读取 `config.json` |
+| `/trchat version` | `trchat.use` | 显示插件版本 |
+| `/trchat muteall` | `trchat.admin` | 全局禁言开关 |
+| `/trchat mute <玩家>` | `trchat.admin` | 禁言一名玩家 |
+| `/trchat unmute <玩家>` | `trchat.admin` | 解除禁言 |
+| `/trchat ignore <玩家>` | `trchat.use` | 忽略/取消忽略玩家 |
+| `/trchat channel <id>` | `trchat.use` | 切换活跃频道 |
+| `/channel <id>` | `trchat.use` | 切换活跃频道（别名） |
+| `/msg <目标> <消息>` | `trchat.use` | 私聊（别名 `/tell`） |
+
 ## Roadmap（实验阶段后续）
 
-- [ ] 频道系统：前缀路由（`#global` / `@local`），对齐 Bukkit 版 `Channel` 语义
-- [ ] 私聊命令 `/msg`（`PlayerCommandPreprocessEvent` 拦截）
+- [x] 频道系统：前缀路由（`#global` / `@local`），对齐 Bukkit 版 `Channel` 语义
+- [x] 私聊命令 `/msg`（`PlayerCommandPreprocessEvent` 拦截）
+- [x] 权限节点注册（`trchat.use` / `trchat.admin`）
 - [ ] Redis 跨服互通：监听 `trchat-message` 频道，与现有 Bukkit/Bungee/Velocity 聊天体系打通
-  （需要 `network.tcp.connect` 权限 —— 已在本插件 metadata 中声明；WASI 沙箱内 TCP 行为需编译验证）
-- [ ] 权限节点注册（`trchat.command.channel.*` 等）
+  （当前 `pumpkin-plugin-api` 稳定版未暴露网络客户端接口，WASI 沙箱内 TCP 行为需等 API 提供后实现；插件已声明 `network.tcp.connect` 权限）
+- [ ] 更新检查（Bukkit 版通过 HTTP 请求 SpigotMC API，Pumpkin 无对应端点，需自建）
+- [ ] 特殊字符（`&` 颜色码之外的自定义替换表）与更多内置占位符（`{world}`、`{target}` 等）
 
 ## 说明
 
