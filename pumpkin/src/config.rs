@@ -739,11 +739,8 @@ pub struct GeneralFunctionConfig {
     #[allow(dead_code)] // `actions` — consumed by the runActions follow-up
     pub actions: Vec<String>,
     /// `Origin-Name` / `Compatible` / `UI` — Item-Show only.
-    #[allow(dead_code)] // Item-Show follow-up
     pub origin_name: bool,
-    #[allow(dead_code)] // Item-Show follow-up
     pub compatible: bool,
-    #[allow(dead_code)] // Item-Show follow-up
     pub ui: bool,
 }
 

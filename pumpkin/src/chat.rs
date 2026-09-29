@@ -401,7 +401,15 @@ fn chat_pipeline(
             }
         }
         let component = match &outcome {
-            Some(out) => functions::build_body_component(&template, out, &name, &locale),
+            Some(out) => functions::build_body_component(
+                &template,
+                out,
+                &name,
+                &locale,
+                &event.player,
+                server,
+                config,
+            ),
             None => TextComponent::from_legacy_string_with_code(&template, '&'),
         };
         let _ = player.send_system_message(component, false);
