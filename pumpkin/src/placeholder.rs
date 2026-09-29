@@ -154,6 +154,16 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         "online" => "yes".to_string(),
         "is_op" => yes_no(is_op(player)),
 
+        // §1.6 display names (spec lines 148–149). The WIT exposes the display
+        // and tab-list components; their plain text is what a chat placeholder
+        // interpolates. A missing tab-list name falls back to the display name,
+        // which is what the client shows.
+        "displayname" | "custom_name" => player.get_display_name().get_text(),
+        "list_name" => player
+            .get_tab_list_name()
+            .map(|c| c.get_text())
+            .unwrap_or_else(|| player.get_display_name().get_text()),
+
         // Position / world.
         "world" => player.get_world().get_name(),
         "x" => format_number(player.get_position().0),
