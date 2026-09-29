@@ -14,6 +14,7 @@ mod chat;
 mod commands;
 mod config;
 mod filter;
+mod functions;
 mod lang;
 mod playerdata;
 mod special;
