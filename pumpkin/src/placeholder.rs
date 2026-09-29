@@ -23,6 +23,19 @@ use crate::config::TrChatConfig;
 /// subject (§1.1 note: the viewer argument is unused upstream — all
 /// `player_*` values describe the subject).
 pub fn resolve(input: &str, player: &Player, server: &Server, config: &TrChatConfig) -> String {
+    resolve_with_local(input, player, server, config, &[])
+}
+
+/// §1.12 — `local` context keys injected by the chat service (lowercase token →
+/// value). `local` wins over the `server_`/`player_` tables, matching the
+/// resolver's step order (§1.1 step 4 before step 5).
+pub fn resolve_with_local(
+    input: &str,
+    player: &Player,
+    server: &Server,
+    config: &TrChatConfig,
+    local: &[(&str, &str)],
+) -> String {
     if input.is_empty() {
         return String::new();
     }
@@ -48,8 +61,13 @@ pub fn resolve(input: &str, player: &Player, server: &Server, config: &TrChatCon
         if raw.is_empty() || raw.contains('%') {
             continue;
         }
+        let token = raw.trim().to_ascii_lowercase();
         out.push_str(&input[last..i]);
-        out.push_str(&resolve_token(raw.trim().to_ascii_lowercase().as_str(), player, server, config));
+        // Step 4: the local table is consulted first and wins outright.
+        match local.iter().find(|(k, _)| *k == token) {
+            Some((_, v)) => out.push_str(v),
+            None => out.push_str(&resolve_token(&token, player, server, config)),
+        }
         last = close + 1;
     }
     out.push_str(&input[last..]);

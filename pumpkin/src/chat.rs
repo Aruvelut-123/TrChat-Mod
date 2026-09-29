@@ -464,7 +464,15 @@ fn render_template(
     config: &crate::config::TrChatConfig,
 ) -> String {
     let template = placeholder::resolve(template, player, server_ref, config);
-    let message = placeholder::resolve(message, player, server_ref, config);
+    // §1.12 — `%message%` is a `local` context key: it holds this message's raw
+    // text, so a format may echo it before `{message}` substitution.
+    let message = placeholder::resolve_with_local(
+        message,
+        player,
+        server_ref,
+        config,
+        &[("message", message)],
+    );
     template
         .replace("{player}", name)
         .replace("{message}", &message)
