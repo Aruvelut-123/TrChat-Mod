@@ -401,8 +401,21 @@ pub fn process(
                         out_body.push_str(" x");
                         out_body.push_str(&count.to_string());
                         out_body.push(']');
-                        // §2.10 step 7 — `UI: true` appends the snapshot click.
-                        let snapshot = function.ui.then(|| create_snapshot_id());
+                        // §2.10 step 7 — `UI: true` registers the item's own
+                        // container snapshot and appends the click that opens
+                        // it. `createItemSnapshot` bypasses the 100-entry cap.
+                        let snapshot = if function.ui {
+                            let table3 = lang::lang().read().unwrap_or_else(|e| e.into_inner());
+                            let locale = sender.get_locale();
+                            let title = table3.format(
+                                "Function-Item-Title",
+                                &locale,
+                                &[sender_name.as_str(), name.as_str()],
+                            );
+                            Some(crate::snapshot::create_item_snapshot(title, Vec::new()))
+                        } else {
+                            None
+                        };
                         // §2.10 step 3 — `Compatible: true` shows stone with the
                         // same count in the hover instead of the real item.
                         let hover_key = if function.compatible {

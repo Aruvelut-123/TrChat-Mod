@@ -93,6 +93,51 @@ pub fn open(id: &str) -> Option<(String, usize, Vec<Option<(String, u8)>>)> {
     Some((snap.title.clone(), snap.size, snap.items.clone()))
 }
 
+/// §2.10 `createItemSnapshot` for `Item-Show` with `UI: true`.
+///
+/// The 3×9 viewer shows the *item's* container: 13 leading empty slots put the
+/// item itself at index 13 (the centre of a 3×9), followed by whatever the
+/// item's `CONTAINER` component holds.
+///
+/// Deliberately **not** subject to [`MAX_SNAPSHOTS`]: the spec notes that
+/// `createItemSnapshot` skips the cap that `createSnapshot` applies.
+pub fn create_item_snapshot(
+    title: String,
+    container: Vec<Option<(String, u8)>>,
+) -> String {
+    expire_snapshots();
+    let id = super::functions::create_snapshot_id();
+    let mut items: Vec<Option<(String, u8)>> = vec![None; ITEM_SNAPSHOT_CENTER];
+    items.push(Some(container_first(container)));
+    // Pad to the full 3×9 grid; `truncate` alone would leave a short vector.
+    items.resize(ITEM_SNAPSHOT_SIZE, None);
+    let mut s = lock();
+    s.push_back(Snapshot {
+        id: id.clone(),
+        title,
+        size: ITEM_SNAPSHOT_SIZE,
+        items,
+        created: Instant::now(),
+    });
+    id
+}
+
+/// §2.10 — the item snapshot is a 3×9 container with the item in the middle.
+const ITEM_SNAPSHOT_SIZE: usize = 27;
+/// Index 13 is the centre of a 3×9 grid.
+const ITEM_SNAPSHOT_CENTER: usize = 13;
+
+/// Returns the first present entry of `container`, or a placeholder when the
+/// item carries no container contents. The viewer only needs the centre slot
+/// to be occupied for the common case.
+fn container_first(container: Vec<Option<(String, u8)>>) -> (String, u8) {
+    container
+        .into_iter()
+        .flatten()
+        .next()
+        .unwrap_or_else(|| (String::new(), 0))
+}
+
 /// Test-only helper: how many snapshots are live right now.
 #[cfg(test)]
 pub fn len() -> usize {
@@ -124,6 +169,31 @@ mod tests {
         // §2.11 — opening does **not** consume the entry; it stays live until
         // the TTL sweep or the capacity cap removes it.
         assert!(open(&id).is_some());
+    }
+
+    #[test]
+    fn item_snapshot_centres_the_item() {
+        let _serial = reset();
+        // §2.10 — the item itself sits at index 13 of a 3×9 grid.
+        let id = create_item_snapshot("Steve's Item - Diamond".into(), Vec::new());
+        let (title, size, items) = open(&id).expect("item snapshot opens");
+        assert_eq!(title, "Steve's Item - Diamond");
+        assert_eq!(size, 27);
+        assert_eq!(items.len(), 27);
+        assert!(items[13].is_some(), "centre slot holds the item");
+        assert!(items[12].is_none(), "slots before the centre stay empty");
+    }
+
+    #[test]
+    fn item_snapshot_skips_the_cap() {
+        let _serial = reset();
+        // §2.10 — `createItemSnapshot` has no 100-entry trim, so creating more
+        // than the cap leaves every id openable.
+        let ids: Vec<String> = (0..(MAX_SNAPSHOTS + 5))
+            .map(|i| create_item_snapshot(format!("t{i}"), Vec::new()))
+            .collect();
+        assert_eq!(len(), MAX_SNAPSHOTS + 5);
+        assert!(open(&ids[0]).is_some(), "oldest item snapshot survived");
     }
 
     #[test]
