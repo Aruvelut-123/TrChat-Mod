@@ -47,48 +47,46 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 * **频道系统**：`channels[].prefixes` 前缀路由（最长前缀优先，对齐 Bukkit 版 `ChannelManager.byPrefix`）、`is_default` 回退频道、`Join-Permission` 发言权限、`DISTANCE` 说话半径
 * **消息守卫**：`messageMaxLength` 长度限制、`cooldownMillis` 冷却、`antiRepeatSimilarity`/`antiRepeatPeriodMillis` 反重复、全局禁言（`/trchat muteall`）、单玩家禁言（`/trchat mute/unmute`）、忽略（`/trchat ignore`）
 * **过滤**：`blockedWords` + `filterReplacement` 敏感词过滤（大小写不敏感、等长替换）
-* **语言**：`lang/` 语言表（内置 `en_us` / `zh_cn`），回退链 玩家语言 → 默认语言 → `en_us` → 原始 key
+* **语言**：`lang/` 语言表（内置 `en_us` / `zh_cn` / `es_es`），回退链 玩家语言 → 默认语言 → `en_us` → 原始 key
 * **命令**：`/trchat`（reload / version / muteall / mute / unmute / ignore / channel）、`/channel <id>`、`/msg <目标> <消息>`（别名 `/tell`）
 * **私聊**：`msg.sender` / `msg.receiver` 模板渲染，遵循忽略列表
 * **玩家数据**：`SessionPlayers` 会话注册表（活跃频道、已加入频道、禁言、忽略、全局禁言）
 * **权限**：命令注册权限（`trchat.use`）与 `CommandSender::has_permission` 管理权限检查（`trchat.admin`）、频道 `Join-Permission`
-* **配置热重载**：`/trchat reload` 重新读取 `config.json`
+* **配置热重载**：`/trchat reload` 重新读取数据目录中的 YAML（`settings.yml` + `channels/` + `lang/`）
 * 声明了 Redis 互通所需的全部网络权限（`network.tcp.*`、`network.dns`、`network.loopback`）
 
 ## 配置
 
-`config.json` 位于插件数据目录（`plugins/data/trchat/config.json`）。
-**文件不存在时**（首次启动，或管理员删除后重启）插件会自动创建它并写入下面的
-默认值，方便直接编辑；已存在的文件**不会被覆盖**。若文件存在但内容不是合法
-JSON，插件会**报错并拒绝初始化**（日志中可见具体解析错误），而不会静默回退到默认值。
+配置文件全部为 **YAML**，位于插件数据目录（`plugins/data/trchat/`）下的 `settings.yml`、
+`channels/<Id>.yml` 与 `lang/<locale>.yml`，与 Mod 端 `config/trchat/` 的布局一一对应
+（键名也保持相同，便于两端共享同一套配置）。**文件不存在时**（首次启动，或管理员删除后
+重启）插件会自动从内置默认值写入并创建，方便直接编辑；已存在的文件**不会被覆盖**。
 
-```json
-{
-  "format": "&7<&f{player}&7> &f{message}",
-  "channels": [
-    { "id": "normal", "prefixes": [], "format": "&7<&f{player}&7> &f{message}", "permission": "", "radius": 0.0, "is_default": true },
-    { "id": "global", "prefixes": ["!"], "format": "&6[&eGlobal&6] &f{player}&7: &f{message}", "permission": "", "radius": 0.0, "is_default": false }
-  ],
-  "msg": {
-    "sender": "&7[&f{player} &7-> &f{target}&7] &f{message}",
-    "receiver": "&7[&f{player} &7-> &f{target}&7] &f{message}"
-  },
-  "redis_enabled": false,
-  "redis_url": "redis://127.0.0.1:6379/",
-  "blocked_words": [],
-  "filter_replacement": "*",
-  "message_max_length": 256,
-  "cooldown_millis": 2000,
-  "anti_repeat_similarity": 0.85,
-  "anti_repeat_period_millis": 60000
-}
+```text
+plugins/data/trchat/
+├── settings.yml          # 全局：chat.serverId / defaultLanguage / cooldown /
+│                         #       antiRepeat.* / filter.* / globalPrefix / plain 格式 /
+│                         #       msg.sender / msg.receiver / serverName
+├── channels/             # 每文件一个频道（Normal / Global / Staff / Private / …）
+│   ├── Normal.yml        #   Options / Bindings(Prefix) / Formats / Sender / Receiver / Console
+│   ├── Global.yml        #   Prefix: ['!all']  + Command: ['global', …]
+│   └── …
+└── lang/                 # 每文件一个语言表（en_US / zh_CN / es_ES / …）
+    ├── en_US.yml
+    └── …
 ```
+
+* **频道路由**：`Bindings.Prefix` 匹配（最长前缀优先），未匹配的消息落入自动加入
+  （`Options.Auto-Join: true`）的默认频道；`Private.yml` 绑定 `/msg` 等命令与
+  `msg.sender` / `msg.receiver` 模板。
+* **语言回退链**：玩家语言 → `chat.defaultLanguage` → `en_US` → 原始 key。
+* 数据目录中的同名 YAML **覆盖**内置默认值（首次启动写入的副本就是操作员编辑的版本）。
 
 ## 命令
 
 | 命令 | 权限 | 说明 |
 | --- | --- | --- |
-| `/trchat reload` | `trchat.admin` | 重新读取 `config.json` |
+| `/trchat reload` | `trchat.admin` | 重新读取 `settings.yml`、`channels/` 与 `lang/` |
 | `/trchat version` | `trchat.use` | 显示插件版本 |
 | `/trchat muteall` | `trchat.admin` | 全局禁言开关 |
 | `/trchat mute <玩家>` | `trchat.admin` | 禁言一名玩家 |
@@ -106,7 +104,7 @@ JSON，插件会**报错并拒绝初始化**（日志中可见具体解析错误
 - [ ] Redis 跨服互通：监听 `trchat-message` 频道，与现有 Bukkit/Bungee/Velocity 聊天体系打通
   （当前 `pumpkin-plugin-api` 稳定版未暴露网络客户端接口，WASI 沙箱内 TCP 行为需等 API 提供后实现；插件已声明 `network.tcp.connect` 权限）
 - [ ] 更新检查（Bukkit 版通过 HTTP 请求 SpigotMC API，Pumpkin 无对应端点，需自建）
-- [ ] 特殊字符（`&` 颜色码之外的自定义替换表）与更多内置占位符（`{world}`、`{target}` 等）
+- [ ] 特殊字符（`&` 颜色码之外的自定义替换表）与更多内置占位符（`{world}` 已支持、`{target}` 已用于私聊模板）
 
 ## 说明
 
