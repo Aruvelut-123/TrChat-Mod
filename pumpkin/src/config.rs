@@ -298,6 +298,9 @@ pub struct TrChatConfig {
     /// functions; parsed for the future function-executor wiring.
     #[allow(dead_code)] // consumed by the chat-functions follow-up
     pub function: FunctionConfig,
+    /// `filter.yml` — the chat filter profile (Local words, punctuation
+    /// skipping, white list, replacement) consumed by the chat pipeline.
+    pub filter: FilterConfig,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -335,6 +338,10 @@ impl TrChatConfig {
     }
     pub fn filter_replacement(&self) -> &str {
         &self.settings.chat.filter_replacement
+    }
+    /// The `filter.yml` chat-filter profile (consumed by the pipeline).
+    pub fn filter_config(&self) -> &FilterConfig {
+        &self.filter
     }
     pub fn default_language(&self) -> &str {
         &self.settings.chat.default_language
@@ -543,6 +550,12 @@ pub fn load_from_folder(folder: &str) -> Result<TrChatConfig, String> {
     if let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&raw) {
         function = parse_function(&value);
     }
+    let mut filter = FilterConfig::default();
+    let raw =
+        fs::read_to_string(root.join("filter.yml")).map_err(|e| format!("read filter.yml: {e}"))?;
+    if let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&raw) {
+        filter = parse_filter(&value);
+    }
 
     Ok(TrChatConfig {
         settings,
@@ -550,6 +563,7 @@ pub fn load_from_folder(folder: &str) -> Result<TrChatConfig, String> {
         msg,
         datasource,
         function,
+        filter,
     })
 }
 
@@ -765,6 +779,102 @@ pub struct FunctionConfig {
     pub general: Vec<GeneralFunctionConfig>,
     /// `Custom` entries, sorted by priority descending (Mod behavior).
     pub custom: Vec<CustomFunctionConfig>,
+}
+
+/// `filter.yml` — the chat filter profile (the Mod's `FilterService.Settings`).
+#[derive(Debug, Clone, Default)]
+pub struct FilterConfig {
+    /// `Enable.Chat` — whether chat messages are filtered (default `true`).
+    pub chat_enabled: bool,
+    /// `Enable.Sign` — whether sign text is filtered (default `true`).
+    #[allow(dead_code)] // sign/anvil filtering is out of scope for chat-only Pumpkin
+    pub sign_enabled: bool,
+    /// `Enable.Anvil` — whether anvil renames are filtered (default `true`).
+    #[allow(dead_code)] // sign/anvil filtering is out of scope for chat-only Pumpkin
+    pub anvil_enabled: bool,
+    /// `Cloud-Thesaurus.Enabled` — remote thesaurus refresh (default `true`).
+    #[allow(dead_code)] // network fetch is out of scope for the WASM sandbox
+    pub cloud_enabled: bool,
+    /// `Cloud-Thesaurus.Urls` — thesaurus endpoints (default empty).
+    #[allow(dead_code)] // network fetch is out of scope for the WASM sandbox
+    pub cloud_urls: Vec<String>,
+    /// `Cloud-Thesaurus.Ignored` — words never added from the cloud, lowercased.
+    #[allow(dead_code)] // network fetch is out of scope for the WASM sandbox
+    pub cloud_ignored: Vec<String>,
+    /// `Local` — the local sensitive word list.
+    pub local_words: Vec<String>,
+    /// `Ignored-Punctuations` — characters skipped while matching, lowercased.
+    pub ignored_punctuations: Vec<char>,
+    /// `WhiteList` — phrases protected from replacement.
+    pub white_list: Vec<String>,
+    /// `Replacement` — the censoring char (default `*`).
+    pub replacement: char,
+}
+
+/// Parses `filter.yml` with the Mod's defaults (`FilterService.Settings.from`).
+fn parse_filter(v: &serde_yaml::Value) -> FilterConfig {
+    let enable = v
+        .get("Enable")
+        .and_then(|x| x.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    let cloud = v
+        .get("Cloud-Thesaurus")
+        .and_then(|x| x.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    let bool_of = |m: &serde_yaml::Mapping, key: &str, fallback: bool| -> bool {
+        m.get(key).and_then(|x| x.as_bool()).unwrap_or(fallback)
+    };
+    let strings_of = |m: &serde_yaml::Mapping, key: &str| -> Vec<String> {
+        match m.get(key) {
+            Some(serde_yaml::Value::Sequence(seq)) => seq
+                .iter()
+                .filter_map(|x| x.as_str())
+                .map(str::to_string)
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    let strings_of_root = |key: &str| -> Vec<String> {
+        match v.get(key) {
+            Some(serde_yaml::Value::Sequence(seq)) => seq
+                .iter()
+                .filter_map(|x| x.as_str())
+                .map(str::to_string)
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    let replacement = match v.get("Replacement").and_then(|x| x.as_str()) {
+        Some(s) if !s.is_empty() => s.chars().next().unwrap_or('*'),
+        _ => '*',
+    };
+    // The Mod folds every character of every punctuation string into the set.
+    let punctuation = match v.get("Ignored-Punctuations") {
+        Some(serde_yaml::Value::Sequence(seq)) => seq
+            .iter()
+            .filter_map(|x| x.as_str())
+            .flat_map(|s| s.chars())
+            .map(|c| c.to_lowercase().next().unwrap_or(c))
+            .collect(),
+        _ => Vec::new(),
+    };
+    FilterConfig {
+        chat_enabled: bool_of(&enable, "Chat", true),
+        sign_enabled: bool_of(&enable, "Sign", true),
+        anvil_enabled: bool_of(&enable, "Anvil", true),
+        cloud_enabled: bool_of(&cloud, "Enabled", true),
+        cloud_urls: strings_of(&cloud, "Urls"),
+        cloud_ignored: strings_of(&cloud, "Ignored")
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect(),
+        local_words: strings_of_root("Local"),
+        ignored_punctuations: punctuation,
+        white_list: strings_of_root("WhiteList"),
+        replacement,
+    }
 }
 
 /// Parses `{key: value}` property blocks from a command-rule source string
@@ -1577,5 +1687,50 @@ mod tests {
         assert_eq!(duration_millis("1d"), 86_400_000);
         assert_eq!(duration_millis(""), 0);
         assert_eq!(seconds_millis("3"), 3000);
+    }
+
+    #[test]
+    fn filter_defaults_parse() {
+        let value: serde_yaml::Value = serde_yaml::from_str(defaults::FILTER).unwrap();
+        let f = parse_filter(&value);
+        assert!(f.chat_enabled && f.sign_enabled && f.anvil_enabled);
+        assert!(f.cloud_enabled);
+        assert_eq!(f.cloud_urls.len(), 1);
+        assert_eq!(f.cloud_ignored, vec!["nt"]);
+        assert_eq!(f.local_words, vec!["NMSL", "fuck", "shit"]);
+        assert_eq!(f.white_list, vec!["has been"]);
+        assert_eq!(f.replacement, '*');
+        // Punctuation: every char of every entry is folded into the set,
+        // including full-width punctuation and multi-char entries like `——`.
+        for c in ['!', '。', '！', '　', '—', '…', '`', '\\'] {
+            assert!(f.ignored_punctuations.contains(&c), "missing {c:?}");
+        }
+    }
+
+    #[test]
+    fn filter_custom_overrides_and_defaults() {
+        let value: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+Enable:
+  Chat: false
+Cloud-Thesaurus:
+  Enabled: false
+  Ignored: ['ABC']
+Local: ['HeLLo']
+Ignored-Punctuations: ['A', '。']
+WhiteList: []
+Replacement: ''
+"#,
+        )
+        .unwrap();
+        let f = parse_filter(&value);
+        assert!(!f.chat_enabled);
+        assert!(f.sign_enabled); // absent → Mod default true
+        assert!(f.anvil_enabled);
+        assert!(!f.cloud_enabled);
+        assert_eq!(f.cloud_ignored, vec!["abc"]); // lowercased like the Mod
+        assert_eq!(f.local_words, vec!["HeLLo"]); // preserved verbatim
+        assert_eq!(f.ignored_punctuations, vec!['a', '。']);
+        assert_eq!(f.replacement, '*'); // blank → '*'
     }
 }

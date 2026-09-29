@@ -7,7 +7,8 @@
 //! 3. global mute → per-player mute,
 //! 4. cooldown (`cooldownMillis`, measured from the last *accepted* message),
 //! 5. anti-repeat similarity guard,
-//! 6. blocked-word filtering (`TextFilter`),
+//! 6. filtering — `filter.yml` profile (`TextFilter`) then `settings.yml`
+//!    blocked words (`MessageGuard`),
 //! 7. channel routing (longest prefix), speak-permission check, radius check,
 //! 8. rendering with the channel format + built-in placeholders,
 //! 9. broadcast to every eligible online player.
@@ -25,7 +26,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use crate::config::{color_code, ChannelConfig, Route, SharedConfig, TrChatConfig};
-use crate::filter::TextFilter;
+use crate::filter::{MessageGuard, TextFilter};
 use crate::lang;
 use crate::playerdata::SessionPlayers;
 use crate::special;
@@ -220,10 +221,24 @@ fn chat_pipeline(
         });
     }
 
-    // 6. Filtering — blocked words replaced by the configured character
-    //    repeated to the matched word length (non-overlapping, case-insensitive).
-    let filter = TextFilter::new(config.blocked_words(), config.filter_replacement());
-    let message = filter.filter(message);
+    // 6. Filtering — the `filter.yml` profile first (local words, ignored
+    //    punctuation, white list; the Mod's `FilterService`), then the
+    //    `settings.yml` blocked-words guard (the Mod's `MessageGuard`).
+    let message = {
+        let f = config.filter_config();
+        let sensitive = TextFilter::new(
+            &f.local_words,
+            &f.ignored_punctuations,
+            &f.white_list,
+            f.replacement,
+        );
+        let text = if f.chat_enabled && sensitive.is_active() {
+            sensitive.filter(message)
+        } else {
+            message.to_string()
+        };
+        MessageGuard::new(config.blocked_words(), config.filter_replacement()).filter(&text)
+    };
 
     // 7. Channel routing (longest prefix wins) + speak permission check.
     let route = config.route(&message);

@@ -75,7 +75,8 @@ plugins/data/trchat/
 ├── lang/                 # 每文件一个语言表（en_US / zh_CN / es_ES / …）
 │   ├── en_US.yml
 │   └── …
-├── filter.yml            # 敏感词表（Blocked / Regex，等长替换）
+├── filter.yml            # 聊天过滤器：Enable(Chat/Sign/Anvil) + Local 敏感词 +
+│                         #   Ignored-Punctuations 跳过标点 + WhiteList 白名单 + Replacement
 ├── function.yml          # 命令控制器规则 + 内置/自定义聊天功能（Mention / Item-Show / …）
 ├── datasource.yml        # 数据源（SQLite / MySQL / MariaDB / PostgreSQL / JDBC，解析保留）
 └── special-chars.yml     # 资源包特殊字符表（彩色 emoji 白名单 + 颜色包裹）
@@ -113,6 +114,9 @@ plugins/data/trchat/
   （`{player}` / `{message}` / `{server}` / `{world}` / `{target}` / `{time}` 等）
 - [x] 配置解析覆盖 Mod 全量 YAML：`function.yml`（命令控制器 + 内置/自定义功能）与
   `datasource.yml`（数据源，解析保留待接线）
+- [x] 聊天过滤器（`filter.yml`：`Enable.Chat` + `Local` 敏感词 + `Ignored-Punctuations`
+  跳过标点 + `WhiteList` 白名单 + `Replacement` 全角归一化），与 `settings.yml`
+  `blockedWords` 双层过滤，对齐 Mod `FilterService` / `MessageGuard` 管道
 
 ## 说明
 
