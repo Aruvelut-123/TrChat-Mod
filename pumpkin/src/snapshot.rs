@@ -32,7 +32,7 @@ pub struct Snapshot {
     /// `54` for the player inventory (9×6) or `27` for the ender chest (9×3).
     pub size: usize,
     /// One entry per slot: `Some(registry_key, count)` or `None` when empty.
-    pub items: Vec<Option<(String, u8)>>,
+    pub items: SlotContents,
     created: Instant,
 }
 
@@ -61,7 +61,7 @@ pub fn expire_snapshots() {
 
 /// Registers a snapshot and returns its id. Enforces the TTL sweep and the
 /// 100-entry cap (evicting the oldest insert) before inserting.
-pub fn create(title: String, size: usize, items: Vec<Option<(String, u8)>>) -> String {
+pub fn create(title: String, size: usize, items: SlotContents) -> String {
     expire_snapshots();
     let id = super::functions::create_snapshot_id();
     let mut s = lock();
@@ -79,6 +79,13 @@ pub fn create(title: String, size: usize, items: Vec<Option<(String, u8)>>) -> S
     id
 }
 
+/// One captured slot: the item's registry key and its stack count. `None` is
+/// an empty slot.
+pub type SlotEntry = Option<(String, u8)>;
+
+/// The captured slot contents of a snapshot, in slot order.
+pub type SlotContents = Vec<SlotEntry>;
+
 /// §2.11 — `openSnapshot`. `None` means the caller must send
 /// `Function-Snapshot-Expired`; `Some` carries the title and slot contents the
 /// read-only viewer should show.
@@ -86,7 +93,7 @@ pub fn create(title: String, size: usize, items: Vec<Option<(String, u8)>>) -> S
 /// The entry is **not** consumed: upstream keeps it in a `LinkedHashMap` until
 /// the TTL sweep or the 100-entry cap evicts it, so the same snapshot can be
 /// reopened while it is live.
-pub fn open(id: &str) -> Option<(String, usize, Vec<Option<(String, u8)>>)> {
+pub fn open(id: &str) -> Option<(String, usize, SlotContents)> {
     expire_snapshots();
     let s = lock();
     let snap = s.iter().find(|snap| snap.id == id)?;
@@ -103,11 +110,11 @@ pub fn open(id: &str) -> Option<(String, usize, Vec<Option<(String, u8)>>)> {
 /// `createItemSnapshot` skips the cap that `createSnapshot` applies.
 pub fn create_item_snapshot(
     title: String,
-    container: Vec<Option<(String, u8)>>,
+    container: SlotContents,
 ) -> String {
     expire_snapshots();
     let id = super::functions::create_snapshot_id();
-    let mut items: Vec<Option<(String, u8)>> = vec![None; ITEM_SNAPSHOT_CENTER];
+    let mut items: SlotContents = vec![None; ITEM_SNAPSHOT_CENTER];
     items.push(Some(container_first(container)));
     // Pad to the full 3×9 grid; `truncate` alone would leave a short vector.
     items.resize(ITEM_SNAPSHOT_SIZE, None);
@@ -130,7 +137,7 @@ const ITEM_SNAPSHOT_CENTER: usize = 13;
 /// Returns the first present entry of `container`, or a placeholder when the
 /// item carries no container contents. The viewer only needs the centre slot
 /// to be occupied for the common case.
-fn container_first(container: Vec<Option<(String, u8)>>) -> (String, u8) {
+fn container_first(container: SlotContents) -> (String, u8) {
     container
         .into_iter()
         .flatten()

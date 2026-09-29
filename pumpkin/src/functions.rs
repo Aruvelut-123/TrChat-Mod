@@ -736,11 +736,11 @@ pub fn create_snapshot_id() -> String {
 /// storage slots 0–35, then offhand, helmet, chestplate, leggings, boots
 /// (indices 36–40). The remaining slots are padding so the viewer opens as a
 /// 9×6 container.
-fn snapshot_inventory(player: &Player) -> Vec<Option<(String, u8)>> {
+fn snapshot_inventory(player: &Player) -> crate::snapshot::SlotContents {
     let inv = player.get_inventory();
     // §2.11 — slots 0–35 are the hotbar + main storage of the generic handle.
     let main = inv.as_inventory();
-    let mut out: Vec<Option<(String, u8)>> = Vec::with_capacity(INVENTORY_SIZE);
+    let mut out: crate::snapshot::SlotContents = Vec::with_capacity(INVENTORY_SIZE);
     for slot in 0..36u32 {
         out.push(main.get_item(slot).map(|s| (s.get_registry_key(), s.get_count())));
     }
@@ -755,9 +755,9 @@ fn snapshot_inventory(player: &Player) -> Vec<Option<(String, u8)>> {
 }
 
 /// §2.11 — captures the ender chest into a 27-slot (9×3) snapshot.
-fn snapshot_ender_chest(player: &Player) -> Vec<Option<(String, u8)>> {
+fn snapshot_ender_chest(player: &Player) -> crate::snapshot::SlotContents {
     let inv = player.get_ender_chest();
-    let mut out: Vec<Option<(String, u8)>> = Vec::with_capacity(ENDER_CHEST_SIZE);
+    let mut out: crate::snapshot::SlotContents = Vec::with_capacity(ENDER_CHEST_SIZE);
     for slot in 0..ENDER_CHEST_SIZE as u32 {
         out.push(inv.get_item(slot).map(|s| (s.get_registry_key(), s.get_count())));
     }
