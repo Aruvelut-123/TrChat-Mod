@@ -10,7 +10,8 @@
 //! * id = 12 hexadecimal characters,
 //! * TTL = 5 minutes, cleaned lazily on create and on open,
 //! * at most 100 entries; overflow evicts the **oldest inserted** one,
-//! * an unknown or expired id reports `Function-Snapshot-Expired`.
+//! * an unknown or expired id reports `Function-Snapshot-Expired`,
+//! * opening a live snapshot does **not** consume it.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -78,15 +79,18 @@ pub fn create(title: String, size: usize, items: Vec<Option<(String, u8)>>) -> S
     id
 }
 
-/// §2.11 — `openSnapshot`. `Err` means the caller must send
-/// `Function-Snapshot-Expired`; `Ok` carries the title and slot contents the
-/// read-only viewer should show. An expired entry is removed on the way out.
+/// §2.11 — `openSnapshot`. `None` means the caller must send
+/// `Function-Snapshot-Expired`; `Some` carries the title and slot contents the
+/// read-only viewer should show.
+///
+/// The entry is **not** consumed: upstream keeps it in a `LinkedHashMap` until
+/// the TTL sweep or the 100-entry cap evicts it, so the same snapshot can be
+/// reopened while it is live.
 pub fn open(id: &str) -> Option<(String, usize, Vec<Option<(String, u8)>>)> {
     expire_snapshots();
-    let mut s = lock();
-    let position = s.iter().position(|snap| snap.id == id)?;
-    let snap = s.remove(position)?;
-    Some((snap.title, snap.size, snap.items))
+    let s = lock();
+    let snap = s.iter().find(|snap| snap.id == id)?;
+    Some((snap.title.clone(), snap.size, snap.items.clone()))
 }
 
 /// Test-only helper: how many snapshots are live right now.
@@ -117,8 +121,9 @@ mod tests {
         assert_eq!(title, "Steve's Inventory");
         assert_eq!(size, 54);
         assert_eq!(items.len(), 54);
-        // Opening consumes the entry, so a second open misses.
-        assert!(open(&id).is_none());
+        // §2.11 — opening does **not** consume the entry; it stays live until
+        // the TTL sweep or the capacity cap removes it.
+        assert!(open(&id).is_some());
     }
 
     #[test]
