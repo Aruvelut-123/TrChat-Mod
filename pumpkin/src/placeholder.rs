@@ -17,6 +17,9 @@
 use pumpkin_plugin_api::player::Player;
 use pumpkin_plugin_api::Server;
 
+use pumpkin_plugin_api::wit::pumpkin::plugin::common::Hand;
+use pumpkin_plugin_api::ItemStack;
+
 use crate::config::TrChatConfig;
 
 /// Resolves every placeholder in `input` against `player` as the message
@@ -173,6 +176,19 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         // Session / connection.
         "ping" => player.get_ping().to_string(),
 
+        // §1.6 items (spec lines 151–153). `main_hand` is the WIT `right` hand;
+        // the sandbox exposes no damage value, so `_data`/`_durability` keep the
+        // documented empty-item shape (see the helpers).
+        "item_in_hand" => item_type(held_item(player, Hand::Right)),
+        "item_in_hand_name" => item_name(held_item(player, Hand::Right)),
+        "item_in_hand_data" => item_data(held_item(player, Hand::Right)),
+        "item_in_hand_durability" => item_durability(held_item(player, Hand::Right)),
+        "item_in_offhand" => item_type(held_item(player, Hand::Left)),
+        "item_in_offhand_name" => item_name(held_item(player, Hand::Left)),
+        "item_in_offhand_data" => item_data(held_item(player, Hand::Left)),
+        "item_in_offhand_durability" => item_durability(held_item(player, Hand::Left)),
+        "empty_slots" => empty_slots(player),
+
         _ => {
             // §1.5 dynamic prefixes.
             if let Some(name) = key.strip_prefix("ping_") {
@@ -241,7 +257,72 @@ fn format_number(value: f64) -> String {
     }
 }
 
-/// `%server_tps%` — the clamped TPS rendered through `decimal` (§1.7), so a
+/// Returns the item in the given hand, or `None` when empty.
+fn held_item(player: &Player, hand: Hand) -> Option<ItemStack> {
+    player.get_item_in_hand(hand)
+}
+
+/// §1.7 `registryName` — the registry path **without** the namespace, upper
+/// cased (`minecraft:diamond_sword` → `DIAMOND_SWORD`).
+fn registry_name(stack: &ItemStack) -> String {
+    registry_name_of(&stack.get_registry_key())
+}
+
+/// The pure part of [`registry_name`], split out so it is unit-testable.
+fn registry_name_of(key: &str) -> String {
+    let path = key.split(':').next_back().unwrap_or(key);
+    path.to_ascii_uppercase()
+}
+
+/// §1.7 `itemType` — empty item renders `"AIR"`.
+fn item_type(stack: Option<ItemStack>) -> String {
+    match stack {
+        Some(s) => registry_name(&s),
+        None => "AIR".to_string(),
+    }
+}
+
+/// §1.7 `itemName` — empty item **or** an item without a custom name renders
+/// the empty string (PlaceholderAPI reads `getHoverName`, but the sandbox only
+/// exposes an explicit custom name).
+fn item_name(stack: Option<ItemStack>) -> String {
+    let Some(s) = stack else {
+        return String::new();
+    };
+    match s.get_custom_name() {
+        Some(name) => name.get_text(),
+        None => String::new(),
+    }
+}
+
+/// §1.7 `itemData` — empty item renders `"0"`; the sandbox exposes no damage
+/// value, so non-empty items also report `"0"` rather than a wrong number.
+fn item_data(stack: Option<ItemStack>) -> String {
+    let _ = stack;
+    "0".to_string()
+}
+
+/// §1.7 `itemDurability` — `max(0, maxDamage - damageValue)`. The sandbox
+/// exposes neither value, so this stays `"0"` (matching the empty-item shape).
+fn item_durability(stack: Option<ItemStack>) -> String {
+    let _ = stack;
+    "0".to_string()
+}
+
+/// §1.7 `emptySlots` — counts empty slots among main-inventory slots 0..35.
+fn empty_slots(player: &Player) -> String {
+    let inv = player.get_inventory();
+    let main = inv.as_inventory();
+    let mut empty = 0u32;
+    for slot in 0..36u32 {
+        if main.get_item(slot).is_none() {
+            empty += 1;
+        }
+    }
+    empty.to_string()
+}
+
+/// `min(20, tps)` rendered through `decimal` (§1.7), so a
 /// whole value shows as `20` rather than `20.00`.
 fn format_tps(tps: f64) -> String {
     format_number(tps.clamp(0.0, 20.0))
@@ -297,6 +378,16 @@ mod tests {
         assert_eq!(colored_tps(17.9), "&e17.9");
         assert_eq!(colored_tps(15.0), "&e15");
         assert_eq!(colored_tps(14.9), "&c14.9");
+    }
+
+    #[test]
+    fn registry_name_strips_namespace_and_uppercases() {
+        // §1.7 — the namespace is dropped and the path is upper cased.
+        assert_eq!(registry_name_of("minecraft:diamond_sword"), "DIAMOND_SWORD");
+        assert_eq!(registry_name_of("minecraft:stone"), "STONE");
+        // A bare path (no namespace) is used as-is.
+        assert_eq!(registry_name_of("stone"), "STONE");
+        assert_eq!(registry_name_of("mod:custom_thing"), "CUSTOM_THING");
     }
 
     #[test]
