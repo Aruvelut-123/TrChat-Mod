@@ -59,7 +59,9 @@ impl SessionPlayers {
                 active_channel: default_channel.to_string(),
                 ..PlayerState::default()
             });
-        entry.joined_channels.insert(default_channel.to_ascii_lowercase());
+        entry
+            .joined_channels
+            .insert(default_channel.to_ascii_lowercase());
     }
 
     /// Removes a player's session state (on `player-leave`).
@@ -118,7 +120,10 @@ mod tests {
         s.state_mut("alice").unwrap().muted = true;
         assert!(s.is_muted("Alice"));
 
-        s.state_mut("alice").unwrap().ignored.insert("bob".to_string());
+        s.state_mut("alice")
+            .unwrap()
+            .ignored
+            .insert("bob".to_string());
         assert!(s.ignores("Alice", "Bob"));
         assert!(!s.ignores("Bob", "Alice"));
     }

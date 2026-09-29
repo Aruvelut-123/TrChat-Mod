@@ -115,15 +115,21 @@ fn chat_pipeline(
     }
 
     // 2. Length guard — UTF-16 code units (Java `String.length()`), not chars.
-    let max_len = config.message_max_length.max(1) as usize;
-    if message.encode_utf16().count() > max_len {
+    let length = message.encode_utf16().count();
+    let max_len = config.message_max_length().max(1) as usize;
+    if length > max_len {
         let text = lang::lang()
             .read()
             .unwrap_or_else(|e| e.into_inner())
-            .format("General-Too-Long", &locale, &[&max_len.to_string()]);
-        let _ = event
-            .player
-            .send_system_message(TextComponent::from_legacy_string_with_code(&text, '&'), false);
+            .format(
+                "General-Too-Long",
+                &locale,
+                &[&length.to_string(), &max_len.to_string()],
+            );
+        let _ = event.player.send_system_message(
+            TextComponent::from_legacy_string_with_code(&text, '&'),
+            false,
+        );
         return false;
     }
 
@@ -137,13 +143,18 @@ fn chat_pipeline(
             } else {
                 "General-Muted"
             };
+            // The session store tracks no expiry/reason yet — fill the
+            // upstream `{0}`/`{1}` args with placeholder values.
+            let expiry = "∞".to_string();
+            let reason = "—".to_string();
             let text = lang::lang()
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
-                .format(key, &locale, &[]);
-            let _ = event
-                .player
-                .send_system_message(TextComponent::from_legacy_string_with_code(&text, '&'), false);
+                .format(key, &locale, &[&expiry, &reason]);
+            let _ = event.player.send_system_message(
+                TextComponent::from_legacy_string_with_code(&text, '&'),
+                false,
+            );
             return false;
         }
     }
@@ -155,15 +166,16 @@ fn chat_pipeline(
         let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
         let state = guard.entry(player_key.clone()).or_default();
         if let Some(last) = state.last_sent_at {
-            let cooldown = config.cooldown_millis.max(0) as u128;
+            let cooldown = config.cooldown_millis().max(0) as u128;
             if last.elapsed().as_millis() < cooldown {
                 let text = lang::lang()
                     .read()
                     .unwrap_or_else(|e| e.into_inner())
-                    .format("General-Too-Fast", &locale, &[]);
-                let _ = event
-                    .player
-                    .send_system_message(TextComponent::from_legacy_string_with_code(&text, '&'), false);
+                    .format("Cooldowns-Chat", &locale, &[&cooldown.to_string()]);
+                let _ = event.player.send_system_message(
+                    TextComponent::from_legacy_string_with_code(&text, '&'),
+                    false,
+                );
                 return false;
             }
         }
@@ -173,8 +185,10 @@ fn chat_pipeline(
     //    `antiRepeatMaxPerPeriod: 0` any similar message is blocked.
     {
         let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
-        let state = guard.get_mut(&player_key).expect("state exists after cooldown");
-        let period = config.anti_repeat_period_millis.max(1) as u128;
+        let state = guard
+            .get_mut(&player_key)
+            .expect("state exists after cooldown");
+        let period = config.anti_repeat_period_millis().max(1) as u128;
         let now = Instant::now();
         while state
             .recent
@@ -183,7 +197,7 @@ fn chat_pipeline(
         {
             state.recent.pop_front();
         }
-        let similarity = config.anti_repeat_similarity.max(0.0).min(1.0);
+        let similarity = config.anti_repeat_similarity().max(0.0).min(1.0);
         let too_similar = state
             .recent
             .iter()
@@ -193,9 +207,10 @@ fn chat_pipeline(
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
                 .format("General-Too-Similar", &locale, &[]);
-            let _ = event
-                .player
-                .send_system_message(TextComponent::from_legacy_string_with_code(&text, '&'), false);
+            let _ = event.player.send_system_message(
+                TextComponent::from_legacy_string_with_code(&text, '&'),
+                false,
+            );
             return false;
         }
         state.recent.push_back(RecentMessage {
@@ -206,7 +221,7 @@ fn chat_pipeline(
 
     // 6. Filtering — blocked words replaced by the configured character
     //    repeated to the matched word length (non-overlapping, case-insensitive).
-    let filter = TextFilter::new(&config.blocked_words, &config.filter_replacement);
+    let filter = TextFilter::new(config.blocked_words(), config.filter_replacement());
     let message = filter.filter(message);
 
     // 7. Channel routing (longest prefix wins) + speak permission check.
@@ -217,27 +232,38 @@ fn chat_pipeline(
     };
 
     if let Some(channel) = channel {
-        if !channel.permission.is_empty() && !event.player.has_permission(&channel.permission) {
+        if !channel.permission().is_empty() && !event.player.has_permission(channel.permission()) {
             let text = lang::lang()
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
                 .format("Channel-No-Speak-Permission", &locale, &[]);
-            let _ = event
-                .player
-                .send_system_message(TextComponent::from_legacy_string_with_code(&text, '&'), false);
+            let _ = event.player.send_system_message(
+                TextComponent::from_legacy_string_with_code(&text, '&'),
+                false,
+            );
             return false;
         }
     }
 
     // 8. Render — one template string, then one component per receiver.
+    let server_name = config.server_name();
+    let world = event.player.get_world().get_name();
     let template = match channel {
-        Some(ch) => render_template(&ch.format, &name, body, &ch.id),
-        None => render_template(&config.format, &name, body, ""),
+        Some(ch) => render_template(&ch.template, &name, &body, &ch.id, server_name, &world, ""),
+        None => render_template(
+            &config.plain_template(),
+            &name,
+            &body,
+            "",
+            server_name,
+            &world,
+            "",
+        ),
     };
 
     // 9. Broadcast — every online player; radius-limited channels use squared
     //    distance (Bukkit `DISTANCE` semantics; 0.0 = unlimited).
-    let radius = channel.map(|c| c.radius).unwrap_or(0.0f64);
+    let radius = channel.map(|c| c.radius()).unwrap_or(0.0f64);
     let origin = event.player.get_position();
     for player in server.get_all_players() {
         if radius > 0.0 {
@@ -264,13 +290,25 @@ fn chat_pipeline(
 }
 
 /// Renders a format template with the built-in placeholders (`{player}`,
-/// `{message}`, `{channel}`, `{target}` for private chat).
-fn render_template(template: &str, name: &str, message: &str, channel: &str) -> String {
+/// `{message}`, `{channel}`, `{server}`, `{world}`, `{target}` for private
+/// chat). Config templates are normalized in `config.rs` from the Mod's
+/// `%player_name%`-style tokens to these `{…}` names.
+fn render_template(
+    template: &str,
+    name: &str,
+    message: &str,
+    channel: &str,
+    server: &str,
+    world: &str,
+    target: &str,
+) -> String {
     template
         .replace("{player}", name)
         .replace("{message}", message)
         .replace("{channel}", channel)
-        .replace("{target}", "")
+        .replace("{server}", server)
+        .replace("{world}", world)
+        .replace("{target}", target)
 }
 
 /// Normalized similarity in `[0, 1]` (a plain-normalized Jaro–Winkler stand-in

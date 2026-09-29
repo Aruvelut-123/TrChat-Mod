@@ -7,6 +7,12 @@
 //! (Pumpkin does not expose one yet), using the configured default language
 //! plus `en_US` as the hard fallback.
 //!
+//! The message tables come from the bundled Mod defaults
+//! ([`crate::config::defaults::LANGS`], byte-identical to
+//! `src/main/resources/defaults/lang/`) and any `lang/*.yml` files the server
+//! operator edits in the data folder — user files win over the bundled copy,
+//! mirroring how the Mod seeds its `config/trchat/lang/` on first run.
+//!
 //! Message values use `{0}` / `{1}` positional placeholders, resolved by
 //! [`Lang::format`] — a tiny re-implementation of the `MessageFormat`-less
 //! `.format(key, args)` used by the upstream message API.
@@ -14,11 +20,15 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+use serde_yaml::Value;
+
+use crate::config::defaults;
+
 /// Resolved message table for one locale. The keys are the upstream TrChat
 /// lang keys (`General-Too-Long`, `Channel-No-Speak-Permission`, …).
 pub struct Lang {
     /// All loaded locales, keyed by their lowercase-BCP-47 name (`zh_cn`,
-    /// `en_us`). Never empty — `en_us` is always present.
+    /// `en_us`, `es_es`). Never empty — `en_us` is always present.
     locales: HashMap<String, HashMap<String, String>>,
     /// The default language id from `chat.defaultLanguage`, normalized.
     default: String,
@@ -27,18 +37,20 @@ pub struct Lang {
 static LANG: std::sync::OnceLock<RwLock<Lang>> = std::sync::OnceLock::new();
 
 impl Lang {
-    /// Creates the in-memory language table. If a `lang/` folder exists in the
-    /// plugin data folder, `*.txt` files inside it are merged over the bundled
-    /// defaults (bundled defaults win on conflicts, mirroring the upstream
-    /// "defaults copied on first run" behaviour).
+    /// Creates the in-memory language table from the bundled YAML defaults,
+    /// then merges every `lang/*.yml` file found in the data folder over them
+    /// (user files win, matching the Mod's "defaults copied on first run").
     pub fn init(data_folder: &str, default_language: &str) -> Self {
         let mut locales = HashMap::new();
-        locales.insert("en_us".to_string(), english());
-        locales.insert("zh_cn".to_string(), chinese());
-        // External override files (`lang/<locale>.yml` per upstream) are
-        // intentionally not parsed here: the WASM sandbox cannot enumerate
-        // bundled resources, so overrides are a documented follow-up.
-        let _ = data_folder;
+        for (name, raw) in defaults::LANGS {
+            let table = parse_table(raw);
+            if !table.is_empty() {
+                locales.insert(normalize(name), table);
+            }
+        }
+        if !data_folder.is_empty() {
+            merge_folder_overrides(&mut locales, data_folder);
+        }
         let default = normalize(default_language);
         if !locales.contains_key(&default) {
             // Unknown configured language: silently fall back to en_US, same
@@ -56,11 +68,7 @@ impl Lang {
         self.locales
             .get(&locale)
             .and_then(|m| m.get(key))
-            .or_else(|| {
-                self.locales
-                    .get(&self.default)
-                    .and_then(|m| m.get(key))
-            })
+            .or_else(|| self.locales.get(&self.default).and_then(|m| m.get(key)))
             .or_else(|| self.locales.get("en_us").and_then(|m| m.get(key)))
             .map(String::as_str)
             .unwrap_or(key)
@@ -75,83 +83,132 @@ impl Lang {
         }
         out
     }
-
-    /// Replaces `${key}` tokens inside an arbitrary template (used by console
-    /// logging formats, whose `{0}`/`{1}` are positional raw values instead).
-    #[allow(dead_code)] // part of the Bukkit v2 message surface; not wired yet
-    pub fn placeholder(template: &str, values: &[(&str, &str)]) -> String {
-        let mut out = template.to_string();
-        for (name, value) in values {
-            out = out.replace(&format!("{{{name}}}"), value);
-        }
-        out
-    }
 }
 
-/// Access to the process-wide language table (initialized once by the plugin).
+/// Access to the process-wide language table (seeded by
+/// [`SharedConfig::load`]; falls back to bundled `en_US` before that).
 pub fn lang() -> &'static RwLock<Lang> {
     LANG.get_or_init(|| RwLock::new(Lang::init("", "en_us")))
+}
+
+/// (Re)seeds the process-wide language table from the data folder. Called on
+/// plugin load and on every `/trchat reload` so language edits apply live.
+pub fn lang_init(data_folder: &str, default_language: &str) {
+    let next = Lang::init(data_folder, default_language);
+    let lock = LANG.get_or_init(|| RwLock::new(Lang::init("", "en_us")));
+    *lock.write().unwrap_or_else(|e| e.into_inner()) = next;
+}
+
+/// Parses one `lang/<locale>.yml` document into a flat key → string table.
+/// Nested sections (`Placeholder-Translations:`) and non-string values are
+/// skipped, mirroring the Mod loader which drops unknown keys on load.
+fn parse_table(raw: &str) -> HashMap<String, String> {
+    let Ok(Value::Mapping(map)) = serde_yaml::from_str::<Value>(raw) else {
+        eprintln!("[trchat] lang: bundled file is not a mapping, ignored");
+        return HashMap::new();
+    };
+    let mut out = HashMap::new();
+    for (k, v) in map {
+        let Some(key) = k.as_str() else { continue };
+        match v {
+            Value::String(s) => {
+                out.insert(key.to_string(), s);
+            }
+            Value::Number(n) => {
+                out.insert(key.to_string(), n.to_string());
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Merges `data_folder/lang/*.yml` over the bundled tables. The data-folder
+/// copy is the one operators edit after the first-run seed, so it wins.
+fn merge_folder_overrides(
+    locales: &mut HashMap<String, HashMap<String, String>>,
+    data_folder: &str,
+) {
+    let dir = std::path::Path::new(data_folder).join("lang");
+    let Ok(read_dir) = std::fs::read_dir(&dir) else {
+        return; // no override folder yet
+    };
+    for entry in read_dir.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".yml") && !name.ends_with(".yaml") {
+            continue;
+        }
+        let locale = name
+            .rsplit_once('.')
+            .map(|(stem, _)| normalize(stem))
+            .unwrap_or_else(|| normalize(&name));
+        let Ok(raw) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let table = parse_table(&raw);
+        if table.is_empty() {
+            continue;
+        }
+        locales
+            .entry(locale)
+            .and_modify(|existing| existing.extend(table.clone()))
+            .or_insert(table);
+    }
 }
 
 fn normalize(locale: &str) -> String {
     locale.to_ascii_lowercase().replace('-', "_")
 }
 
-fn english() -> HashMap<String, String> {
-    let mut m = HashMap::new();
-    // Chat guards — chat.md §1.4 keys.
-    m.insert("General-Too-Long".into(), "&cMessage is too long! Maximum length is {0} characters.".into());
-    m.insert("General-Global-Muting".into(), "&cChat has been globally muted by an administrator.".into());
-    m.insert("General-Muted".into(), "&cYou have been muted!".into());
-    m.insert("General-Too-Similar".into(), "&cPlease do not spam identical or similar messages!".into());
-    m.insert("General-Too-Fast".into(), "&cYou are chatting too fast, please slow down.".into());
-    // Channels — chat.md §2.* keys.
-    m.insert("Channel-No-Speak-Permission".into(), "&cYou do not have permission to speak in this channel.".into());
-    m.insert("Channel-No-Join-Permission".into(), "&cYou do not have permission to join channel {0}.".into());
-    m.insert("Channel-Command-Unbound".into(), "&cThis command is not bound to any channel.".into());
-    m.insert("Channel-Private-Target".into(), "&cPlease specify the player to message.".into());
-    m.insert("Channel-Join".into(), "&aJoined channel {0}.".into());
-    m.insert("Channel-Quit".into(), "&7Left channel {0}.".into());
-    // Filtering — placeholder-function-filter.md.
-    m.insert("Filter-Blocked".into(), "&cYour message contains blocked words.".into());
-    // Redis / cross-server.
-    m.insert("Redis-Fallback".into(), "&7[TrChat] Cross-server relay unavailable, using local chat.".into());
-    m.insert("Redis-Force-Unavailable".into(), "&cCross-server relay unavailable; your message was not sent.".into());
-    // Mention.
-    m.insert("Function-Mention-Notify".into(), "&e{0} mentioned you in chat.".into());
-    m
-}
-
-fn chinese() -> HashMap<String, String> {
-    let mut m = HashMap::new();
-    m.insert("General-Too-Long".into(), "&c消息过长！最大长度为 {0} 个字符。".into());
-    m.insert("General-Global-Muting".into(), "&c全局聊天已被管理员关闭！".into());
-    m.insert("General-Muted".into(), "&c你已被禁言！".into());
-    m.insert("General-Too-Similar".into(), "&c请勿重复发送相同或相似的消息！".into());
-    m.insert("General-Too-Fast".into(), "&c发言过于频繁，请稍后再试。".into());
-    m.insert("Channel-No-Speak-Permission".into(), "&c你没有在该频道发言的权限！".into());
-    m.insert("Channel-No-Join-Permission".into(), "&c你没有加入频道 {0} 的权限！".into());
-    m.insert("Channel-Command-Unbound".into(), "&c该命令未绑定到任何频道！".into());
-    m.insert("Channel-Private-Target".into(), "&c请输入要私聊的玩家名！".into());
-    m.insert("Channel-Join".into(), "&a你已加入频道 {0}。".into());
-    m.insert("Channel-Quit".into(), "&7你已退出频道 {0}。".into());
-    m.insert("Filter-Blocked".into(), "&c你的消息包含敏感词！".into());
-    m.insert("Redis-Fallback".into(), "&7[TrChat] 跨服通道不可用，已切换为本地聊天。".into());
-    m.insert("Redis-Force-Unavailable".into(), "&c跨服通道不可用，你的消息未能发送！".into());
-    m.insert("Function-Mention-Notify".into(), "&e{0} 在聊天中提到了你。".into());
-    m
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "trchat-pumpkin-lang-test-{}-{tag}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn bundled_tables_load() {
+        let lang = Lang::init("", "zh_cn");
+        assert_eq!(
+            lang.get("General-Muted", "zh_cn"),
+            "&8[&3Tr&bChat&8] &c你已被禁言，解除时间：{0}，原因：{1}"
+        );
+        assert_eq!(
+            lang.get("Channel-Join", "en_us"),
+            "&8[&3Tr&bChat&8] &aJoined channel {0}."
+        );
+        assert!(lang.get("General-Too-Long", "es_es").contains("largo"));
+        // nested sections are skipped, not a parse error
+        assert_eq!(
+            lang.get("Placeholder-Translations", "en_us"),
+            "Placeholder-Translations"
+        );
+    }
+
     #[test]
     fn falls_back_through_default_to_en_us() {
         let lang = Lang::init("", "zh_cn");
-        assert_eq!(lang.get("General-Muted", "zh_cn"), "&c你已被禁言！");
-        assert_eq!(lang.get("General-Muted", "ja_jp"), "&c你已被禁言！"); // default zh
-        assert_eq!(lang.get("Channel-Join", "en_us"), "&aJoined channel {0}."); // en direct
+        assert_eq!(
+            lang.get("General-Muted", "zh_cn"),
+            "&8[&3Tr&bChat&8] &c你已被禁言，解除时间：{0}，原因：{1}"
+        );
+        // unknown locale falls back to the default (zh_cn)
+        assert_eq!(
+            lang.get("General-Muted", "ja_jp"),
+            "&8[&3Tr&bChat&8] &c你已被禁言，解除时间：{0}，原因：{1}"
+        );
+        // en_US resolves directly
+        assert_eq!(
+            lang.get("Channel-Join", "en_us"),
+            "&8[&3Tr&bChat&8] &aJoined channel {0}."
+        );
     }
 
     #[test]
@@ -164,8 +221,24 @@ mod tests {
     fn positional_formatting() {
         let lang = Lang::init("", "zh_cn");
         assert_eq!(
-            lang.format("General-Too-Long", "zh_cn", &["100"]),
-            "&c消息过长！最大长度为 100 个字符。"
+            lang.format("General-Too-Long", "zh_cn", &["100", "256"]),
+            "&8[&3Tr&bChat&8] &7你的聊天内容过长。&8[&6100&8/&2256&8]"
         );
+    }
+
+    #[test]
+    fn data_folder_overrides_win() {
+        let dir = temp_dir("override");
+        let lang_dir = dir.join("lang");
+        std::fs::create_dir_all(&lang_dir).unwrap();
+        std::fs::write(
+            lang_dir.join("zh_CN.yml"),
+            "General-Muted: '&c自定义禁言文案'\nChannel-Join: '&a自定义加入文案'\n",
+        )
+        .unwrap();
+        let lang = Lang::init(&dir.to_string_lossy(), "zh_cn");
+        assert_eq!(lang.get("General-Muted", "zh_cn"), "&c自定义禁言文案");
+        // bundled keys untouched by the override still resolve
+        assert!(lang.get("General-Too-Long", "zh_cn").contains("过长"));
     }
 }

@@ -18,7 +18,8 @@
 
 use pumpkin_plugin_api::{
     command::{
-        Arg, ArgumentType, Command, CommandError, CommandNode, CommandSender, ConsumedArgs, StringType,
+        Arg, ArgumentType, Command, CommandError, CommandNode, CommandSender, ConsumedArgs,
+        StringType,
     },
     commands::CommandHandler,
     text::TextComponent,
@@ -41,42 +42,48 @@ const PERM_ADMIN: &str = "trchat.admin";
 /// registration done by [`crate::chat::ChatManager::init`].
 pub fn register_commands(context: &Context) {
     // ---- /trchat ----
-    let trchat = Command::new(&[String::from("trchat")], "TrChat management and chat commands")
-        .then(CommandNode::literal("reload").execute(ReloadCommand))
-        .then(CommandNode::literal("version").execute(VersionCommand))
-        .then(CommandNode::literal("muteall").execute(MuteAllCommand))
-        .then(
-            CommandNode::literal("mute").then(
-                CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
-                    .execute(MuteCommand),
-            ),
-        )
-        .then(
-            CommandNode::literal("unmute").then(
-                CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
-                    .execute(UnmuteCommand),
-            ),
-        )
-        .then(
-            CommandNode::literal("ignore").then(
-                CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
-                    .execute(IgnoreCommand),
-            ),
-        )
-        .then(
-            CommandNode::literal("channel").then(
-                CommandNode::argument("name", &ArgumentType::String(StringType::SingleWord))
-                    .execute(ChannelCommand),
-            ),
-        );
+    let trchat = Command::new(
+        &[String::from("trchat")],
+        "TrChat management and chat commands",
+    )
+    .then(CommandNode::literal("reload").execute(ReloadCommand))
+    .then(CommandNode::literal("version").execute(VersionCommand))
+    .then(CommandNode::literal("muteall").execute(MuteAllCommand))
+    .then(
+        CommandNode::literal("mute").then(
+            CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                .execute(MuteCommand),
+        ),
+    )
+    .then(
+        CommandNode::literal("unmute").then(
+            CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                .execute(UnmuteCommand),
+        ),
+    )
+    .then(
+        CommandNode::literal("ignore").then(
+            CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                .execute(IgnoreCommand),
+        ),
+    )
+    .then(
+        CommandNode::literal("channel").then(
+            CommandNode::argument("name", &ArgumentType::String(StringType::SingleWord))
+                .execute(ChannelCommand),
+        ),
+    );
     context.register_command(trchat, PERM_USE);
 
     // ---- /channel <name> ----
-    let channel = Command::new(&[String::from("channel")], "Switch your active chat channel")
-        .then(
-            CommandNode::argument("name", &ArgumentType::String(StringType::SingleWord))
-                .execute(ChannelCommand),
-        );
+    let channel = Command::new(
+        &[String::from("channel")],
+        "Switch your active chat channel",
+    )
+    .then(
+        CommandNode::argument("name", &ArgumentType::String(StringType::SingleWord))
+            .execute(ChannelCommand),
+    );
     context.register_command(channel, PERM_USE);
 
     // ---- /msg <target> <message> ----
@@ -154,7 +161,10 @@ impl CommandHandler for VersionCommand {
     ) -> Result<i32, CommandError> {
         send(
             &sender,
-            &format!("&a[TrChat] TrChat v{} (Pumpkin WASM port)", env!("CARGO_PKG_VERSION")),
+            &format!(
+                "&a[TrChat] TrChat v{} (Pumpkin WASM port)",
+                env!("CARGO_PKG_VERSION")
+            ),
         );
         Ok(0)
     }
@@ -279,10 +289,16 @@ impl CommandHandler for IgnoreCommand {
             Some(state) => {
                 let lower = target.to_ascii_lowercase();
                 if state.ignored.remove(&lower) {
-                    send(&sender, &format!("&a[TrChat] You are no longer ignoring {target}."));
+                    send(
+                        &sender,
+                        &format!("&a[TrChat] You are no longer ignoring {target}."),
+                    );
                 } else {
                     state.ignored.insert(lower);
-                    send(&sender, &format!("&a[TrChat] You are now ignoring {target}."));
+                    send(
+                        &sender,
+                        &format!("&a[TrChat] You are now ignoring {target}."),
+                    );
                 }
             }
             None => send(&sender, "&c[TrChat] Your chat session is not ready yet."),
@@ -305,7 +321,12 @@ impl CommandHandler for ChannelCommand {
         let Some(name) = arg_string(&args, "name") else {
             // List the available channels when no argument is consumed.
             let config = config::global_config();
-            let ids: Vec<&str> = config.channels().iter().map(|c| c.id.as_str()).collect();
+            let ids: Vec<String> = config
+                .read()
+                .channels()
+                .iter()
+                .map(|c| c.id.clone())
+                .collect();
             send(
                 &sender,
                 &format!("&a[TrChat] Available channels: {}", ids.join(", ")),
@@ -313,18 +334,22 @@ impl CommandHandler for ChannelCommand {
             return Ok(0);
         };
         let config = config::global_config();
-        let Some(channel) = config.channel_by_id(&name) else {
-            let ids: Vec<&str> = config.channels().iter().map(|c| c.id.as_str()).collect();
+        let guard = config.read();
+        let Some(channel) = guard.channel_by_id(&name) else {
+            let ids: Vec<&str> = guard.channels().iter().map(|c| c.id.as_str()).collect();
             send(
                 &sender,
-                &format!("&c[TrChat] Unknown channel '{name}'. Available: {}", ids.join(", ")),
+                &format!(
+                    "&c[TrChat] Unknown channel '{name}'. Available: {}",
+                    ids.join(", ")
+                ),
             );
             return Ok(0);
         };
         // Join permission: empty permission opens the channel to everyone.
-        if !channel.permission.is_empty()
+        if !channel.permission().is_empty()
             && !sender.is_console()
-            && !sender.has_permission(&server, &channel.permission)
+            && !sender.has_permission(&server, channel.permission())
         {
             send(
                 &sender,
@@ -333,7 +358,7 @@ impl CommandHandler for ChannelCommand {
             return Ok(0);
         }
         let new_id = channel.id.clone();
-        drop(config);
+        drop(guard);
 
         let mut players = SessionPlayers::global()
             .write()
@@ -382,15 +407,17 @@ impl CommandHandler for MsgCommand {
             }
         }
         let online = server.get_all_players();
-        let Some(target_player) = online.iter().find(|p| p.get_name().eq_ignore_ascii_case(&target)) else {
+        let Some(target_player) = online
+            .iter()
+            .find(|p| p.get_name().eq_ignore_ascii_case(&target))
+        else {
             send(&sender, &format!("&cPlayer {target} is not online."));
             return Ok(0);
         };
 
         let config = config::global_config();
-        let sender_tpl = config.msg.sender.clone();
-        let receiver_tpl = config.msg.receiver.clone();
-        drop(config);
+        let sender_tpl = config.read().msg.sender.clone();
+        let receiver_tpl = config.read().msg.receiver.clone();
 
         let rendered_sender = render_msg(&sender_tpl, &me, &target, &text);
         let rendered_receiver = render_msg(&receiver_tpl, &me, &target, &text);

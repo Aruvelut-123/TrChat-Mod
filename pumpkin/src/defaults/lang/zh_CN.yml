@@ -1,0 +1,142 @@
+General-Too-Long: '&8[&3Tr&bChat&8] &7你的聊天内容过长。&8[&6{0}&8/&2{1}&8]'
+General-Too-Similar: '&8[&3Tr&bChat&8] &7两次聊天内容过于相似，请勿复读。'
+General-Too-Duplicate: '&8[&3Tr&bChat&8] &7检测到大量重复内容，请勿刷屏。'
+General-Too-Frequent: '&8[&3Tr&bChat&8] &7你的发言频率过高，请稍候。'
+General-No-Permission: '&8[&3Tr&bChat&8] &7你没有足够的权限。'
+General-Muted: '&8[&3Tr&bChat&8] &c你已被禁言，解除时间：{0}，原因：{1}'
+General-Global-Muting: '&8[&3Tr&bChat&8] &c当前正在全员禁言。'
+General-Player-Not-Found: '&8[&3Tr&bChat&8] &7找不到玩家：{0}'
+General-Player-Only: '&8[&3Tr&bChat&8] &c此命令只能由玩家执行。'
+Cooldowns-Chat: '&8[&3Tr&bChat&8] &7请等待 &6{0} ms &7后再发言。'
+Channel-Join: '&8[&3Tr&bChat&8] &a已加入 {0} 频道。'
+Channel-Quit: '&8[&3Tr&bChat&8] &7已离开 {0} 频道。'
+Channel-No-Speak-Permission: '&8[&3Tr&bChat&8] &c你没有该频道的发言权限。'
+Channel-Command-Unbound: '&8[&3Tr&bChat&8] &c频道命令 /{0} 已被移除或未绑定。'
+Channel-Unknown: '&8[&3Tr&bChat&8] &c未知频道：{0}'
+Channel-Not-Found: '&8[&3Tr&bChat&8] &7频道 &b{0} &7不存在。'
+Channel-Join-Other: '&8[&3Tr&bChat&8] &3你已将 &7{0} &3加入 &b{1} &3频道。'
+Channel-Quit-Other: '&8[&3Tr&bChat&8] &3你已将 &7{0} &3移出聊天频道。'
+Reload-Success: '&8[&3Tr&bChat&8] &a重载完成：已加载 {0} 个频道，并刷新语言、function、filter、Redis 与频道命令。'
+Reload-Partial: '&8[&3Tr&bChat&8] &e已加载 {0} 个频道，但以下配置重载失败：{1}。请查看服务端日志。'
+Reload-Failed: '&8[&3Tr&bChat&8] &c重载失败：{0}。继续使用上一次有效的频道配置。'
+Status-State-Enabled: '&a已启用'
+Status-State-Disabled: '&c已禁用'
+Status-State-Connected: '&a已连接'
+Status-State-Reconnecting: '&e重连中'
+Status-Overview: |-
+  &8&m----------&r &3&lTr&b&lChat &8&m----------
+  &8▪ &7版本: &b{0} &8| &7MC: &b1.21.1
+  &8▪ &7频道: &a{1} &8| &7默认: &f{2}
+  &8▪ &7Redis: {3} &8| &7禁言: {4}
+  &8▪ &7命令控制: {5} &8(&f{6}&8)
+  &8▪ &7在线: &a{7}&7/&2{8} &8| &f/trchat reload
+Status-Creator-Prefix: '&8▪ &7作者: &fBaymaxawa &8• '
+Status-Creator-Link: '&d&nBilibili'
+Status-Creator-Link-Hover: '&7点击打开 Baymaxawa 的 Bilibili 主页'
+Status-Original-Author: '&8▪ &7原作者: &fArasple、ItsFlicker'
+Status-Repository-Prefix: '&8▪ &7仓库: '
+Status-Repository-Link: '&b&nGitHub / Issue'
+Status-Repository-Link-Hover: '&7点击打开 NeoForge 项目仓库或提交 Issue'
+Status-Footer: '&8&m--------------------------------'
+Player-Status-Overview: |-
+  &8&m---------&r &3&l玩家状态 &8&m---------
+  &8▪ &7玩家: &f{0} &8| &7频道: &f{1}
+  &8▪ &7已加入: &f{2} &8| &7延迟: &f{3} ms
+  &8▪ &7禁言: {4} &8| &7Shadow: {5}
+  &8▪ &7监听: {6} &8| &7OP: {7}
+  &8▪ &7模式: &f{8}
+Player-Status-Mute-Detail: |-
+  &8▪ &7到期: &f{0}
+  &8▪ &7原因: &f{1}
+Player-Status-Permanent: '永久'
+Command-Controller-Disabled: '&8[&3Tr&bChat&8] &c命令 /{0} 未在已启用的 Command-Controller 中配置。'
+Command-About: |-
+  &8&m----------&r &3&lTr&b&lChat &8&m----------
+  &8▪ &7版本: &b{0}
+  &8▪ &7原作者: &fArasple、ItsFlicker
+  &8▪ &7NeoForge: &fBaymaxawa
+  &8▪ &7MC: &f1.21.1 &8| &7NF: &f21.1.233+
+  &8&m--------------------------------
+Command-Help: |-
+  &8&m----------&r &3&lTr&b&lChat 帮助 &8&m----------
+  &b/trchat status [玩家]
+  &b/trchat reload
+  &b/mute <玩家> <时长> [原因]
+  &b/shadowmute <玩家> [on|off]
+  &b/trmsg <玩家> <消息>
+  &b/trreply <消息> &8| &b/trspy
+  &8&m--------------------------------
+Redis-Reconnect-Started: '&8[&3Tr&bChat&8] &aRedis 重连已开始。'
+Global-Mute-On: '&8[&3Tr&bChat&8] &c全服聊天已禁言。'
+Global-Mute-Off: '&8[&3Tr&bChat&8] &a全服聊天已解除禁言。'
+Updater-Available: |-
+  &8&m----------&r &3&l发现更新 &8&m----------
+  &8▪ &7当前: &f{0} &8➜ &7最新: &a{1}
+Updater-Link-Prefix: '&8▪ &7下载: '
+Updater-Link: '&a&nGitHub Releases'
+Updater-Link-Hover: '&7点击打开 TrChat NeoForge 发布页面'
+Updater-Changelog: '&8▪ &7更新日志：'
+Updater-Changelog-Empty: '&8  &7该版本没有提供更新日志。'
+Private-Message-No-Reply: '&8[&3Tr&bChat&8] &7当前没有可回复的玩家。'
+Private-Message-Spy-Format: '&8[&3监听&8] &6{0} &2-> &3{1}&f: &7{2}'
+Private-Message-Spy-On: '&c&l&k|&f &a&l开启监听私聊模式 &c&l&k|'
+Private-Message-Spy-Off: '&c&l&k|&f &c&l关闭监听私聊模式 &c&l&k|'
+Ignore-Ignored-Player: '&8[&3Tr&bChat&8] &7你已屏蔽 &f{0} &7的消息。'
+Ignore-Cancel-Player: '&8[&3Tr&bChat&8] &7你已恢复接收 &f{0} &7的消息。'
+Ignore-List: '&8[&3Tr&bChat&8] &7已屏蔽玩家：&f{0}'
+Ignore-Self: '&8[&3Tr&bChat&8] &7你不能屏蔽自己。'
+Color-Selected: '&8[&3Tr&bChat&8] &7已选择聊天颜色：{0}&7。'
+Color-Reset: '&8[&3Tr&bChat&8] &7已恢复频道默认聊天颜色。'
+Color-Invalid: '&8[&3Tr&bChat&8] &7无效的聊天颜色：{0}'
+Clear-Success: '&8[&3Tr&bChat&8] &7已为 {0} 清屏。'
+Mute-Muted-Player: '&8[&3Tr&bChat&8] &7已禁言 {0}，时长 {1}，原因：{2}'
+Mute-Cancel-Muted-Player: '&8[&3Tr&bChat&8] &7已解除 {0} 的禁言。'
+Mute-Shadow-On: '&8[&3Tr&bChat&8] &7已对 {0} 开启 ShadowMute。'
+Mute-Shadow-Off: '&8[&3Tr&bChat&8] &7已对 {0} 关闭 ShadowMute。'
+Mute-Wrong-Format: '&8[&3Tr&bChat&8] &7无效时长：{0}'
+Function-Snapshot-Expired: '&8[&3Tr&bChat&8] &c该背包快照已过期。'
+Filter-Anvil-Blocked: '&8[&3Tr&bChat&8] &c物品名称包含敏感词。'
+Command-Controller-Deny: '&c你不能使用该命令。'
+Command-Controller-Cooldown: '&c该命令正在冷却。'
+Channel-Private-Target: '&8[&3Tr&bChat&8] &7私聊频道需要指定目标玩家。'
+Console-Name: '控制台'
+Channel-Auto-Join-Missing: '&8[&3Tr&bChat&8] &c没有频道开启 Options.Auto-Join。'
+Channel-No-Join-Permission: '&8[&3Tr&bChat&8] &c你没有加入 {0} 频道的权限。'
+Redis-Private-Unavailable: '&8[&3Tr&bChat&8] &cRedis 不可用，私聊未送达。'
+Redis-Unsafe-Item: '&8[&3Tr&bChat&8] &c模组物品无法跨服展示，私聊未送达。'
+Redis-Force-Unavailable: '&8[&3Tr&bChat&8] &cRedis 不可用，消息未发送。'
+Redis-Fallback: '&8[&3Tr&bChat&8] &eRedis 不可用，消息仅发送到本服。'
+Function-Mention-Notify: '&d&l&k|&f &3&l玩家 &a&l{0} &3&l在聊天中艾特了你 &d&l&k|'
+Function-Mention-Title: '&a&l你被 @ 了！'
+Function-Mention-Subtitle: '&3玩家 &a{0} &3在聊天中提到了你'
+# 仅以下固定英文结果支持占位符本地化；未知键会在加载时删除。
+Placeholder-Translations:
+  'yes': '是'
+  'no': '否'
+  'SURVIVAL': '生存模式'
+  'CREATIVE': '创造模式'
+  'ADVENTURE': '冒险模式'
+  'SPECTATOR': '旁观模式'
+  'Overworld': '主世界'
+  'Nether': '下界'
+  'The End': '末地'
+  'N': '北'
+  'NE': '东北'
+  'E': '东'
+  'SE': '东南'
+  'S': '南'
+  'SW': '西南'
+  'W': '西'
+  'NW': '西北'
+  'invalid date': '无效日期'
+  'invalid format and time': '无效的格式和时间'
+Function-Mention-Hover: '&7{0} 艾特了 {1}'
+Function-Mention-All-Hover: '&7{0} 艾特了所有人'
+Function-Item-Air: '&8[&7空气&8]'
+Function-Inventory-Format: '&8[&b背包: {0}&8]'
+Function-Inventory-Hover: '&7点击查看背包快照'
+Function-Inventory-Title: '{0} 的背包'
+Function-EnderChest-Format: '&8[&5末影箱: {0}&8]'
+Function-EnderChest-Hover: '&7点击查看末影箱快照'
+Function-EnderChest-Title: '{0} 的末影箱'
+Function-Item-Title: '{0} 的物品 - {1}'
