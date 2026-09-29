@@ -52,13 +52,14 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 * **私聊**：`msg.sender` / `msg.receiver` 模板渲染，遵循忽略列表
 * **玩家数据**：`SessionPlayers` 会话注册表（活跃频道、已加入频道、禁言、忽略、全局禁言）
 * **权限**：命令注册权限（`trchat.use`）与 `CommandSender::has_permission` 管理权限检查（`trchat.admin`）、频道 `Join-Permission`
-* **配置热重载**：`/trchat reload` 重新读取数据目录中的 YAML（`settings.yml` + `channels/` + `lang/`）
+* **配置热重载**：`/trchat reload` 重新读取数据目录中的 YAML（`settings.yml` + `channels/` + `lang/` + `filter.yml` + `function.yml` + `special-chars.yml`）
 * 声明了 Redis 互通所需的全部网络权限（`network.tcp.*`、`network.dns`、`network.loopback`）
 
 ## 配置
 
 配置文件全部为 **YAML**，位于插件数据目录（`plugins/data/trchat/`）下的 `settings.yml`、
-`channels/<Id>.yml` 与 `lang/<locale>.yml`，与 Mod 端 `config/trchat/` 的布局一一对应
+`channels/<Id>.yml`、`lang/<locale>.yml`、`filter.yml`、`function.yml`、`datasource.yml`
+与 `special-chars.yml`，与 Mod 端 `config/trchat/` 的布局一一对应
 （键名也保持相同，便于两端共享同一套配置）。**文件不存在时**（首次启动，或管理员删除后
 重启）插件会自动从内置默认值写入并创建，方便直接编辑；已存在的文件**不会被覆盖**。
 
@@ -71,9 +72,13 @@ plugins/data/trchat/
 │   ├── Normal.yml        #   Options / Bindings(Prefix) / Formats / Sender / Receiver / Console
 │   ├── Global.yml        #   Prefix: ['!all']  + Command: ['global', …]
 │   └── …
-└── lang/                 # 每文件一个语言表（en_US / zh_CN / es_ES / …）
-    ├── en_US.yml
-    └── …
+├── lang/                 # 每文件一个语言表（en_US / zh_CN / es_ES / …）
+│   ├── en_US.yml
+│   └── …
+├── filter.yml            # 敏感词表（Blocked / Regex，等长替换）
+├── function.yml          # 命令控制器规则 + 内置/自定义聊天功能（Mention / Item-Show / …）
+├── datasource.yml        # 数据源（SQLite / MySQL / MariaDB / PostgreSQL / JDBC，解析保留）
+└── special-chars.yml     # 资源包特殊字符表（彩色 emoji 白名单 + 颜色包裹）
 ```
 
 * **频道路由**：`Bindings.Prefix` 匹配（最长前缀优先），未匹配的消息落入自动加入
@@ -86,7 +91,7 @@ plugins/data/trchat/
 
 | 命令 | 权限 | 说明 |
 | --- | --- | --- |
-| `/trchat reload` | `trchat.admin` | 重新读取 `settings.yml`、`channels/` 与 `lang/` |
+| `/trchat reload` | `trchat.admin` | 重新读取 `settings.yml`、`channels/`、`lang/`、`filter.yml`、`function.yml` 与 `special-chars.yml` |
 | `/trchat version` | `trchat.use` | 显示插件版本 |
 | `/trchat muteall` | `trchat.admin` | 全局禁言开关 |
 | `/trchat mute <玩家>` | `trchat.admin` | 禁言一名玩家 |
@@ -104,7 +109,10 @@ plugins/data/trchat/
 - [ ] Redis 跨服互通：监听 `trchat-message` 频道，与现有 Bukkit/Bungee/Velocity 聊天体系打通
   （当前 `pumpkin-plugin-api` 稳定版未暴露网络客户端接口，WASI 沙箱内 TCP 行为需等 API 提供后实现；插件已声明 `network.tcp.connect` 权限）
 - [ ] 更新检查（Bukkit 版通过 HTTP 请求 SpigotMC API，Pumpkin 无对应端点，需自建）
-- [ ] 特殊字符（`&` 颜色码之外的自定义替换表）与更多内置占位符（`{world}` 已支持、`{target}` 已用于私聊模板）
+- [x] 特殊字符（`special-chars.yml` 彩色 emoji 白名单 + 颜色包裹）与内置占位符
+  （`{player}` / `{message}` / `{server}` / `{world}` / `{target}` / `{time}` 等）
+- [x] 配置解析覆盖 Mod 全量 YAML：`function.yml`（命令控制器 + 内置/自定义功能）与
+  `datasource.yml`（数据源，解析保留待接线）
 
 ## 说明
 
