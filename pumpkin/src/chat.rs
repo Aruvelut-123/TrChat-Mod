@@ -32,6 +32,7 @@ use crate::config::{color_code, ChannelConfig, Route, SharedConfig, TrChatConfig
 use crate::filter::{MessageGuard, TextFilter};
 use crate::functions;
 use crate::lang;
+use crate::placeholder;
 use crate::playerdata::SessionPlayers;
 use crate::special;
 
@@ -328,9 +329,18 @@ fn chat_pipeline(
         // A processed body carries its own styled component, so the body text
         // is *not* interpolated into the template; the caller passes the
         // component instead (§3.1: "若调用方传入了 messageComponent").
-        (Some(_), Some(ch)) => {
-            render_template(&ch.template, &name, "", &ch.id, server_name, &world, "")
-        }
+        (Some(_), Some(ch)) => render_template(
+            &ch.template,
+            &name,
+            "",
+            &ch.id,
+            server_name,
+            &world,
+            "",
+            &event.player,
+            server,
+            config,
+        ),
         (Some(_), None) => render_template(
             &config.plain_template(),
             &name,
@@ -339,10 +349,24 @@ fn chat_pipeline(
             server_name,
             &world,
             "",
+            &event.player,
+            server,
+            config,
         ),
         (None, Some(ch)) => {
             let body = wrap_special_characters(ch, &body);
-            render_template(&ch.template, &name, &body, &ch.id, server_name, &world, "")
+            render_template(
+                &ch.template,
+                &name,
+                &body,
+                &ch.id,
+                server_name,
+                &world,
+                "",
+                &event.player,
+                server,
+                config,
+            )
         }
         (None, None) => render_template(
             &config.plain_template(),
@@ -352,6 +376,9 @@ fn chat_pipeline(
             server_name,
             &world,
             "",
+            &event.player,
+            server,
+            config,
         ),
     };
 
@@ -411,6 +438,11 @@ fn chat_pipeline(
 /// `{message}`, `{channel}`, `{server}`, `{world}`, `{target}` for private
 /// chat). Config templates are normalized in `config.rs` from the Mod's
 /// `%player_name%`-style tokens to these `{…}` names.
+///
+/// `%token%` placeholders (`%server_online%`, `%player_health%`, …) are
+/// resolved first (§1.1), against the **message subject** for `player_*`.
+/// Message bodies are resolved *and then* legacy-code-stripped, matching the
+/// Mod's body pipeline (§1.1 / `ChannelRenderer.java:116-133`).
 fn render_template(
     template: &str,
     name: &str,
@@ -419,10 +451,15 @@ fn render_template(
     server: &str,
     world: &str,
     target: &str,
+    player: &pumpkin_plugin_api::player::Player,
+    server_ref: &Server,
+    config: &crate::config::TrChatConfig,
 ) -> String {
+    let template = placeholder::resolve(template, player, server_ref, config);
+    let message = placeholder::resolve(message, player, server_ref, config);
     template
         .replace("{player}", name)
-        .replace("{message}", message)
+        .replace("{message}", &message)
         .replace("{channel}", channel)
         .replace("{server}", server)
         .replace("{world}", world)

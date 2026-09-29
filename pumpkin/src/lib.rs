@@ -18,6 +18,7 @@ mod config;
 mod filter;
 mod functions;
 mod lang;
+mod placeholder;
 mod playerdata;
 mod special;
 
