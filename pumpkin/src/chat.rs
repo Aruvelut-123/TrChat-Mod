@@ -219,17 +219,47 @@ fn chat_pipeline(
         return ChatOutcome::DisabledWorld;
     }
 
-    // 2. Length guard — UTF-16 code units (Java `String.length()`), not chars.
+    // 2. Prefix routing (§1.2) — runs on the trimmed *raw* text, before any
+    //    guard, so a blocked word can never change which channel is chosen.
+    let route = config.route(message);
+    let (channel, body) = match route {
+        Route::Channel(channel, body) => (Some(channel), body),
+        Route::Plain(body) => (None, body),
+    };
+
+    // §1.2 step 5: an empty body after prefix stripping, or a channel flagged
+    // private, returns silently — no hint is sent either way.
+    if body.is_empty() {
+        return ChatOutcome::Rejected;
+    }
+    if channel.is_some_and(|c| c.options.private) {
+        return ChatOutcome::Rejected;
+    }
+
+    // 3. `canSpeak` (§1.3 step 1) — checked before `guardMessage`, so a player
+    //    without speak rights sees the permission hint rather than a length or
+    //    cooldown hint. A non-empty `Speak-Condition` replaces the
+    //    `Join-Permission` check (config.md §5 note 5).
+    if let Some(channel) = channel {
+        if !condition::can_speak(channel.speak_condition(), channel.permission(), player) {
+            return reject_with(player, &locale, "Channel-No-Speak-Permission", &[]);
+        }
+    }
+
+    // 4. `guardMessage` (§1.3 step 2, order fixed by §1.4). Every guard below
+    //    runs on the prefix-stripped `body`, not on the raw text.
+    //
+    //    Length guard — UTF-16 code units (Java `String.length()`), not chars.
     //    OP does *not* bypass this one.
-    let length = message.encode_utf16().count();
+    let length = body.encode_utf16().count();
     let max_len = config.message_max_length().max(1) as usize;
     if length > max_len {
         let (length, max_len) = (length.to_string(), max_len.to_string());
         return reject_with(player, &locale, "General-Too-Long", &[&length, &max_len]);
     }
 
-    // 3. Mute guards — the global mute exempts OPs (§1.4 line 60) while a
-    //    personal mute applies to everyone. Order between the two is fixed.
+    // §1.4 steps 3–4. Mute guards — the global mute exempts OPs (§1.4 line 60)
+    //    while a personal mute applies to everyone. Order between them is fixed.
     let is_op = condition::is_op(player);
     {
         let session = SessionPlayers::global();
@@ -251,7 +281,7 @@ fn chat_pipeline(
 
     let player_key = name.to_ascii_lowercase();
 
-    // 4. Anti-repeat (§1.4 step 5, algorithm §5). OP and `trchat.bypass.repeat`
+    // §1.4 step 5. Anti-repeat (algorithm §5). OP and `trchat.bypass.repeat`
     //    are exempt. `antiRepeatSimilarity: 0` *disables* the guard, whereas
     //    `antiRepeatMaxPerPeriod: 0` blocks the very first similar message.
     if !is_op && !player.has_permission("trchat.bypass.repeat") {
@@ -278,18 +308,18 @@ fn chat_pipeline(
                     state
                         .recent
                         .iter()
-                        .any(|m| similarity_score(&m.text, message) >= similarity)
+                        .any(|m| similarity_score(&m.text, &body) >= similarity)
                 } else {
                     state
                         .last_message
                         .as_deref()
-                        .is_some_and(|last| similarity_score(last, message) >= similarity)
+                        .is_some_and(|last| similarity_score(last, &body) >= similarity)
                 };
                 if too_similar {
                     // Only similar messages join the period list, and the limit
                     // is inclusive: `0` allows none, so the first is blocked.
                     state.recent.push_back(RecentMessage {
-                        text: message.to_string(),
+                        text: body.to_string(),
                         at: now,
                     });
                     state.recent.len() > max_per_period
@@ -303,20 +333,19 @@ fn chat_pipeline(
         }
     }
 
-    // 5. Anti-duplicate phrase (§1.4 step 6, §5 `maxConsecutiveRepeat`). OP does
-    //    *not* bypass this one — only `trchat.bypass.duplicate` does — and a
-    //    `maxRepeat` of 0 disables it.
+    // §1.4 step 6. Anti-duplicate phrase (algorithm §5 `maxConsecutiveRepeat`).
+    //    OP does *not* bypass this one — only `trchat.bypass.duplicate` does —
+    //    and a `maxRepeat` of 0 disables it.
     let max_repeat = config.anti_duplicate_phrase_max_repeat() as usize;
     if max_repeat > 0 && !player.has_permission("trchat.bypass.duplicate") {
-        let repeats = max_consecutive_repeat(message, config.anti_duplicate_phrase_whitelist());
+        let repeats = max_consecutive_repeat(&body, config.anti_duplicate_phrase_whitelist());
         if repeats > max_repeat {
             return reject_with(player, &locale, "General-Too-Duplicate", &[]);
         }
     }
 
-    // 6. Cooldown (§1.4 step 7) — measured from the last message that passed
-    //    every guard, so a failed guard never refreshes the timestamp. OP is
-    //    exempt.
+    // §1.4 step 7. Cooldown — measured from the last message that passed every
+    //    guard, so a failed guard never refreshes the timestamp. OP is exempt.
     if !is_op {
         let cooldown = config.cooldown_millis().max(0) as u128;
         let remaining = {
@@ -333,7 +362,7 @@ fn chat_pipeline(
         }
     }
 
-    // 7. Anti-high-frequency (§1.4 step 8). OP and `trchat.bypass.highfrequency`
+    // §1.4 step 8. Anti-high-frequency. OP and `trchat.bypass.highfrequency`
     //    are exempt; a `max` of 0 disables the guard.
     if !is_op && !player.has_permission("trchat.bypass.highfrequency") {
         let max_per_period = config.anti_high_frequency_max_per_period() as usize;
@@ -358,10 +387,13 @@ fn chat_pipeline(
         }
     }
 
-    // 6. Filtering — the `filter.yml` profile first (local words, ignored
-    //    punctuation, white list; the Mod's `FilterService`), then the
-    //    `settings.yml` blocked-words guard (the Mod's `MessageGuard`).
-    let message = {
+    // §1.4 step 9. Filtering — the `filter.yml` profile first (local words,
+    //    ignored punctuation, white list; the Mod's `FilterService`), then the
+    //    `settings.yml` blocked-words guard (the Mod's `MessageGuard`). The
+    //    result replaces `body`: everything downstream (functions, rendering,
+    //    stored state) sees the filtered text, while the guards above ran on
+    //    the pre-filter text, as the Mod does.
+    let body = {
         let f = config.filter_config();
         let sensitive = TextFilter::new(
             &f.local_words,
@@ -370,22 +402,21 @@ fn chat_pipeline(
             f.replacement,
         );
         let text = if f.chat_enabled && sensitive.is_active() {
-            sensitive.filter(message)
+            sensitive.filter(&body)
         } else {
-            message.to_string()
+            body.clone()
         };
         MessageGuard::new(config.blocked_words(), config.filter_replacement()).filter(&text)
     };
 
     // Every guard has now passed, so the per-player state is written here
-    // (§1.4 `:747`). The stored text is the *filtered* one, while the
-    // anti-repeat comparison above ran on the pre-filter text (§1.4 note).
+    // (§1.4 `:747`). The stored text is the *filtered* one.
     {
         let now = Instant::now();
         let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
         let state = guard.entry(player_key.clone()).or_default();
         state.last_sent_at = Some(now);
-        state.last_message = Some(message.clone());
+        state.last_message = Some(body.clone());
         // The high-frequency window counts accepted messages only. Trim here as
         // well so a long-idle player's list cannot grow without bound.
         let period = period_or_default(config.anti_high_frequency_period_millis());
@@ -399,23 +430,7 @@ fn chat_pipeline(
         state.sends.push_back(now);
     }
 
-    // 7. Channel routing (longest prefix wins) + speak check (`Speak-Condition`
-    //    when set, otherwise `Join-Permission`).
-    let route = config.route(&message);
-    let (channel, body) = match route {
-        Route::Channel(channel, body) => (Some(channel), body),
-        Route::Plain(body) => (None, body),
-    };
-
-    if let Some(channel) = channel {
-        // §3 `canSpeak`: a non-empty `Speak-Condition` replaces the
-        // `Join-Permission` check (config.md §5 note 5).
-        if !condition::can_speak(channel.speak_condition(), channel.permission(), player) {
-            return reject_with(player, &locale, "Channel-No-Speak-Permission", &[]);
-        }
-    }
-
-    // 8. Chat functions (§1.3 step 6) — `Mention` / `Mention-All` scanning,
+    // 8. Chat functions (§1.3 step 3) — `Mention` / `Mention-All` scanning,
     //    permission + cooldown gating, and span rendering. Runs after the
     //    speak-permission check and before any receiver sees the message; it
     //    also strips legacy codes, so a `None` outcome keeps the plain
