@@ -222,6 +222,8 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         "yaw" => format_number(player.get_yaw() as f64),
         "pitch" => format_number(player.get_pitch() as f64),
         "direction" => cardinal_direction(player.get_yaw()),
+        // §1.7 `directionXz` — the facing as a world axis ("+Z" is south).
+        "direction_xz" => direction_xz(player.get_yaw()),
         // §1.6 biome (spec line 131) — the WIT `biome` enum names the biome in
         // kebab-case (`dark-forest`); the Mod reports `minecraft:dark_forest`
         // and its capitalized form.
@@ -260,6 +262,8 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
 
         // Session / connection.
         "ping" => player.get_ping().to_string(),
+        // §1.7 `coloredPing` — the same number, prefixed by a colour code.
+        "colored_ping" => colored_ping(player.get_ping()),
 
         // §1.6 items (spec lines 151–153). `main_hand` is the WIT `right` hand;
         // the sandbox exposes no damage value, so `_data`/`_durability` keep the
@@ -763,6 +767,36 @@ fn colored_tps(tps: f64) -> String {
     format!("{code}{}", format_tps(tps))
 }
 
+/// §1.7 `coloredPing` (`>100` → `&c`, `>50` → `&e`, otherwise `&a`) followed by
+/// the ping in milliseconds.
+fn colored_ping(ping: u32) -> String {
+    let code = if ping > 100 {
+        "&c"
+    } else if ping > 50 {
+        "&e"
+    } else {
+        "&a"
+    };
+    format!("{code}{ping}")
+}
+
+/// §1.7 `directionXz` — the horizontal facing as a world axis, from the
+/// normalized yaw: `<=45` or `>=315` → `+Z` (south), `<=135` → `-X` (west),
+/// `<=225` → `-Z` (north), otherwise `+X` (east).
+fn direction_xz(yaw: f32) -> String {
+    let normalized = ((yaw % 360.0) + 360.0) % 360.0;
+    let axis = if normalized <= 45.0 || normalized >= 315.0 {
+        "+Z"
+    } else if normalized <= 135.0 {
+        "-X"
+    } else if normalized <= 225.0 {
+        "-Z"
+    } else {
+        "+X"
+    };
+    axis.to_string()
+}
+
 /// 8-way yaw → abbreviated cardinal direction (`player_direction`, §1.7).
 ///
 /// Upstream indexes `{"S","SW","W","NW","N","NE","E","SE"}` with
@@ -845,6 +879,37 @@ mod tests {
         // Out-of-range yaw wraps into the same 8 sectors.
         assert_eq!(cardinal_direction(450.0), "W");
         assert_eq!(cardinal_direction(-90.0), "E");
+    }
+
+    /// §1.7 `directionXz` — 90°-ish quadrants around the four axes; the
+    /// boundaries belong to the lower branch (`<=45` includes 45).
+    #[test]
+    fn direction_xz_maps_yaw_to_an_axis() {
+        assert_eq!(direction_xz(0.0), "+Z"); // south
+        assert_eq!(direction_xz(45.0), "+Z");
+        assert_eq!(direction_xz(46.0), "-X");
+        assert_eq!(direction_xz(90.0), "-X"); // west
+        assert_eq!(direction_xz(135.0), "-X");
+        assert_eq!(direction_xz(136.0), "-Z");
+        assert_eq!(direction_xz(180.0), "-Z"); // north
+        assert_eq!(direction_xz(225.0), "-Z");
+        assert_eq!(direction_xz(226.0), "+X");
+        assert_eq!(direction_xz(270.0), "+X"); // east
+        assert_eq!(direction_xz(315.0), "+Z");
+        // Normalization: negative and >360 yaw land in the same quadrants.
+        assert_eq!(direction_xz(-90.0), "+X");
+        assert_eq!(direction_xz(450.0), "-X");
+    }
+
+    /// §1.7 `coloredPing` — `&c` above 100 ms, `&e` above 50 ms, else `&a`, with
+    /// the raw number appended. The thresholds are exclusive.
+    #[test]
+    fn colored_ping_prefixes_by_threshold() {
+        assert_eq!(colored_ping(0), "&a0");
+        assert_eq!(colored_ping(50), "&a50");
+        assert_eq!(colored_ping(51), "&e51");
+        assert_eq!(colored_ping(100), "&e100");
+        assert_eq!(colored_ping(101), "&c101");
     }
 
     #[test]
