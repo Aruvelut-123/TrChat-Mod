@@ -19,3 +19,17 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # `pumpkin/` exists only on `pumpkin-experimental` (it is not part of the
+  # Gradle/Stonecutter build on `v2`), so this entry tracks that branch.
+  # `pumpkin-plugin-api` is pinned to a git tag and therefore not updatable
+  # here; Dependabot covers the crates.io dependencies of the crate.
+  - package-ecosystem: "cargo"
+    directory: "/pumpkin"
+    target-branch: "pumpkin-experimental"
+    schedule:
+      interval: "weekly"
+    groups:
+      crates:
+        patterns:
+          - "*"
