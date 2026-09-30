@@ -1,14 +1,17 @@
-//! Private messages (§1.6) — `/trreply` target tracking and private-message
-//! spy.
+//! Private messages (§1.6) — `/trreply` target tracking, the two audience views
+//! `/msg` delivers, and the private-message spy.
 //!
-//! `/msg` itself already renders and delivers through its command handler; the
-//! pieces that live here are the `sendPrivate` *side effects*: remembering the
-//! correspondent for `/trreply`, and echoing the conversation to spies.
+//! `sendPrivate` renders the message twice against the `Private` channel: the
+//! `Audience.Sender` tier for the sender and `Audience.Receiver` for the target,
+//! both with the sender as the placeholder *subject* and the target name in the
+//! `trchat_toplayer` local key (`ChatService.java:174-185`). The side effects
+//! that live here are correspondent tracking and the spy echo.
 
 use pumpkin_plugin_api::player::Player;
 use pumpkin_plugin_api::text::TextComponent;
 use pumpkin_plugin_api::Server;
 
+use crate::config::Audience;
 use crate::lang;
 use crate::playerdata::SessionPlayers;
 
@@ -82,13 +85,45 @@ pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str)
         session.is_shadow_muted(&sender_name)
     };
 
-    let (sender_tpl, receiver_tpl) = {
+    // §3 — the two views of one private message. Both are evaluated for the
+    // *sender* as subject: `Audience.Sender` for the sender's own copy and
+    // `Audience.Receiver` for the target's, with `trchat_toplayer` filled with
+    // the exact target name. The flattened templates are only the fallback for a
+    // missing `Private` channel or a tier that yields no match
+    // (`ChatService.java:174-185`, `ChannelRenderer.java:96-99`).
+    let (sender_view, receiver_view, sender_tpl, receiver_tpl) = {
         let config = crate::config::global_config();
         let config = config.read();
-        (config.msg.sender.clone(), config.msg.receiver.clone())
+        let channel = config.private_channel();
+        let local = [("trchat_toplayer", target_name.as_str())];
+        (
+            crate::chat::render_audience_view(
+                channel,
+                Audience::Sender,
+                sender,
+                server,
+                &config,
+                message,
+                &local,
+            ),
+            crate::chat::render_audience_view(
+                channel,
+                Audience::Receiver,
+                sender,
+                server,
+                &config,
+                message,
+                &local,
+            ),
+            config.msg.sender.clone(),
+            config.msg.receiver.clone(),
+        )
     };
 
-    if !sender_tpl.is_empty() {
+    // The sender's copy: their audience view, else the flattened template.
+    if let Some(component) = sender_view {
+        sender.send_system_message(component, false);
+    } else if !sender_tpl.is_empty() {
         let text = render_msg(&sender_tpl, &sender_name, &target_name, message);
         let component = TextComponent::from_legacy_string_with_code(&text, '&');
         sender.send_system_message(component, false);
@@ -103,8 +138,12 @@ pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str)
         return true;
     }
 
-    if !receiver_tpl.is_empty() {
-        let text = render_msg(&receiver_tpl, &target_name, &sender_name, message);
+    // The target's copy: the `Receiver` view, whose subject is still the sender,
+    // so both sides read "sender ➥ target".
+    if let Some(component) = receiver_view {
+        target.send_system_message(component, false);
+    } else if !receiver_tpl.is_empty() {
+        let text = render_msg(&receiver_tpl, &sender_name, &target_name, message);
         let component = TextComponent::from_legacy_string_with_code(&text, '&');
         target.send_system_message(component, false);
     }
@@ -121,7 +160,11 @@ pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str)
     true
 }
 
-/// Renders a `/msg` template (`{player}`, `{target}`, `{message}`).
+/// Renders the **fallback** private-message template (`{player}`, `{target}`,
+/// `{message}`) — the flattened `Private` templates derived at config load.
+///
+/// Only used when the `Private` channel is missing or none of its `Sender` /
+/// `Receiver` tiers passes, in which case the audience renderer returns `None`.
 fn render_msg(template: &str, from: &str, to: &str, text: &str) -> String {
     template
         .replace("{player}", from)
@@ -250,8 +293,11 @@ mod tests {
         assert!(!toggle_spy("Nobody"));
     }
 
-    /// The `/msg` template names differ between the two directions: the sender
-    /// sees the target, the receiver sees the sender.
+    /// The fallback renderer walks the three placeholders in one literal pass.
+    ///
+    /// Both copies pass `(sender, target)`: the Mod renders a private message
+    /// with the sender as subject for *both* sides, so the two copies differ by
+    /// the template (`Sender` / `Receiver` tier), not by swapped arguments.
     #[test]
     fn render_msg_fills_all_three_placeholders() {
         let tpl = "&6{player} &7-> &3{target}&f: &7{message}";
@@ -260,10 +306,11 @@ mod tests {
             render_msg(tpl, "Alice", "Bob", "hi"),
             "&6Alice &7-> &3Bob&f: &7hi"
         );
-        // Receiver's copy (player/target swapped).
+        // Receiver's copy: same arguments, the `Receiver` template instead.
+        let receiver_tpl = "&6{player} &7<- &3{target}&f: &7{message}";
         assert_eq!(
-            render_msg(tpl, "Bob", "Alice", "hi"),
-            "&6Bob &7-> &3Alice&f: &7hi"
+            render_msg(receiver_tpl, "Alice", "Bob", "hi"),
+            "&6Alice &7<- &3Bob&f: &7hi"
         );
     }
 }

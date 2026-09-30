@@ -504,7 +504,7 @@ fn chat_pipeline(
             config,
         ),
         (None, Some(ch)) => {
-            let body = wrap_special_characters(ch, player, &body);
+            let body = wrap_special_characters(ch, Audience::Chat, player, &body);
             render_template(
                 &template,
                 &name,
@@ -541,6 +541,11 @@ fn chat_pipeline(
 
     // The receiver-specific component: the template rendered around the
     // processed body, plus the selected tier's prefix events and `msg.hover`.
+    //
+    // `viewer` only feeds the body's mention/item components; the prefix parts,
+    // their conditions and `msg.hover` are resolved against the **sender**, the
+    // subject of the render (`ChannelRenderer.java:86-95` — the Mod passes
+    // `sender` as subject and the receiver as viewer).
     let build_component = |viewer: &pumpkin_plugin_api::player::Player| {
         let component = match &outcome {
             Some(out) => functions::build_body_component(
@@ -551,14 +556,13 @@ fn chat_pipeline(
         let component = apply_prefix_events(
             component,
             channel,
-            &name,
-            &world,
-            server_name,
-            viewer,
+            Audience::Chat,
+            player,
             server,
             config,
+            &[],
         );
-        apply_msg_hover(component, channel, viewer, server, config)
+        apply_msg_hover(component, channel, Audience::Chat, player, server, config)
     };
 
     // §1.3 step 6 — a shadow-muted sender sees their own message and nothing
@@ -928,15 +932,24 @@ fn render_template(
 /// body template is built by [`crate::config::layer_body_template_with_colour`]
 /// and therefore carries no prefix. Flattening the prefix into the body as well
 /// would render it twice.
+///
+/// `local` carries the `%…%` context keys the parts may use — the private path
+/// passes `trchat_toplayer` (`ChatService.java:170`), the same key the Mod's
+/// `local` map holds.
+///
+/// Everything is resolved against `subject`, never the viewer: the Mod calls
+/// `placeholders.resolve(part.text(), subject, viewer, local)` and its token
+/// dispatch reads `player_*` from the **subject**
+/// (`PlaceholderResolver.java:101-112`). A viewer-dependent prefix would show
+/// every receiver their own name.
 fn apply_prefix_events(
     body: TextComponent,
     channel: Option<&ChannelConfig>,
-    name: &str,
-    world: &str,
-    server_name: &str,
-    player: &pumpkin_plugin_api::player::Player,
+    audience: Audience,
+    subject: &Player,
     server: &Server,
     config: &crate::config::TrChatConfig,
+    local: &[(&str, &str)],
 ) -> TextComponent {
     let Some(ch) = channel else {
         return body;
@@ -944,30 +957,34 @@ fn apply_prefix_events(
     // §3 step 3 — prefix groups keep YAML order; within the selected tier each
     // part's own `condition` is evaluated for the sender, so a conditional part
     // (e.g. the OP badge) now renders exactly when it applies.
-    let Some(layer) = select_format_layer(ch, player) else {
+    let Some(layer) = select_audience_layer(ch, audience, subject) else {
         return body;
     };
     let parts: Vec<&crate::config::PrefixPart> = layer
         .prefix
         .iter()
-        .filter(|part| condition::test(&part.condition, player))
+        .filter(|part| condition::test(&part.condition, subject))
         .collect();
     if parts.is_empty() {
         return body;
     }
+    let name = subject.get_name();
+    let world = subject.get_world().get_name();
+    let server_name = config.server_name();
     // The message text itself is already inside `body`; component children
     // append *after* the parent text, so the parts are rendered by prefixing
     // them onto a fresh root whose styles match the flattened template.
     let mut parts_component: Option<TextComponent> = None;
     for part in &parts {
-        let raw = placeholder::resolve(&part.text, player, server, config)
-            .replace("{player}", name)
+        let raw = placeholder::resolve_with_local(&part.text, subject, server, config, local)
+            .replace("{player}", &name)
             .replace("{channel}", &ch.id)
             .replace("{server}", server_name)
-            .replace("{world}", world);
+            .replace("{world}", &world);
         let mut c = TextComponent::from_legacy_string_with_code(&raw, '&');
         if !part.hover.is_empty() {
-            let hover = placeholder::resolve(&part.hover, player, server, config);
+            let hover =
+                placeholder::resolve_with_local(&part.hover, subject, server, config, local);
             c = c.hover_show_text(TextComponent::from_legacy_string_with_code(&hover, '&'));
         }
         if !part.insertion.is_empty() {
@@ -998,8 +1015,13 @@ fn apply_prefix_events(
 /// restored after each glyph run. `special-chars.yml` is loaded process-wide
 /// by [`crate::special::reload`]; an empty table or an empty color leaves the
 /// body untouched.
-fn wrap_special_characters(ch: &ChannelConfig, player: &Player, body: &str) -> String {
-    let Some(layer) = select_format_layer(ch, player) else {
+fn wrap_special_characters(
+    ch: &ChannelConfig,
+    audience: Audience,
+    player: &Player,
+    body: &str,
+) -> String {
+    let Some(layer) = select_audience_layer(ch, audience, player) else {
         return body.to_string();
     };
     if layer.special_char_color.is_empty() || !special::has_special_chars(body) {
@@ -1014,8 +1036,10 @@ fn wrap_special_characters(ch: &ChannelConfig, player: &Player, body: &str) -> S
 ///
 /// The stored colour only takes effect when the sender is an operator or holds
 /// the matching `trchat.color.<code>` node, mirroring `ChatService.java:637-643`
-/// which writes `trchat_message_color` under that same condition.
-fn sender_chat_color(player: &Player) -> String {
+/// which writes `trchat_message_color` under that same condition. The private
+/// path reuses it: `messageContext` fills that key once and both views of a
+/// private message share it (`ChatService.java:169-185`).
+pub(crate) fn sender_chat_color(player: &Player) -> String {
     let colour = {
         let session = SessionPlayers::global();
         let session = session.read().unwrap_or_else(|e| e.into_inner());
@@ -1055,17 +1079,83 @@ fn select_format_layer<'a>(ch: &'a ChannelConfig, player: &Player) -> Option<&'a
     select_audience_layer(ch, Audience::Chat, player)
 }
 
+/// §3 — renders one `audience` view of a message into a component: the tier's
+/// component parts (their `condition`, hover, click, insertion and font), then
+/// the body coloured by `msg.default-color` (or the sender's chat colour), with
+/// `msg.hover` on the whole message.
+///
+/// `subject` is the player the formats are evaluated for and the one `%player_*%`
+/// resolves against — the Mod passes the **sender** as subject for *both* sides
+/// of a private message (`ChatService.java:174-185`), with the recipient only as
+/// the viewer, and its token dispatch reads the subject
+/// (`PlaceholderResolver.java:101`). `local` carries the `%…%` context keys; the
+/// `trchat_toplayer` entry (the exact target name) also fills `{target}`.
+///
+/// `None` means the channel is absent or none of its tiers passed, which is the
+/// upstream `format == null` case — the caller then falls back to the flattened
+/// template (`ChannelRenderer.java:96-99`).
+pub(crate) fn render_audience_view(
+    channel: Option<&ChannelConfig>,
+    audience: Audience,
+    subject: &Player,
+    server: &Server,
+    config: &TrChatConfig,
+    body: &str,
+    local: &[(&str, &str)],
+) -> Option<TextComponent> {
+    let ch = channel?;
+    let layer = select_audience_layer(ch, audience, subject)?;
+    let name = subject.get_name();
+    let world = subject.get_world().get_name();
+    let server_name = config.server_name();
+    // `messageContext` fills `trchat_message_color` once and both views of a
+    // private message share it (`ChatService.java:169-185`).
+    let colour = sender_chat_color(subject);
+    // The prefix is *not* part of this template: `apply_prefix_events` builds it
+    // from the tier's parts, which is what keeps their events and conditions.
+    let template = crate::config::layer_body_template_with_colour(layer, &colour);
+    let text = render_template(
+        &template,
+        &name,
+        body,
+        &ch.id,
+        server_name,
+        &world,
+        local_target(local),
+        subject,
+        server,
+        config,
+    );
+    let component = TextComponent::from_legacy_string_with_code(&text, '&');
+    let component =
+        apply_prefix_events(component, channel, audience, subject, server, config, local);
+    Some(apply_msg_hover(
+        component, channel, audience, subject, server, config,
+    ))
+}
+
+/// The `trchat_toplayer` value of a `local` context — the exact target name of a
+/// private message (`ChatService.java:170`) — or `""` when absent.
+pub(crate) fn local_target<'a>(local: &[(&'a str, &'a str)]) -> &'a str {
+    local
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("trchat_toplayer"))
+        .map(|(_, value)| *value)
+        .unwrap_or("")
+}
+
 /// §3 step 4 — a non-empty `msg.hover` puts `HoverEvent.ShowText` on the message
 /// body. This renderer produces a single component for the whole line, so the
 /// hover lands on that component; an empty value leaves it untouched.
 fn apply_msg_hover(
     component: TextComponent,
     channel: Option<&ChannelConfig>,
+    audience: Audience,
     player: &Player,
     server: &Server,
     config: &TrChatConfig,
 ) -> TextComponent {
-    let Some(layer) = channel.and_then(|ch| select_format_layer(ch, player)) else {
+    let Some(layer) = channel.and_then(|ch| select_audience_layer(ch, audience, player)) else {
         return component;
     };
     if layer.msg_hover.trim().is_empty() {
@@ -1221,7 +1311,7 @@ fn levenshtein(a: &[char], b: &[char]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        assemble_console_text, chat_log_line, is_whitelisted_unit, levenshtein,
+        assemble_console_text, chat_log_line, is_whitelisted_unit, levenshtein, local_target,
         max_consecutive_repeat, normalize_for_similarity, period_or_default, similarity_score,
     };
     use crate::config::TrChatConfig;
@@ -1278,6 +1368,18 @@ mod tests {
 
         // No tier, no prefix: the bare resolved message survives.
         assert_eq!(assemble_console_text(&[], "plain"), "plain");
+    }
+
+    /// §1.6 — a private message's `{target}` comes from the `trchat_toplayer`
+    /// local key, and a context without the key leaves it empty.
+    #[test]
+    fn local_target_reads_the_toplayer_key() {
+        let local = [("message", "hi"), ("trchat_toplayer", "Bob")];
+        assert_eq!(local_target(&local), "Bob");
+        // The key is matched case-insensitively, like every other local key.
+        assert_eq!(local_target(&[("TRCHAT_TOPLAYER", "Carol")]), "Carol");
+        assert_eq!(local_target(&[("message", "hi")]), "");
+        assert_eq!(local_target(&[]), "");
     }
 
     /// Normalisation is `toLowerCase(ROOT)` plus removal of *all* whitespace.

@@ -193,18 +193,15 @@ pub struct ChannelConfig {
 /// §3 step 1 — `ChannelRenderer.Audience`: which format list a render walks.
 ///
 /// `Chat` is the public channel view; `Sender`/`Receiver` are the two
-/// private-message views of a `Private: true` channel, wired by the
-/// private-message renderer follow-up (the `/msg` path still renders the
-/// flattened `Sender`/`Receiver` templates today); `Console` is the
+/// private-message views of a `Private: true` channel, rendered by
+/// `private_msg::deliver` through `chat::render_audience_view`; `Console` is the
 /// server-console view (`ChatService.java:960-969`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Audience {
     Chat,
-    /// `/msg` sender view — selected but not yet rendered (see above).
-    #[allow(dead_code)]
+    /// `/msg` sender view (`ChatService.java:174-176`).
     Sender,
-    /// `/msg` receiver view — selected but not yet rendered (see above).
-    #[allow(dead_code)]
+    /// `/msg` receiver view (`ChatService.java:177-185`).
     Receiver,
     Console,
 }
