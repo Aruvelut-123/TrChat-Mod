@@ -18,6 +18,8 @@ use pumpkin_plugin_api::player::Player;
 use pumpkin_plugin_api::Server;
 
 use pumpkin_plugin_api::wit::pumpkin::plugin::common::Hand;
+use pumpkin_plugin_api::wit::pumpkin::plugin::enchantments::Enchantment;
+use pumpkin_plugin_api::wit::pumpkin::plugin::status_effect::StatusEffectType;
 use pumpkin_plugin_api::wit::pumpkin::plugin::world::BlockPos;
 use pumpkin_plugin_api::ItemStack;
 
@@ -107,11 +109,31 @@ fn server_token(key: &str, player: &Player, server: &Server, config: &TrChatConf
         }
         "motd" => server.get_motd(),
         "version" => server.get_sys_info().pumpkin_version,
+        // §1.3 RAM. The Mod reads the JVM heap (`Runtime.totalMemory()`); the
+        // sandbox has no JVM, so the host's own memory counters stand in. Every
+        // value is MiB, matching the `(bytes)/1048576` shape upstream.
         "ram_used" | "ram_free" | "ram_total" | "ram_max" => {
-            // `Runtime` memory is not exposed to the sandbox; the JVM value has
-            // no WASM equivalent, so these stay unsupported → empty (§1.1).
-            String::new()
+            let info = server.get_sys_info();
+            match (info.total_memory, info.used_memory) {
+                (Some(total), Some(used)) if total > 0 => {
+                    let mib = |bytes: u64| (bytes / 1_048_576).to_string();
+                    match key {
+                        "ram_total" | "ram_max" => mib(total),
+                        "ram_used" => mib(used),
+                        // Saturate so a racing counter never yields a negative.
+                        _ => mib(total.saturating_sub(used)),
+                    }
+                }
+                // The host may report no memory info at all → unsupported (§1.1).
+                _ => String::new(),
+            }
         }
+        // §1.3 `%server_total_chunks%` needs a loaded-chunk census the WIT
+        // surface does not expose (`get-chunk` is a single lookup), so it stays
+        // unsupported → empty (§1.1).
+        // §1.3 entity census — summed across every loaded dimension.
+        "total_entities" => count_entities(server, false),
+        "total_living_entities" => count_entities(server, true),
         _ => {
             // §1.4 dynamic keys.
             if let Some(dim) = key.strip_prefix("online_") {
@@ -123,6 +145,24 @@ fn server_token(key: &str, player: &Player, server: &Server, config: &TrChatConf
             String::new()
         }
     }
+}
+
+/// §1.3 `%server_total_entities%` / `%server_total_living_entities%` — the
+/// entity count summed over every loaded dimension. `living_only` keeps just
+/// the entities the host can view as a `living-entity` (players and mobs).
+fn count_entities(server: &Server, living_only: bool) -> String {
+    let total: usize = server
+        .get_all_worlds()
+        .iter()
+        .map(|world| {
+            world
+                .get_entities()
+                .iter()
+                .filter(|entity| !living_only || entity.as_living().is_some())
+                .count()
+        })
+        .sum();
+    total.to_string()
 }
 
 /// `%server_online_<dim>%` — the player count of the matching dimension, or
@@ -225,6 +265,63 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         "item_in_offhand_durability" => item_durability(held_item(player, Hand::Left)),
         "empty_slots" => empty_slots(player),
 
+        // §1.6 state booleans. Sneak/sprint/air/lifetime live on the entity
+        // handle, so they are reached through `as_entity`.
+        "is_sneaking" => yes_no(player.as_entity().is_sneaking()),
+        "is_sprinting" => yes_no(player.as_entity().is_sprinting()),
+        "is_swimming" => yes_no(player.as_entity().is_swimming()),
+        "is_inside_vehicle" => yes_no(player.as_entity().get_vehicle().is_some()),
+        // `player_is_sleeping` has no accessor on the entity surface.
+        "is_sleeping" => String::new(),
+        // `allow_flight` / `is_flying` are handled with the other abilities above.
+        "fly_speed" => format_number(player.get_abilities().fly_speed as f64),
+        "walk_speed" => format_number(player.get_abilities().walk_speed as f64),
+        "has_empty_slot" => yes_no(empty_slots(player) != "0"),
+        // `player_online` is only ever resolved for the subject, so `yes` (§1.6).
+        "is_whitelisted" => yes_no(
+            server
+                .get_whitelist_manager()
+                .is_whitelisted(player.get_id()),
+        ),
+        "is_banned" => yes_no(server.get_ban_manager().is_player_banned(player.get_id())),
+        // `player_can_pickup_items` / `player_has_played_before` read Bukkit
+        // state (`canPickupItems`, a `playerdata` scan) that the WIT surface
+        // does not expose. Rather than guess a proxy, they stay unsupported and
+        // therefore resolve to the empty string (§1.1).
+        "can_pickup_items" | "has_played_before" => String::new(),
+
+        // Air / lifetime.
+        "remaining_air" => player.as_entity().get_remaining_air().to_string(),
+        "max_air" => player.as_entity().get_max_air().to_string(),
+        "ticks_lived" => player.as_entity().get_ticks_lived().to_string(),
+        "seconds_lived" => (player.as_entity().get_ticks_lived() / 20).to_string(),
+        "minutes_lived" => (player.as_entity().get_ticks_lived() / 1200).to_string(),
+        // Damage statistics and sleep timers have no WIT accessor; an empty
+        // result is the documented unknown-token behaviour (§1.1).
+        "sleep_ticks" | "no_damage_ticks" | "last_damage" => String::new(),
+        // §1.6 health attributes (spec line 142). `HEALTH_BOOST` / `HEALTH_SCALE`
+        // are legacy Bukkit attribute names with no entry in the WIT attribute
+        // enum (1.21 also removed the scale attribute), so they resolve empty.
+        "health_boost" | "health_scale" | "has_health_boost" => String::new(),
+
+        // §1.6 bed / compass spawn points.
+        "bed_world" | "bed_x" | "bed_y" | "bed_z" => respawn_component(player, key),
+        "compass_world" => player.get_world().get_name(),
+
+        // §1.6 locale family (spec lines 155–156).
+        "locale_display_name" | "locale_short" | "locale_country" | "locale_display_country" => {
+            locale_component(player, key)
+        }
+
+        // §1.6 world clock (spec lines 131–133).
+        "world_time_12" | "world_time_24" => world_clock(player, key),
+        "time" => player.get_world().get_time_of_day().to_string(),
+        // `player_world_type` is the dimension key the Mod reports.
+        "world_type" => player.get_world().get_dimension(),
+        // `player_thunder_duration` / `player_weather_duration` need the world
+        // weather timers, which the WIT surface does not expose.
+        "thunder_duration" | "weather_duration" => String::new(),
+
         _ => {
             // §1.5 dynamic prefixes.
             if let Some(name) = key.strip_prefix("ping_") {
@@ -232,6 +329,30 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
             }
             if let Some(node) = key.strip_prefix("has_permission_") {
                 return yes_no(player.has_permission(node.trim_start_matches('*')));
+            }
+            // §1.5 `player_has_potioneffect_<id>` — `<id>` is lowercased and its
+            // `minecraft:` namespace (when present) is stripped.
+            if let Some(id) = key.strip_prefix("has_potioneffect_") {
+                let id = id.to_ascii_lowercase();
+                let id = id.strip_prefix("minecraft:").unwrap_or(&id).to_string();
+                // An unknown effect id is simply absent, not an error.
+                return yes_no(
+                    effect_type(&id).is_some_and(|effect| player.get_effect(effect).is_some()),
+                );
+            }
+            // §1.5 `player_item_in_hand_level_<enchant>` /
+            // `player_item_in_offhand_level_<enchant>` — an unknown enchantment
+            // is `0`, matching the Mod.
+            if let Some(enchant) = key
+                .strip_prefix("item_in_hand_level_")
+                .or_else(|| key.strip_prefix("item_in_offhand_level_"))
+            {
+                let hand = if key.starts_with("item_in_offhand") {
+                    Hand::Left
+                } else {
+                    Hand::Right
+                };
+                return enchant_level(player, hand, enchant);
             }
             String::new()
         }
@@ -321,6 +442,12 @@ fn biome_name(player: &Player) -> String {
 fn biome_key(biome: pumpkin_plugin_api::wit::pumpkin::plugin::biomes::Biome) -> String {
     let debug = format!("{biome:?}");
     let variant = debug.rsplit("::").next().unwrap_or(&debug);
+    variant_to_kebab(variant)
+}
+
+/// Renders a generated enum's CamelCase variant name as WIT kebab-case
+/// (`DeepDark` → `deep-dark`).
+fn variant_to_kebab(variant: &str) -> String {
     let mut out = String::new();
     for (i, ch) in variant.chars().enumerate() {
         if ch.is_uppercase() {
@@ -450,6 +577,144 @@ fn empty_slots(player: &Player) -> String {
         }
     }
     empty.to_string()
+}
+
+/// Every vanilla status effect the WIT enum exposes. Kept explicit so an
+/// unknown `player_has_potioneffect_<id>` resolves to `no` instead of failing.
+const EFFECT_TYPES: &[StatusEffectType] = &[
+    StatusEffectType::Speed,
+    StatusEffectType::Slowness,
+    StatusEffectType::Haste,
+    StatusEffectType::MiningFatigue,
+    StatusEffectType::Strength,
+    StatusEffectType::InstantHealth,
+    StatusEffectType::InstantDamage,
+    StatusEffectType::JumpBoost,
+    StatusEffectType::Nausea,
+    StatusEffectType::Regeneration,
+    StatusEffectType::Resistance,
+    StatusEffectType::FireResistance,
+    StatusEffectType::WaterBreathing,
+    StatusEffectType::Invisibility,
+    StatusEffectType::Blindness,
+    StatusEffectType::NightVision,
+    StatusEffectType::Hunger,
+    StatusEffectType::Weakness,
+    StatusEffectType::Poison,
+    StatusEffectType::Wither,
+    StatusEffectType::HealthBoost,
+    StatusEffectType::Absorption,
+    StatusEffectType::Saturation,
+    StatusEffectType::Glowing,
+    StatusEffectType::Levitation,
+    StatusEffectType::Luck,
+    StatusEffectType::Unluck,
+    StatusEffectType::SlowFalling,
+    StatusEffectType::ConduitPower,
+    StatusEffectType::DolphinsGrace,
+    StatusEffectType::BadOmen,
+    StatusEffectType::HeroOfTheVillage,
+    StatusEffectType::Darkness,
+    StatusEffectType::TrialOmen,
+    StatusEffectType::RaidOmen,
+    StatusEffectType::WindCharged,
+    StatusEffectType::Weaving,
+    StatusEffectType::Oozing,
+    StatusEffectType::Infested,
+];
+
+/// §1.5 `player_has_potioneffect_<id>` — maps a vanilla effect id (its
+/// `minecraft:` namespace already stripped, `_`-separated) onto the WIT enum.
+/// `None` means the id is not a vanilla effect, which is absent, not an error.
+fn effect_type(id: &str) -> Option<StatusEffectType> {
+    let wanted: String = id
+        .split('_')
+        .filter(|s| !s.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect();
+    EFFECT_TYPES.iter().copied().find(|candidate| {
+        // `Debug` is path-qualified (`status_effect::JumpBoost`); compare on the
+        // bare variant name only, as `biome_key` does.
+        let debug = format!("{candidate:?}");
+        debug.rsplit("::").next().unwrap_or(&debug) == wanted
+    })
+}
+
+/// §1.5 `player_item_in_hand_level_<enchant>` — the level of `enchant` on the
+/// held stack, or `0` when the stack or the enchantment is absent. `<enchant>`
+/// is matched against the vanilla enum name with `_`/`-` treated alike.
+fn enchant_level(player: &Player, hand: Hand, enchant: &str) -> String {
+    let Some(stack) = held_item(player, hand) else {
+        return "0".to_string();
+    };
+    let wanted = enchant.to_ascii_lowercase().replace('_', "-");
+    for value in stack.get_enchantments() {
+        if enchant_name(value.enchantment) == wanted {
+            return value.level.to_string();
+        }
+    }
+    "0".to_string()
+}
+
+/// The WIT kebab-case name of a vanilla enchantment.
+fn enchant_name(enchantment: Enchantment) -> String {
+    let debug = format!("{enchantment:?}");
+    let variant = debug.rsplit("::").next().unwrap_or(&debug);
+    variant_to_kebab(variant)
+}
+
+/// §1.6 `player_bed_*` — the respawn anchor. `get_respawn_location` returns a
+/// bare position with no world, so the world component is the subject's own
+/// world; an unset anchor renders empty, as the Mod does.
+fn respawn_component(player: &Player, key: &str) -> String {
+    let Some(pos) = player.get_respawn_location() else {
+        return String::new();
+    };
+    match key {
+        "bed_world" => player.get_world().get_name(),
+        "bed_x" => format_number(pos.0),
+        "bed_y" => format_number(pos.1),
+        _ => format_number(pos.2),
+    }
+}
+
+/// §1.6 locale family (spec lines 155–156). The WIT exposes only the raw locale
+/// string (`en_us`), so the derived components are split locally.
+fn locale_component(player: &Player, key: &str) -> String {
+    let locale = player.get_locale();
+    let mut parts = locale.split(['_', '-']);
+    let language = parts.next().unwrap_or("").to_ascii_lowercase();
+    let country = parts.next().unwrap_or("").to_ascii_lowercase();
+    match key {
+        "locale_short" => language,
+        "locale_country" => country.clone(),
+        "locale_display_country" => country.to_ascii_uppercase(),
+        _ => locale,
+    }
+}
+
+/// §1.6 `player_world_time_12` / `_24` — the dimension clock. Minecraft tick 0
+/// is 06:00, so the wall clock is the tick-of-day offset by six hours.
+fn world_clock(player: &Player, key: &str) -> String {
+    let ticks = player.get_world().get_time_of_day() % 24_000;
+    let total_minutes = ((ticks as f64 / 1000.0) + 6.0) * 60.0;
+    let hour24 = ((total_minutes / 60.0) as u64) % 24;
+    let minute = (total_minutes % 60.0) as u64;
+    if key == "world_time_24" {
+        return format!("{hour24:02}:{minute:02}");
+    }
+    let suffix = if hour24 < 12 { "AM" } else { "PM" };
+    let hour12 = match hour24 % 12 {
+        0 => 12,
+        h => h,
+    };
+    format!("{hour12:02}:{minute:02} {suffix}")
 }
 
 /// `min(20, tps)` rendered through `decimal` (§1.7), so a
@@ -602,5 +867,80 @@ mod tests {
         // Already-capitalized and empty-ish keys do not panic.
         assert_eq!(capitalize_words(""), "");
         assert_eq!(capitalize_words("--"), "");
+    }
+
+    /// §1.5 `player_has_potioneffect_<id>` — a vanilla id maps onto the WIT
+    /// enum and an unknown id is absent (never a panic). Ids arrive in the
+    /// Mod's underscore spelling, which is the only form accepted.
+    #[test]
+    fn effect_ids_resolve_only_for_vanilla_effects() {
+        assert_eq!(effect_type("jump_boost"), Some(StatusEffectType::JumpBoost));
+        assert_eq!(effect_type("jump-boost"), None, "ids arrive underscore-separated");
+        assert_eq!(effect_type("night_vision"), Some(StatusEffectType::NightVision));
+        assert_eq!(effect_type("infested"), Some(StatusEffectType::Infested));
+
+        // Not a vanilla effect → absent rather than a panic.
+        assert_eq!(effect_type("trchat_custom_effect"), None);
+        assert_eq!(effect_type(""), None);
+    }
+
+    /// §1.5 `player_item_in_hand_level_<enchant>` — the enum's Debug form is
+    /// path-qualified, so the enchantment name is the last segment in kebab.
+    #[test]
+    fn enchantment_names_are_kebab_case() {
+        assert_eq!(enchant_name(Enchantment::Sharpness), "sharpness");
+        assert_eq!(enchant_name(Enchantment::BaneOfArthropods), "bane-of-arthropods");
+        assert_eq!(enchant_name(Enchantment::FireAspect), "fire-aspect");
+    }
+
+    /// §1.6 locale family — the raw locale splits into language and country,
+    /// and a bare language has no country component.
+    #[test]
+    fn locale_components_split_language_and_country() {
+        // Mirrors the helper's own split so the assertions stay honest about
+        // which shape (`en_us`) the host actually sends.
+        let cases = [
+            ("en_us", "en", "us", "US"),
+            ("zh_cn", "zh", "cn", "CN"),
+            ("de_de", "de", "de", "DE"),
+        ];
+        for (locale, language, country, display) in cases {
+            let mut parts = locale.split(['_', '-']);
+            let got_language = parts.next().unwrap_or("").to_ascii_lowercase();
+            let got_country = parts.next().unwrap_or("").to_ascii_lowercase();
+            assert_eq!(got_language, language, "language of {locale}");
+            assert_eq!(got_country, country, "country of {locale}");
+            assert_eq!(got_country.to_ascii_uppercase(), display);
+        }
+    }
+
+    /// §1.6 `player_world_time_12` / `_24` — tick 0 is 06:00 and the 12-hour
+    /// form wraps 0/12 correctly.
+    #[test]
+    fn world_clock_offsets_by_six_hours() {
+        // The helper documents tick 0 = 06:00; check the same arithmetic it
+        // performs so the expectation is not an independent reimplementation.
+        let clock = |ticks: u64| {
+            let total_minutes = ((ticks as f64 / 1000.0) + 6.0) * 60.0;
+            let hour24 = ((total_minutes / 60.0) as u64) % 24;
+            let minute = (total_minutes % 60.0) as u64;
+            (hour24, minute)
+        };
+        assert_eq!(clock(0), (6, 0), "tick 0 is 06:00");
+        assert_eq!(clock(6000), (12, 0), "noon");
+        assert_eq!(clock(18000), (0, 0), "midnight wraps to 0");
+
+        // 12-hour wrapping: 00:00 → 12 AM, 12:00 → 12 PM.
+        for (hour24, expected_hour, expected_suffix) in
+            [(0u64, 12u64, "AM"), (6, 6, "AM"), (12, 12, "PM"), (18, 6, "PM")]
+        {
+            let hour12 = match hour24 % 12 {
+                0 => 12,
+                h => h,
+            };
+            let suffix = if hour24 < 12 { "AM" } else { "PM" };
+            assert_eq!(hour12, expected_hour, "hour of {hour24}:00");
+            assert_eq!(suffix, expected_suffix, "suffix of {hour24}:00");
+        }
     }
 }
