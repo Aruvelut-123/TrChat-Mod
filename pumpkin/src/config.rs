@@ -713,8 +713,15 @@ pub fn load_from_folder(folder: &str) -> Result<TrChatConfig, String> {
             .rsplit_once('.')
             .map(|(stem, _)| stem.to_string())
             .unwrap_or_else(|| file.clone());
-        if id.eq_ignore_ascii_case("Example") || id.eq_ignore_ascii_case("Schema") {
-            continue; // reference files — never registered as channels
+        // §2.5 line 158: the scan skips `Example.yml` and the legacy
+        // `Server.yml`, as well as `Schema.yml` (shipped for reference).
+        // Registering `Server.yml` would otherwise create a bogus `server`
+        // channel.
+        if id.eq_ignore_ascii_case("Example")
+            || id.eq_ignore_ascii_case("Schema")
+            || id.eq_ignore_ascii_case("Server")
+        {
+            continue; // reference / legacy files — never registered as channels
         }
         let content =
             fs::read_to_string(entry.path()).map_err(|e| format!("read channels/{file}: {e}"))?;
@@ -722,6 +729,7 @@ pub fn load_from_folder(folder: &str) -> Result<TrChatConfig, String> {
     }
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     let channels = parse_channels(&entries);
+    validate_channels(&channels)?;
     let msg = private_formats(&channels);
 
     // datasource.yml / function.yml — parsed for future wiring (state store,
@@ -1267,6 +1275,42 @@ fn parse_function(v: &serde_yaml::Value) -> FunctionConfig {
         general: general_functions,
         custom,
     }
+}
+
+/// §2.5 — the two channel-set invariants the Mod enforces at reload time:
+/// a `normal` channel must exist, and exactly one channel may carry
+/// `Auto-Join: true` unless there are none, and that one may not be private.
+/// A violation aborts the whole reload (the Mod returns -1) rather than
+/// silently dropping a channel.
+fn validate_channels(channels: &[ChannelConfig]) -> Result<(), String> {
+    // §2.5 line 159: `normal` is required, compared case-insensitively because
+    // ids are lower-cased in the Mod's map.
+    let has_normal = channels
+        .iter()
+        .any(|c| c.id.eq_ignore_ascii_case("normal"));
+    if !has_normal {
+        return Err("channels: no 'normal' channel found".to_string());
+    }
+
+    let auto_join: Vec<&ChannelConfig> =
+        channels.iter().filter(|c| c.options.auto_join).collect();
+    if auto_join.len() > 1 {
+        let ids: Vec<&str> = auto_join.iter().map(|c| c.id.as_str()).collect();
+        return Err(format!(
+            "channels: more than one Auto-Join channel: {}",
+            ids.join(", ")
+        ));
+    }
+    // §2.5 line 160: the sole auto-join channel may not be a private-message one.
+    if let Some(only) = auto_join.first() {
+        if only.options.private {
+            return Err(format!(
+                "channels: Auto-Join channel '{}' must not be private",
+                only.id
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn parse_channels(files: &[(String, String)]) -> Vec<ChannelConfig> {
@@ -1939,6 +1983,101 @@ font: "minecraft:default"
         }
     }
 
+    /// §2.5 — the reload invariants. A missing `normal`, two `Auto-Join`
+    /// channels, or a private auto-join channel must each abort the load.
+    #[test]
+    fn channel_set_invariants_are_enforced() {
+        // Each case is seeded as a real channels directory and loaded, so the
+        // check runs through the same path a server would take.
+        let case = |tag: &str, normal: &str, extra: &str| {
+            let dir = temp_dir(tag);
+            let root = std::path::PathBuf::from(&dir);
+            let channels = root.join("channels");
+            fs::create_dir_all(&channels).expect("channels dir");
+            if !normal.is_empty() {
+                fs::write(channels.join("Normal.yml"), normal).expect("write Normal.yml");
+            }
+            if !extra.is_empty() {
+                fs::write(channels.join("Other.yml"), extra).expect("write Other.yml");
+            }
+            // A minimal settings.yml so the folder is otherwise loadable.
+            fs::write(root.join("settings.yml"), defaults::SETTINGS).expect("settings");
+            load_from_folder(&dir)
+        };
+
+        // A valid baseline: Normal alone satisfies both invariants.
+        let ok = case(
+            "chan_invariants_ok",
+            "Id: Normal\nOptions:\n  Auto-Join: true\n",
+            "",
+        );
+        assert!(
+            ok.is_ok(),
+            "a single non-private Auto-Join should load: {ok:?}"
+        );
+
+        // Missing `normal` → rejected.
+        let missing = case(
+            "chan_invariants_no_normal",
+            "",
+            "Id: Other\nOptions:\n  Auto-Join: true\n",
+        );
+        assert!(missing.is_err(), "a channel set without 'normal' must fail");
+
+        // Two Auto-Join channels → rejected.
+        let two = case(
+            "chan_invariants_two_autojoin",
+            "Id: Normal\nOptions:\n  Auto-Join: true\n",
+            "Id: Other\nOptions:\n  Auto-Join: true\n",
+        );
+        let two_err = two.expect_err("two Auto-Join channels must fail");
+        assert!(two_err.contains("Auto-Join"), "unexpected error: {two_err}");
+
+        // The sole Auto-Join channel being private → rejected.
+        let private = case(
+            "chan_invariants_private_autojoin",
+            "Id: Normal\n",
+            "Id: Other\nOptions:\n  Auto-Join: true\n  Private: true\n",
+        );
+        let private_err = private.expect_err("a private Auto-Join channel must fail");
+        assert!(
+            private_err.contains("private"),
+            "unexpected error: {private_err}"
+        );
+    }
+
+    /// §2.5: `channels/Server.yml` is a legacy name and `Example.yml`/`Schema.yml`
+    /// are reference files, so a directory scan must skip all three. This seeds a
+    /// real `Server.yml` (the defaults only ship Example/Schema) to prove it.
+    #[test]
+    fn legacy_and_reference_channel_files_are_skipped() {
+        let dir = temp_dir("legacy_channel_skip");
+        let root = std::path::PathBuf::from(&dir);
+        // Seed the defaults, then drop in the file the scan must ignore.
+        load_from_folder(&dir).expect("defaults must load");
+        let channels_dir = root.join("channels");
+        fs::create_dir_all(&channels_dir).expect("channels dir");
+        fs::write(channels_dir.join("Server.yml"), "Id: Server\n").expect("write Server.yml");
+
+        let config = load_from_folder(&dir).expect("reload must succeed");
+
+        // `Server` is not registered, and the real channels are all still there.
+        assert!(
+            config.channel_by_id("Server").is_none(),
+            "Server.yml must not become a channel"
+        );
+        assert!(
+            config.channel_by_id("Example").is_none(),
+            "Example.yml skipped"
+        );
+        assert!(
+            config.channel_by_id("Schema").is_none(),
+            "Schema.yml skipped"
+        );
+        let ids: Vec<&str> = config.channels().iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, vec!["Global", "Normal", "Private", "Staff"]);
+    }
+
     /// `load_from_folder` seeds a fresh folder and parses the Mod defaults.
     #[test]
     fn loads_bundled_defaults_with_the_mod_layout() {
@@ -1955,7 +2094,9 @@ font: "minecraft:default"
         assert_eq!(config.filter_replacement(), "*");
         assert!(config.blocked_words().is_empty());
 
-        // channels/*.yml: Normal, Global, Staff, Private; Example/Schema skipped
+        // channels/*.yml: Normal, Global, Staff, Private.
+        // §1.8: Example/Schema are reference files and Server is the legacy
+        // name, so none of the three may be registered as a channel.
         let ids: Vec<&str> = config.channels().iter().map(|c| c.id.as_str()).collect();
         assert_eq!(ids, vec!["Global", "Normal", "Private", "Staff"]);
 
