@@ -26,10 +26,10 @@
 
 use pumpkin_plugin_api::{
     command::{
-        Arg, ArgumentType, Command, CommandError, CommandNode, CommandSender, ConsumedArgs,
-        StringType,
+        Arg, ArgumentType, Command, CommandError, CommandNode, CommandSender, CommandSuggestion,
+        CommandSuggestions, ConsumedArgs, StringType, SuggestionRequest,
     },
-    commands::CommandHandler,
+    commands::{CommandHandler, CommandSuggestionHandler},
     gui::Gui,
     text::TextComponent,
     Context, ItemStack, Screen, Server,
@@ -116,8 +116,10 @@ fn channel_subtree() -> CommandNode {
     CommandNode::literal("join")
         .then(
             CommandNode::argument("channel", &ArgumentType::String(StringType::SingleWord))
+                .suggest(ChannelIds)
                 .then(
                     CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                        .suggest(PlayerNames)
                         .execute(ChannelJoinCommand),
                 )
                 .execute(ChannelJoinCommand),
@@ -126,10 +128,73 @@ fn channel_subtree() -> CommandNode {
             CommandNode::literal("quit")
                 .then(
                     CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                        .suggest(PlayerNames)
                         .execute(ChannelQuitCommand),
                 )
                 .execute(ChannelQuitCommand),
         )
+}
+
+/// §1.6 — tab-completes online player names.
+struct PlayerNames;
+
+impl CommandSuggestionHandler for PlayerNames {
+    fn suggest(
+        &self,
+        _sender: CommandSender,
+        server: Server,
+        request: SuggestionRequest,
+    ) -> CommandSuggestions {
+        suggest_matching(
+            &request,
+            server.get_all_players().iter().map(|p| p.get_name()),
+        )
+    }
+}
+
+/// §1.6 — tab-completes the id of every joinable channel, that is every channel
+/// that is not `Options.Private` (`chat.md:135`, `TRC:178-183`).
+struct ChannelIds;
+
+impl CommandSuggestionHandler for ChannelIds {
+    fn suggest(
+        &self,
+        _sender: CommandSender,
+        _server: Server,
+        request: SuggestionRequest,
+    ) -> CommandSuggestions {
+        let config = config::global_config();
+        let ids = {
+            let guard = config.read();
+            guard
+                .channels()
+                .iter()
+                .filter(|channel| !channel.options.private)
+                .map(|channel| channel.id.clone())
+                .collect::<Vec<_>>()
+        };
+        suggest_matching(&request, ids.into_iter())
+    }
+}
+
+/// Case-insensitive prefix filter shared by the suggestion handlers above.
+fn suggest_matching(
+    request: &SuggestionRequest,
+    candidates: impl Iterator<Item = String>,
+) -> CommandSuggestions {
+    let prefix = request.remaining.to_ascii_lowercase();
+    CommandSuggestions {
+        start: request.start,
+        // The whole current token is replaced, as the WIT request describes.
+        length: request.remaining.len() as u32,
+        values: candidates
+            .filter(|candidate| candidate.to_ascii_lowercase().starts_with(&prefix))
+            .map(|value| CommandSuggestion {
+                value,
+                tooltip: None,
+            })
+            .collect(),
+    }
 }
 
 /// Registers every TrChat command with the given context.
@@ -151,18 +216,21 @@ pub fn register_commands(context: &Context) {
     .then(
         CommandNode::literal("mute").then(
             CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                .suggest(PlayerNames)
                 .execute(MuteCommand),
         ),
     )
     .then(
         CommandNode::literal("unmute").then(
             CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                .suggest(PlayerNames)
                 .execute(UnmuteCommand),
         ),
     )
     .then(
         CommandNode::literal("ignore").then(
             CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                .suggest(PlayerNames)
                 .execute(IgnoreCommand),
         ),
     )
@@ -223,6 +291,7 @@ pub fn register_commands(context: &Context) {
     )
     .then(
         CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+            .suggest(PlayerNames)
             .then(
                 CommandNode::argument("state", &ArgumentType::String(StringType::SingleWord))
                     .execute(ShadowMuteCommand),
@@ -1179,8 +1248,55 @@ impl CommandHandler for UsageCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_channel_toggle, ChannelToggle};
+    use super::{apply_channel_toggle, suggest_matching, ChannelToggle};
     use crate::playerdata::PlayerState;
+    use pumpkin_plugin_api::command::SuggestionRequest;
+
+    fn request(remaining: &str) -> SuggestionRequest {
+        SuggestionRequest {
+            input: format!("/trchat channel join {remaining}"),
+            cursor: 22,
+            start: 22,
+            remaining: remaining.to_string(),
+        }
+    }
+
+    fn suggest(remaining: &str, candidates: &[&str]) -> Vec<String> {
+        suggest_matching(
+            &request(remaining),
+            candidates.iter().map(|c| c.to_string()),
+        )
+        .values
+        .into_iter()
+        .map(|s| s.value)
+        .collect()
+    }
+
+    /// §1.6 — completions are a case-insensitive prefix filter.
+    #[test]
+    fn suggestions_filter_by_prefix_ignoring_case() {
+        let candidates = ["Global", "local", "Trade"];
+        assert_eq!(suggest("", &candidates), ["Global", "local", "Trade"]);
+        assert_eq!(suggest("l", &candidates), ["local"]);
+        assert_eq!(suggest("LO", &candidates), ["local"]);
+        assert!(suggest("zzz", &candidates).is_empty());
+    }
+
+    /// The whole current token is replaced, matching the WIT request contract.
+    #[test]
+    fn suggestions_replace_the_current_token() {
+        let suggestions = suggest_matching(
+            &SuggestionRequest {
+                input: "/trchat channel join gl".to_string(),
+                cursor: 23,
+                start: 21,
+                remaining: "gl".to_string(),
+            },
+            ["global".to_string()].into_iter(),
+        );
+        assert_eq!(suggestions.start, 21);
+        assert_eq!(suggestions.length, 2);
+    }
 
     /// §2.4 — joining a channel records membership and makes it active.
     #[test]
