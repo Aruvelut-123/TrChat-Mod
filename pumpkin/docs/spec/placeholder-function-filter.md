@@ -169,7 +169,9 @@
 
 * **已原生实现**：`player_level`（经验等级）、`player_is_sleeping`（实体 pose）、`player_can_pickup_items`
   （`!spectator` 游戏模式）、`player_health_boost`（`max(0, maxHealth-20)`）、`player_health_scale`（`maxHealth`）、
-  `player_has_health_boost`（`HEALTH_BOOST` 效果）、`player_block_underneath`（脚下方块，`registryName` 大写）。
+  `player_has_health_boost`（`HEALTH_BOOST` 效果）、`player_block_underneath`（脚下方块，`registryName` 大写）、
+  `player_armor_helmet/chestplate/leggings/boots_{name,data,durability}`（按槽位访问器，`data`/`durability`
+  同手持物品恒为 `"0"`）、`player_current_exp`（`totalExperienceAtCurrentLevel` 公式，含进度条）。
 * **仍解析为空**（WIT 无对应访问器）：`player_has_played_before`、`player_first_played`/`player_last_played`
   系列（读 `playerdata` 目录时间戳）、`player_sleep_ticks`（`getSleepTimer`）、`player_no_damage_ticks`、
   `player_last_damage`、`player_thunder_duration`/`player_weather_duration`（世界天气计时器）。
