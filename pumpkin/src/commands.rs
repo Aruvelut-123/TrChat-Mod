@@ -1993,22 +1993,35 @@ impl CommandHandler for BoundAliasCommand {
             send(&sender, &message("General-Player-Only", &sender, &[]));
             return Ok(0);
         };
-        let prefixed = match crate::config::global_config()
-            .read()
-            .channel_by_id(&channel_id)
-            .and_then(|c| c.bindings.prefix.first().cloned())
-        {
-            Some(prefix) if !prefix.is_empty() => format!("{prefix}{message_body}"),
-            // No prefix configured → the alias cannot stand in for one.
-            _ => {
-                send(
-                    &sender,
-                    &message("Channel-Command-Unbound", &sender, &[&alias]),
-                );
-                return Ok(0);
-            }
+        let config = crate::config::global_config();
+        let config = config.read();
+        let Some(channel) = config.channel_by_id(&channel_id) else {
+            // §1.5 — an alias with no matching channel (e.g. after a config
+            // edit without reload) reports the unbound hint.
+            send(
+                &sender,
+                &message("Channel-Command-Unbound", &sender, &[&alias]),
+            );
+            return Ok(0);
         };
-        crate::chat::dispatch_as_chat(&server, &player, &prefixed);
+        match channel.bindings.prefix.first().cloned() {
+            // With a prefix the alias behaves exactly like typing the channel's
+            // own prefix, so the message is rewritten into that form and handed
+            // to the normal chat pipeline — guards, filtering and rendering
+            // therefore stay byte-identical to the prefixed spelling (§2.2).
+            Some(prefix) if !prefix.is_empty() => {
+                let prefixed = format!("{prefix}{message_body}");
+                drop(config);
+                crate::chat::dispatch_as_chat(&server, &player, &prefixed);
+            }
+            // No prefix configured (`Staff.yml` upstream binds only commands)
+            // → the alias itself names the channel, so deliver straight into it
+            // (§1.5 `executeBoundChannel` → `executeChannel(channel, args)`,
+            // which also involves no prefix).
+            _ => {
+                crate::chat::dispatch_to_channel(&server, &player, channel, &message_body);
+            }
+        }
         Ok(0)
     }
 }

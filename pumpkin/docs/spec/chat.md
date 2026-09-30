@@ -291,3 +291,4 @@ Redis 分支细节（第 7 步）：
 13. 忽略（ignore）在广播、Redis 接收、私聊三处都要判；`Always-Listen` 的频道退出时不清理 joined 记录。
 14. `Target` 用**平方距离**比较；`DISTANCE` 缺参数时距离为 -1 → 恒不匹配。
 15. 玩家状态（active/joined/禁言/忽略/颜色）全在 `PlayerState`，登出与关服都要持久化；跨服消息只带 UUID 与名字，忽略判定依赖远端名单快照（35s TTL）。
+16. **无 `Bindings.Prefix` 的频道**（如 `Staff.yml` 只绑 `Command`）：`/staff hello` 无法重写成带前缀消息，Pumpkin 新增 `dispatch_to_channel` 直接投递进该频道（等价上游 `executeBoundChannel` → `service.executeChannel(channel, args)`）；`/staff`（无参数）仍是切换频道。

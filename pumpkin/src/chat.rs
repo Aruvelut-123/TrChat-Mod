@@ -154,7 +154,9 @@ impl EventHandler<PlayerChatEvent> for ChatHandler {
         let config = self.config.read();
         // A disabled world must yield to vanilla chat: return *without*
         // cancelling, so the original broadcast still happens (§1.1 step 2).
-        if let ChatOutcome::DisabledWorld = chat_pipeline(&server, &event.player, &event.message, &config) {
+        if let ChatOutcome::DisabledWorld =
+            chat_pipeline(&server, &event.player, &event.message, &config, None)
+        {
             return event;
         }
 
@@ -172,10 +174,42 @@ impl EventHandler<PlayerChatEvent> for ChatHandler {
 /// Bound channel aliases (`/global hello`) use this so a body sent through an
 /// alias takes exactly the same guard → filter → route → render → broadcast
 /// path as the prefixed spelling (`!all hello`), with no duplicate logic.
+///
+/// A channel that configures no `Bindings.Prefix` (`Staff.yml` upstream) has no
+/// prefixed spelling to imitate, so the alias must name the channel directly —
+/// see [`dispatch_to_channel`].
+/// Sends `message` *as if* `player` had typed it, outside an event context.
+///
+/// Bound channel aliases (`/global hello`) use this so a body sent through an
+/// alias takes exactly the same guard → filter → route → render → broadcast
+/// path as the prefixed spelling (`!all hello`), with no duplicate logic.
+///
+/// A channel that configures no `Bindings.Prefix` (`Staff.yml` upstream) has no
+/// prefixed spelling to imitate, so the alias must name the channel directly —
+/// see [`dispatch_to_channel`].
 pub fn dispatch_as_chat(server: &Server, player: &Player, message: &str) {
     let config = crate::config::global_config();
     let config = config.read();
-    let _ = chat_pipeline(server, player, message, &config);
+    let _ = chat_pipeline(server, player, message, &config, None);
+}
+
+/// Sends `message` into `channel` regardless of any prefix.
+///
+/// `/staff hello` on a channel with an empty `Bindings.Prefix` cannot be
+/// rewritten into a prefixed message, so the alias calls this instead. Routing
+/// is skipped (the channel is already chosen) but every guard, the filter and
+/// the broadcast stay on the shared pipeline, matching upstream
+/// `executeBoundChannel` → `service.executeChannel(channel, args)` which also
+/// delivers into the bound channel with no prefix involved.
+pub fn dispatch_to_channel(
+    server: &Server,
+    player: &Player,
+    channel: &ChannelConfig,
+    message: &str,
+) -> ChatOutcome {
+    let config = crate::config::global_config();
+    let config = config.read();
+    chat_pipeline(server, player, message, &config, Some(channel))
 }
 
 /// The result of a chat-pipeline run.
@@ -199,6 +233,7 @@ fn chat_pipeline(
     player: &Player,
     raw_message: &str,
     config: &TrChatConfig,
+    forced: Option<&ChannelConfig>,
 ) -> ChatOutcome {
     let _ = server;
     let name = player.get_name();
@@ -222,10 +257,16 @@ fn chat_pipeline(
 
     // 2. Prefix routing (§1.2) — runs on the trimmed *raw* text, before any
     //    guard, so a blocked word can never change which channel is chosen.
-    let route = config.route(message);
-    let (channel, body) = match route {
-        Route::Channel(channel, body) => (Some(channel), body),
-        Route::Plain(body) => (None, body),
+    //    A forced channel (`/staff hello` through a bound alias, §1.5 of
+    //    commands spec) skips routing entirely — the alias already names the
+    //    channel, so the whole body belongs to it with no prefix to strip.
+    let (channel, body) = if let Some(forced) = forced {
+        (Some(forced), message.to_string())
+    } else {
+        match config.route(message) {
+            Route::Channel(channel, body) => (Some(channel), body),
+            Route::Plain(body) => (None, body),
+        }
     };
 
     // §1.2 step 5: an empty body after prefix stripping, or a channel flagged
