@@ -48,8 +48,17 @@ use crate::special;
 struct PlayerChatState {
     /// When the last *accepted* message was sent (cooldown source).
     last_sent_at: Option<Instant>,
-    /// Recently sent messages for the anti-repeat guard.
+    /// The anti-repeat period list (§5 `:705-711`). Only messages judged
+    /// *similar* are pushed, so with `compareAll: true` the comparison set
+    /// holds historical similar messages only (chat.md §1.4 note).
     recent: VecDeque<RecentMessage>,
+    /// Anti-high-frequency window: arrival times of *accepted* messages. The
+    /// Mod writes state only after every guard passes (chat.md §1.4), so
+    /// blocked attempts never count toward the limit.
+    sends: VecDeque<Instant>,
+    /// The last *accepted* message text, the target of a `compareAll: false`
+    /// similarity check ("只比上一条").
+    last_message: Option<String>,
 }
 
 struct RecentMessage {
@@ -202,113 +211,151 @@ fn chat_pipeline(
 
     // 1b. Disabled world — hand the message back to vanilla chat. Checked
     //     before every guard so a disabled world never sees a hint either.
-    if config.settings.chat.is_disabled_world(&player.get_world().get_name()) {
+    if config
+        .settings
+        .chat
+        .is_disabled_world(&player.get_world().get_name())
+    {
         return ChatOutcome::DisabledWorld;
     }
 
     // 2. Length guard — UTF-16 code units (Java `String.length()`), not chars.
+    //    OP does *not* bypass this one.
     let length = message.encode_utf16().count();
     let max_len = config.message_max_length().max(1) as usize;
     if length > max_len {
-        let text = lang::lang()
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .format(
-                "General-Too-Long",
-                &locale,
-                &[&length.to_string(), &max_len.to_string()],
-            );
-        let _ = player.send_system_message(
-            TextComponent::from_legacy_string_with_code(&text, '&'),
-            false,
-        );
-        return ChatOutcome::Rejected;
+        let (length, max_len) = (length.to_string(), max_len.to_string());
+        return reject_with(player, &locale, "General-Too-Long", &[&length, &max_len]);
     }
 
-    // 3. Mute guards: global mute first, then the player's own mute.
+    // 3. Mute guards — the global mute exempts OPs (§1.4 line 60) while a
+    //    personal mute applies to everyone. Order between the two is fixed.
+    let is_op = condition::is_op(player);
     {
         let session = SessionPlayers::global();
         let session = session.read().unwrap_or_else(|e| e.into_inner());
-        if session.is_global_muted() || session.is_muted(&name) {
-            let key = if session.is_global_muted() {
+        let globally_muted = session.is_global_muted() && !is_op;
+        let personally_muted = session.is_muted(&name);
+        if globally_muted || personally_muted {
+            let key = if globally_muted {
                 "General-Global-Muting"
             } else {
                 "General-Muted"
             };
+            drop(session);
             // The session store tracks no expiry/reason yet — fill the
             // upstream `{0}`/`{1}` args with placeholder values.
-            let expiry = "∞".to_string();
-            let reason = "—".to_string();
-            let text = lang::lang()
-                .read()
-                .unwrap_or_else(|e| e.into_inner())
-                .format(key, &locale, &[&expiry, &reason]);
-            let _ = player.send_system_message(
-                TextComponent::from_legacy_string_with_code(&text, '&'),
-                false,
-            );
-            return ChatOutcome::Rejected;
+            return reject_with(player, &locale, key, &["∞", "—"]);
         }
     }
 
     let player_key = name.to_ascii_lowercase();
 
-    // 4. Cooldown — measured from the last accepted message.
-    {
-        let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
-        let state = guard.entry(player_key.clone()).or_default();
-        if let Some(last) = state.last_sent_at {
-            let cooldown = config.cooldown_millis().max(0) as u128;
-            if last.elapsed().as_millis() < cooldown {
-                let text = lang::lang()
-                    .read()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .format("Cooldowns-Chat", &locale, &[&cooldown.to_string()]);
-                let _ = player.send_system_message(
-                    TextComponent::from_legacy_string_with_code(&text, '&'),
-                    false,
-                );
-                return ChatOutcome::Rejected;
+    // 4. Anti-repeat (§1.4 step 5, algorithm §5). OP and `trchat.bypass.repeat`
+    //    are exempt. `antiRepeatSimilarity: 0` *disables* the guard, whereas
+    //    `antiRepeatMaxPerPeriod: 0` blocks the very first similar message.
+    if !is_op && !player.has_permission("trchat.bypass.repeat") {
+        let similarity = config.anti_repeat_similarity().clamp(0.0, 1.0);
+        if similarity > 0.0 {
+            let max_per_period = config.anti_repeat_max_per_period() as usize;
+            let compare_all = config.anti_repeat_compare_all();
+            let period = period_or_default(config.anti_repeat_period_millis());
+            let now = Instant::now();
+            let blocked = {
+                let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
+                let state = guard.entry(player_key.clone()).or_default();
+                while state
+                    .recent
+                    .front()
+                    .is_some_and(|m| now.duration_since(m.at).as_millis() > period)
+                {
+                    state.recent.pop_front();
+                }
+                // `compareAll: false` compares only the previous accepted
+                // message; `true` compares the period list, which by
+                // construction holds historical *similar* messages only.
+                let too_similar = if compare_all {
+                    state
+                        .recent
+                        .iter()
+                        .any(|m| similarity_score(&m.text, message) >= similarity)
+                } else {
+                    state
+                        .last_message
+                        .as_deref()
+                        .is_some_and(|last| similarity_score(last, message) >= similarity)
+                };
+                if too_similar {
+                    // Only similar messages join the period list, and the limit
+                    // is inclusive: `0` allows none, so the first is blocked.
+                    state.recent.push_back(RecentMessage {
+                        text: message.to_string(),
+                        at: now,
+                    });
+                    state.recent.len() > max_per_period
+                } else {
+                    false
+                }
+            };
+            if blocked {
+                return reject_with(player, &locale, "General-Too-Similar", &[]);
             }
         }
     }
 
-    // 5. Anti-repeat — only similar messages are recorded; with
-    //    `antiRepeatMaxPerPeriod: 0` any similar message is blocked.
-    {
-        let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
-        let state = guard
-            .get_mut(&player_key)
-            .expect("state exists after cooldown");
-        let period = config.anti_repeat_period_millis().max(1) as u128;
-        let now = Instant::now();
-        while state
-            .recent
-            .front()
-            .is_some_and(|m| now.duration_since(m.at).as_millis() > period)
-        {
-            state.recent.pop_front();
+    // 5. Anti-duplicate phrase (§1.4 step 6, §5 `maxConsecutiveRepeat`). OP does
+    //    *not* bypass this one — only `trchat.bypass.duplicate` does — and a
+    //    `maxRepeat` of 0 disables it.
+    let max_repeat = config.anti_duplicate_phrase_max_repeat() as usize;
+    if max_repeat > 0 && !player.has_permission("trchat.bypass.duplicate") {
+        let repeats = max_consecutive_repeat(message, config.anti_duplicate_phrase_whitelist());
+        if repeats > max_repeat {
+            return reject_with(player, &locale, "General-Too-Duplicate", &[]);
         }
-        let similarity = config.anti_repeat_similarity().max(0.0).min(1.0);
-        let too_similar = state
-            .recent
-            .iter()
-            .any(|m| similarity_score(&m.text, message) >= similarity);
-        if too_similar {
-            let text = lang::lang()
-                .read()
-                .unwrap_or_else(|e| e.into_inner())
-                .format("General-Too-Similar", &locale, &[]);
-            let _ = player.send_system_message(
-                TextComponent::from_legacy_string_with_code(&text, '&'),
-                false,
-            );
-            return ChatOutcome::Rejected;
+    }
+
+    // 6. Cooldown (§1.4 step 7) — measured from the last message that passed
+    //    every guard, so a failed guard never refreshes the timestamp. OP is
+    //    exempt.
+    if !is_op {
+        let cooldown = config.cooldown_millis().max(0) as u128;
+        let remaining = {
+            let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
+            let state = guard.entry(player_key.clone()).or_default();
+            state.last_sent_at.and_then(|last| {
+                let elapsed = last.elapsed().as_millis();
+                (elapsed < cooldown).then_some(cooldown - elapsed)
+            })
+        };
+        if let Some(remaining) = remaining {
+            let remaining = remaining.to_string();
+            return reject_with(player, &locale, "Cooldowns-Chat", &[&remaining]);
         }
-        state.recent.push_back(RecentMessage {
-            text: message.to_string(),
-            at: now,
-        });
+    }
+
+    // 7. Anti-high-frequency (§1.4 step 8). OP and `trchat.bypass.highfrequency`
+    //    are exempt; a `max` of 0 disables the guard.
+    if !is_op && !player.has_permission("trchat.bypass.highfrequency") {
+        let max_per_period = config.anti_high_frequency_max_per_period() as usize;
+        if max_per_period > 0 {
+            let period = period_or_default(config.anti_high_frequency_period_millis());
+            let now = Instant::now();
+            let blocked = {
+                let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
+                let state = guard.entry(player_key.clone()).or_default();
+                while state
+                    .sends
+                    .front()
+                    .is_some_and(|at| now.duration_since(*at).as_millis() > period)
+                {
+                    state.sends.pop_front();
+                }
+                state.sends.len() >= max_per_period
+            };
+            if blocked {
+                return reject_with(player, &locale, "General-Too-Frequent", &[]);
+            }
+        }
     }
 
     // 6. Filtering — the `filter.yml` profile first (local words, ignored
@@ -330,6 +377,28 @@ fn chat_pipeline(
         MessageGuard::new(config.blocked_words(), config.filter_replacement()).filter(&text)
     };
 
+    // Every guard has now passed, so the per-player state is written here
+    // (§1.4 `:747`). The stored text is the *filtered* one, while the
+    // anti-repeat comparison above ran on the pre-filter text (§1.4 note).
+    {
+        let now = Instant::now();
+        let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
+        let state = guard.entry(player_key.clone()).or_default();
+        state.last_sent_at = Some(now);
+        state.last_message = Some(message.clone());
+        // The high-frequency window counts accepted messages only. Trim here as
+        // well so a long-idle player's list cannot grow without bound.
+        let period = period_or_default(config.anti_high_frequency_period_millis());
+        while state
+            .sends
+            .front()
+            .is_some_and(|at| now.duration_since(*at).as_millis() > period)
+        {
+            state.sends.pop_front();
+        }
+        state.sends.push_back(now);
+    }
+
     // 7. Channel routing (longest prefix wins) + speak check (`Speak-Condition`
     //    when set, otherwise `Join-Permission`).
     let route = config.route(&message);
@@ -342,15 +411,7 @@ fn chat_pipeline(
         // §3 `canSpeak`: a non-empty `Speak-Condition` replaces the
         // `Join-Permission` check (config.md §5 note 5).
         if !condition::can_speak(channel.speak_condition(), channel.permission(), player) {
-            let text = lang::lang()
-                .read()
-                .unwrap_or_else(|e| e.into_inner())
-                .format("Channel-No-Speak-Permission", &locale, &[]);
-            let _ = player.send_system_message(
-                TextComponent::from_legacy_string_with_code(&text, '&'),
-                false,
-            );
-            return ChatOutcome::Rejected;
+            return reject_with(player, &locale, "Channel-No-Speak-Permission", &[]);
         }
     }
 
@@ -668,6 +729,87 @@ fn wrap_special_characters(ch: &ChannelConfig, body: &str) -> String {
     special::wrap_special_chars(body, &color, &default)
 }
 
+/// Emits a localised guard hint and reports the rejection. The per-player
+/// state lock must already be released: this touches the language store and
+/// makes a host call.
+fn reject_with(player: &Player, locale: &str, key: &str, args: &[&str]) -> ChatOutcome {
+    let text = lang::lang()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .format(key, locale, args);
+    let _ = player.send_system_message(
+        TextComponent::from_legacy_string_with_code(&text, '&'),
+        false,
+    );
+    ChatOutcome::Rejected
+}
+
+/// §1.4 note: a zero period falls back to 60 000 ms at runtime. The config
+/// default is already 60 000, so only an explicit `0` reaches the fallback —
+/// unlike `antiRepeatMaxPerPeriod`, where `0` is meaningful rather than "off".
+fn period_or_default(millis: u64) -> u128 {
+    if millis == 0 {
+        60_000
+    } else {
+        millis as u128
+    }
+}
+
+/// §5 `maxConsecutiveRepeat(message, whitelist)` (`MessageGuard.java:80-119`).
+///
+/// Returns the largest number of times any substring repeats back-to-back; a
+/// message with no repetition scores `1`, as does anything shorter than two
+/// characters. Comparison is case-sensitive (`regionMatches` semantics).
+fn max_consecutive_repeat(message: &str, whitelist: &[String]) -> usize {
+    let chars: Vec<char> = message.chars().collect();
+    let n = chars.len();
+    if n < 2 {
+        return 1;
+    }
+    let mut max = 1;
+    for i in 0..n {
+        // Pruning 1: even one char per repeat cannot beat the current best.
+        if n - i <= max {
+            break;
+        }
+        for len in 1..=(n - i) / 2 {
+            // Pruning 2: the remaining run cannot hold more than `max` units.
+            if (n - i) / len <= max {
+                break;
+            }
+            // A whitelisted unit is skipped entirely rather than counted.
+            if is_whitelisted_unit(&chars, i, len, whitelist) {
+                continue;
+            }
+            let unit = &chars[i..i + len];
+            let mut count = 1;
+            let mut pos = i + len;
+            while pos + len <= n && chars[pos..pos + len] == *unit {
+                count += 1;
+                pos += len;
+            }
+            if count > max {
+                max = count;
+            }
+        }
+    }
+    max
+}
+
+/// §5 `isWhitelistedUnit(message, start, len, whitelist)` (`:126-147`): the
+/// `len`-long unit is whitelisted when it equals some whitelist phrase repeated
+/// a whole number of times (e.g. `哈哈` against the default `哈` entry).
+fn is_whitelisted_unit(chars: &[char], start: usize, len: usize, whitelist: &[String]) -> bool {
+    let unit = &chars[start..start + len];
+    whitelist.iter().any(|phrase| {
+        let phrase: Vec<char> = phrase.chars().collect();
+        if phrase.is_empty() || len % phrase.len() != 0 {
+            return false;
+        }
+        unit.chunks(phrase.len()).all(|chunk| chunk == phrase.as_slice())
+    })
+}
+
 /// §5 `similarity(left, right)` (`MessageGuard.java:23-34`).
 ///
 /// Both sides are normalised first (`toLowerCase(ROOT)` + **all** whitespace
@@ -731,7 +873,10 @@ fn levenshtein(a: &[char], b: &[char]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{levenshtein, normalize_for_similarity, similarity_score};
+    use super::{
+        is_whitelisted_unit, levenshtein, max_consecutive_repeat, normalize_for_similarity,
+        period_or_default, similarity_score,
+    };
 
     /// Normalisation is `toLowerCase(ROOT)` plus removal of *all* whitespace.
     #[test]
@@ -803,5 +948,76 @@ mod tests {
             levenshtein(&chars("kitten"), &chars("sitting")),
             levenshtein(&chars("sitting"), &chars("kitten"))
         );
+    }
+
+    /// §5 `maxConsecutiveRepeat`: the largest back-to-back repeat of *any*
+    /// substring, with no repetition (or a message under two chars) scoring 1.
+    #[test]
+    fn consecutive_repeat_counts_any_repeated_substring() {
+        let none: Vec<String> = Vec::new();
+
+        // Degenerate inputs are documented as 1, not 0.
+        assert_eq!(max_consecutive_repeat("", &none), 1);
+        assert_eq!(max_consecutive_repeat("a", &none), 1);
+        // No repetition at all.
+        assert_eq!(max_consecutive_repeat("abc", &none), 1);
+        // A single repeated character.
+        assert_eq!(max_consecutive_repeat("aaa", &none), 3);
+        // A repeated multi-character unit beats the single-char run.
+        assert_eq!(max_consecutive_repeat("abab", &none), 2);
+        assert_eq!(max_consecutive_repeat("ababab", &none), 3);
+        // The run need not start at the beginning.
+        assert_eq!(max_consecutive_repeat("xyzzzz", &none), 4);
+        // CJK text behaves the same way.
+        assert_eq!(max_consecutive_repeat("你好你好", &none), 2);
+    }
+
+    /// §5 `isWhitelistedUnit`: a unit is ignored when it is a whitelist phrase
+    /// repeated a whole number of times. The default entries cover chat filler
+    /// (`哈`, `6`, `?`, `！`, …).
+    #[test]
+    fn whitelisted_units_are_skipped_by_the_repeat_count() {
+        let ha = vec!["哈".to_string()];
+        let exclamations = vec!["!".to_string(), "！".to_string()];
+
+        // Without a whitelist the run counts in full.
+        assert_eq!(max_consecutive_repeat("哈哈哈", &[]), 3);
+        assert_eq!(max_consecutive_repeat("!!!!", &[]), 4);
+
+        // With the filler whitelisted it collapses to "no repetition".
+        assert_eq!(max_consecutive_repeat("哈哈哈", &ha), 1);
+        assert_eq!(max_consecutive_repeat("哈哈哈哈哈", &ha), 1);
+        assert_eq!(max_consecutive_repeat("!!!!", &exclamations), 1);
+        // Mixed filler still collapses when each unit is whitelisted.
+        assert_eq!(max_consecutive_repeat("!!！！", &exclamations), 1);
+
+        // The comparison is case-sensitive (`regionMatches` semantics), so a
+        // differently-cased phrase is *not* whitelisted.
+        let upper = vec!["A".to_string()];
+        assert_eq!(max_consecutive_repeat("aaaa", &upper), 4);
+
+        // A non-whitelisted repeat next to a whitelisted one still counts.
+        assert_eq!(max_consecutive_repeat("哈哈哈xyzxyz", &ha), 2);
+    }
+
+    /// `isWhitelistedUnit` only accepts whole repetitions of a phrase.
+    #[test]
+    fn whitelist_matching_requires_whole_repetitions() {
+        let chars = |s: &str| s.chars().collect::<Vec<char>>();
+        let ha = vec!["哈".to_string()];
+        // `哈哈` is `哈` twice → whitelisted; `哈哈啥` is not a whole multiple.
+        assert!(is_whitelisted_unit(&chars("哈哈哈"), 0, 2, &ha));
+        assert!(!is_whitelisted_unit(&chars("哈哈啥"), 0, 3, &ha));
+        // An empty whitelist never matches, and an empty phrase is ignored.
+        assert!(!is_whitelisted_unit(&chars("aaa"), 0, 2, &[]));
+        assert!(!is_whitelisted_unit(&chars("aaa"), 0, 2, &[String::new()]));
+    }
+
+    /// §1.4 note: only an explicit `0` period falls back to 60 000 ms.
+    #[test]
+    fn zero_period_falls_back_to_one_minute() {
+        assert_eq!(period_or_default(0), 60_000);
+        assert_eq!(period_or_default(1), 1);
+        assert_eq!(period_or_default(60_000), 60_000);
     }
 }

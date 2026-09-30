@@ -520,6 +520,30 @@ impl TrChatConfig {
     pub fn anti_repeat_period_millis(&self) -> u64 {
         self.settings.chat.anti_repeat_period_millis
     }
+    /// §1.4 — `0` means "block the first similar message", **not** "off".
+    pub fn anti_repeat_max_per_period(&self) -> u32 {
+        self.settings.chat.anti_repeat_max_per_period
+    }
+    /// §1.4 — `false` compares only the previous accepted message.
+    pub fn anti_repeat_compare_all(&self) -> bool {
+        self.settings.chat.anti_repeat_compare_all
+    }
+    /// §1.4 — `0` disables the anti-high-frequency guard.
+    pub fn anti_high_frequency_max_per_period(&self) -> u32 {
+        self.settings.chat.anti_high_frequency_max_per_period
+    }
+    /// §1.4 — `0` falls back to 60 000 ms at runtime.
+    pub fn anti_high_frequency_period_millis(&self) -> u64 {
+        self.settings.chat.anti_high_frequency_period_millis
+    }
+    /// §1.4 — `0` disables the anti-duplicate-phrase guard.
+    pub fn anti_duplicate_phrase_max_repeat(&self) -> u32 {
+        self.settings.chat.anti_duplicate_phrase_max_repeat
+    }
+    /// §5 — phrases whose repetition is tolerated (default `哈, 6, ?, ？, !, ！`).
+    pub fn anti_duplicate_phrase_whitelist(&self) -> &[String] {
+        &self.settings.chat.anti_duplicate_phrase_whitelist
+    }
     pub fn blocked_words(&self) -> &[String] {
         &self.settings.chat.blocked_words
     }

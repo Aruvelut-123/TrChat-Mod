@@ -75,8 +75,10 @@ fn speak_rule<'a>(speak_condition: &'a str, join_permission: &'a str) -> SpeakRu
     }
 }
 
-/// `permission-level >= 2` is the Mod's `player.isOp()`.
-fn is_op(player: &Player) -> bool {
+/// `permission-level >= 2` is the Mod's `player.isOp()`. The chat guards use
+/// this to exempt OPs from anti-repeat, cooldown and anti-high-frequency
+/// (chat.md §1.4) — but *not* from length, mutes or anti-duplicate.
+pub fn is_op(player: &Player) -> bool {
     matches!(
         player.get_permission_level(),
         PermissionLevel::Two | PermissionLevel::Three | PermissionLevel::Four
