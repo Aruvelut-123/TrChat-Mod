@@ -11,6 +11,8 @@
 //! * `/trchat mute player <player> <duration> [reason]` — mute a player
 //! * `/trchat unmute <player>` — clear a player's mute (`trchat.mute`)
 //! * `/trchat color <color>` — set the chat colour (`trchat.command.color`)
+//! * `/trchat clear <player|*>` — wipe a chat view (`trchat.command.clear`)
+//! * `/trchat redis reconnect` — OP 2; no-op because Redis is unimplemented
 //! * `/trmute`, `/mute`, `/trunmute` — standalone aliases of the above
 //! * `/trchat ignore <player> [on|off]` — toggle ignoring a player (open)
 //! * `/ignore`, `/trignore <player> [on|off]`, `/ignorelist` — §1.3 aliases
@@ -66,6 +68,8 @@ const PERM_MUTE: &str = "trchat:trchat.mute";
 const PERM_IGNORE: &str = "trchat:trchat.command.ignore";
 /// Permission to set one's own chat colour (OP level 2, `PERM:49`).
 const PERM_COLOR: &str = "trchat:trchat.command.color";
+/// Permission to clear other players' chat (OP level 2, `PERM:50`).
+const PERM_CLEAR: &str = "trchat:trchat.command.clear";
 /// The 16 `trchat.color.<code>` nodes that gate using a chat colour
 /// (`PERM:56-69`). All default to OP level 2.
 const COLOR_CODES: &str = "0123456789abcdef";
@@ -125,6 +129,11 @@ fn register_permissions(context: &Context) {
         (
             PERM_COLOR,
             "Set your own chat colour",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        (
+            PERM_CLEAR,
+            "Clear other players' chat",
             PermissionDefault::Op(PermissionLevel::Two),
         ),
     ];
@@ -304,6 +313,13 @@ pub fn register_commands(context: &Context) {
         "TrChat management and chat commands",
     )
     .then(CommandNode::literal("reload").execute(ReloadCommand))
+    // §1.2 — `/trchat redis reconnect` (OP level 2). This port has no Redis
+    // runtime, so the handler only reports the same key the upstream prints;
+    // see the deviation note on [`RedisReconnectCommand`].
+    .then(
+        CommandNode::literal("redis")
+            .then(CommandNode::literal("reconnect").execute(RedisReconnectCommand)),
+    )
     .then(CommandNode::literal("version").execute(VersionCommand))
     // §1.2 — `/trchat status` is open to everyone; `status <player>` needs
     // `trchat.admin`, checked at runtime because the guest API has no
@@ -359,6 +375,13 @@ pub fn register_commands(context: &Context) {
             CommandNode::argument("color", &ArgumentType::String(StringType::SingleWord))
                 .suggest(Colors)
                 .execute(ColorCommand),
+        ),
+    )
+    .then(
+        CommandNode::literal("clear").then(
+            CommandNode::argument("target", &ArgumentType::String(StringType::SingleWord))
+                .suggest(ClearTargets)
+                .execute(ClearCommand),
         ),
     )
     .then(
@@ -945,6 +968,102 @@ impl CommandHandler for ColorCommand {
         let sample = format!("&{code}{code}");
         send(&sender, &message("Color-Selected", &sender, &[&sample]));
         Ok(0)
+    }
+}
+
+/// Number of blank lines `/trchat clear` sends, matching `TRC:229-231`.
+const CLEAR_LINES: usize = 80;
+
+/// `/trchat clear <player|*>` — wipe a player's chat view (`TRC:221-236`).
+struct ClearCommand;
+
+impl CommandHandler for ClearCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        if !sender.has_permission(&server, PERM_CLEAR) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
+            return Ok(0);
+        }
+        let Some(target) = arg_string(&args, "target") else {
+            send(&sender, "&cUsage: /trchat clear <player|*>");
+            return Ok(0);
+        };
+        // `*` clears everyone; the success line echoes the wildcard itself.
+        if target == "*" {
+            for player in server.get_all_players() {
+                clear_chat(&player);
+            }
+            send(&sender, &message("Clear-Success", &sender, &["*"]));
+            return Ok(0);
+        }
+        let Some(player) = server.get_player_by_name(&target) else {
+            send(
+                &sender,
+                &message("General-Player-Not-Found", &sender, &[&target]),
+            );
+            return Ok(0);
+        };
+        clear_chat(&player);
+        // The upstream reports the target's profile name, not the typed token.
+        let name = player.get_name();
+        send(&sender, &message("Clear-Success", &sender, &[&name]));
+        Ok(0)
+    }
+}
+
+/// §1.6 — `/trchat clear` completes the online names plus `*` (`TRC:221-227`).
+struct ClearTargets;
+
+impl CommandSuggestionHandler for ClearTargets {
+    fn suggest(
+        &self,
+        _sender: CommandSender,
+        server: Server,
+        request: SuggestionRequest,
+    ) -> CommandSuggestions {
+        let mut candidates: Vec<String> = server
+            .get_all_players()
+            .iter()
+            .map(|player| player.get_name())
+            .collect();
+        candidates.push(String::from("*"));
+        suggest_matching(&request, candidates.into_iter())
+    }
+}
+
+/// Sends [`CLEAR_LINES`] empty components, the upstream's way of scrolling a
+/// chat view clean.
+fn clear_chat(player: &pumpkin_plugin_api::player::Player) {
+    for _ in 0..CLEAR_LINES {
+        player.send_system_message(TextComponent::from_legacy_string_with_code("", '&'), false);
+    }
+}
+
+/// `/trchat redis reconnect` — OP level 2 (`TRC:98-105`).
+///
+/// Deviation: the port has no Redis runtime (the cross-server block is not
+/// implemented), so there is nothing to reconnect. The handler reports the same
+/// `Redis-Reconnect-Started` key the upstream does, so the command surface and
+/// the language keys stay complete, but it performs no I/O.
+struct RedisReconnectCommand;
+
+impl CommandHandler for RedisReconnectCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        if !sender.has_permission(&server, PERM_ADMIN) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
+            return Ok(0);
+        }
+        send(&sender, &message("Redis-Reconnect-Started", &sender, &[]));
+        Ok(1)
     }
 }
 
