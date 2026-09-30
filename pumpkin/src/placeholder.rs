@@ -142,6 +142,15 @@ fn server_token(key: &str, player: &Player, server: &Server, config: &TrChatConf
         // §1.3 entity census — summed across every loaded dimension.
         "total_entities" => count_entities(server, false),
         "total_living_entities" => count_entities(server, true),
+        // §1.3 `%server_unique_joins%` counts `<world>/playerdata/*.dat` on the
+        // Bukkit server. The guest sandbox has no filesystem surface — the WIT
+        // `context` interface only exposes `get-data-folder` (a string), with no
+        // directory read or count — and a Minecraft server also hands out
+        // nothing equivalent through `server`. Rather than invent a proxy
+        // (such as counting online players), it stays unsupported and resolves
+        // to the empty string (§1.1). Named explicitly so the reason is
+        // recorded next to the key instead of hiding behind the `_` fallback.
+        "unique_joins" => String::new(),
         _ => {
             // §1.4 dynamic keys.
             if let Some(dim) = key.strip_prefix("online_") {

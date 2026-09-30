@@ -175,6 +175,8 @@
 * **仍解析为空**（WIT 无对应访问器）：`player_has_played_before`、`player_first_played`/`player_last_played`
   系列（读 `playerdata` 目录时间戳）、`player_sleep_ticks`（`getSleepTimer`）、`player_no_damage_ticks`、
   `player_last_damage`、`player_thunder_duration`/`player_weather_duration`（世界天气计时器）。
+* **仍解析为空**（guest 无文件系统计数）：`server_unique_joins`（需遍历 `<world>/playerdata/*.dat`，
+  §1.1 未知→空；与 `playerdata` 系列同一根因，显式 arm + 注释记录于 `placeholder.rs`）。
 
 ### 1.7 值格式化规则（实现必须逐字对齐）
 
