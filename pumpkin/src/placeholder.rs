@@ -316,8 +316,11 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         // §1.6 world clock (spec lines 131–133).
         "world_time_12" | "world_time_24" => world_clock(player, key),
         "time" => player.get_world().get_time_of_day().to_string(),
-        // `player_world_type` is the dimension key the Mod reports.
-        "world_type" => player.get_world().get_dimension(),
+        // §1.7 `worldType` — the Mod maps `Level.NETHER` to `Nether`,
+        // `Level.END` to `The End` and everything else to `Overworld`. The
+        // sandbox hands back the dimension's namespaced id
+        // (`minecraft:the_nether`), so it is mapped here.
+        "world_type" => world_type_name(&player.get_world().get_dimension()),
         // `player_thunder_duration` / `player_weather_duration` need the world
         // weather timers, which the WIT surface does not expose.
         "thunder_duration" | "weather_duration" => String::new(),
@@ -486,6 +489,20 @@ fn game_mode_name(mode: pumpkin_plugin_api::wit::pumpkin::plugin::common::GameMo
         GameMode::Creative => "CREATIVE",
         GameMode::Adventure => "ADVENTURE",
         GameMode::Spectator => "SPECTATOR",
+    }
+    .to_string()
+}
+
+/// §1.7 `worldType` — `Nether` / `The End` / `Overworld`.
+///
+/// Accepts both the namespaced id the host reports (`minecraft:the_nether`)
+/// and a bare path, and treats any other dimension (including modded ones and
+/// `overworld_caves`) as the overworld, matching the Mod's `default` branch.
+fn world_type_name(dimension: &str) -> String {
+    match dimension.strip_prefix("minecraft:").unwrap_or(dimension) {
+        "the_nether" | "nether" => "Nether",
+        "the_end" | "end" => "The End",
+        _ => "Overworld",
     }
     .to_string()
 }
@@ -825,6 +842,20 @@ mod tests {
     fn yes_no_shape() {
         assert_eq!(yes_no(true), "yes");
         assert_eq!(yes_no(false), "no");
+    }
+
+    /// §1.7 — the host reports the dimension id, the Mod reports three English
+    /// names that the `Placeholder-Translations` table then localizes.
+    #[test]
+    fn world_type_maps_dimensions_to_the_mod_names() {
+        assert_eq!(world_type_name("minecraft:the_nether"), "Nether");
+        assert_eq!(world_type_name("minecraft:the_end"), "The End");
+        assert_eq!(world_type_name("minecraft:overworld"), "Overworld");
+        // Bare paths and unknown/modded dimensions fall into the same branches.
+        assert_eq!(world_type_name("the_nether"), "Nether");
+        assert_eq!(world_type_name("the_end"), "The End");
+        assert_eq!(world_type_name("minecraft:overworld_caves"), "Overworld");
+        assert_eq!(world_type_name("some:custom_dimension"), "Overworld");
     }
 
     /// §1.6 `player_exp_to_level` — the three vanilla level-cost branches; a
