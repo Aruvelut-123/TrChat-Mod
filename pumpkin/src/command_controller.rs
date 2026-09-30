@@ -78,6 +78,21 @@ pub fn is_command_managed(config: &SharedConfig) -> bool {
     config.function.command_controller.enabled && !config.function.command_controller.rules.is_empty()
 }
 
+/// `isCommandManaged(commandLine)` (spec §1.4) — the controller is enabled
+/// **and** one of its rules matches `command`. Conditions and cooldowns do not
+/// matter here: only "is this command managed at all".
+pub fn is_command_managed_line(config: &SharedConfig, command: &str) -> bool {
+    let config = config.read();
+    let controller = &config.function.command_controller;
+    is_managed(controller.enabled, &controller.rules, command)
+}
+
+/// The pure core of [`is_command_managed_line`], split out so the rule matching
+/// can be tested without building a whole config.
+fn is_managed(enabled: bool, rules: &[CommandRule], command: &str) -> bool {
+    enabled && !rules.is_empty() && matching_rule(rules, command).is_some()
+}
+
 /// `CommandController.matching` (spec §2.4): strip a leading `/`, take the
 /// command label, then walk the rules in order.
 fn matching_rule<'a>(rules: &'a [CommandRule], command: &str) -> Option<&'a CommandRule> {
@@ -144,6 +159,24 @@ mod tests {
             rule("help(s)?{condition: perm *trchat.admin}", "help(s)?", false, "perm *trchat.admin", 0),
             rule("shout{cooldown: 3}", "shout", false, "", 3000),
         ]
+    }
+
+    /// §1.4 — a command is "managed" only when the controller is enabled *and*
+    /// a rule matches it; conditions are deliberately ignored here.
+    #[test]
+    fn managed_commands_need_an_enabled_controller_and_a_rule() {
+        let rules = default_rules();
+        assert!(is_managed(true, &rules, "help"));
+        assert!(is_managed(true, &rules, "/helps"));
+        assert!(is_managed(true, &rules, "version"));
+        assert!(is_managed(true, &rules, "arasple"));
+        // A command no rule covers is not managed…
+        assert!(!is_managed(true, &rules, "trchat"));
+        // …nor is anything at all while the controller is off or rule-less.
+        assert!(!is_managed(false, &rules, "help"));
+        assert!(!is_managed(true, &[], "help"));
+        // `arasple`'s rule is `exact: true`, so arguments make it unmanaged.
+        assert!(!is_managed(true, &rules, "arasple now"));
     }
 
     #[test]

@@ -17,6 +17,8 @@
 //! * `/trchat ignore <player> [on|off]` — toggle ignoring a player (open)
 //! * `/ignore`, `/trignore <player> [on|off]`, `/ignorelist` — §1.3 aliases
 //! * `/trspy [on|off]`       — standalone alias of `/trchat spy`
+//! * `/arasple`, `/ver(s)(ion(s))`, `/help(s)` — §1.4 Command-Controller
+//!   compatible commands (no permission node; gated by `isCommandManaged`)
 //! * `/trchat channel join|quit …` — channel membership (open to everyone)
 //! * `/trchat shadowmute <player> [on|off]` — shadow mute (§2.2)
 //! * `/trchat view <snapshot>` — open a read-only inventory snapshot (§2.11)
@@ -44,6 +46,7 @@ use pumpkin_plugin_api::{
     Context, ItemStack, Screen, Server,
 };
 
+use crate::command_controller;
 use crate::condition;
 use crate::config;
 use crate::lang;
@@ -537,6 +540,44 @@ pub fn register_commands(context: &Context) {
         .execute(IgnoreListCommand);
     context.register_command(ignorelist, PERM_IGNORE);
 
+    // ---- §1.4 Command-Controller compatible commands ----
+    // Registered with the open `trchat.use` gate; the real gate is the runtime
+    // `isCommandManaged` check inside the handler.
+    let about =
+        Command::new(&[String::from("arasple")], "About TrChat").execute(ControllerCommand {
+            dispatch: ControllerDispatch::About,
+            label: "arasple",
+        });
+    context.register_command(about, PERM_USE);
+
+    let versions = Command::new(
+        &[
+            String::from("ver"),
+            String::from("vers"),
+            String::from("version"),
+            String::from("versions"),
+        ],
+        "TrChat status",
+    )
+    .execute(ControllerCommand {
+        dispatch: ControllerDispatch::Status,
+        // `ver(sion)?(s)?` matches every spelling, so one label serves all four.
+        label: "version",
+    });
+    context.register_command(versions, PERM_USE);
+
+    // NOTE: `/help` merges with Pumpkin's built-in `/help`; see the deviation
+    // note on [`ControllerCommand`].
+    let help = Command::new(
+        &[String::from("help"), String::from("helps")],
+        "TrChat help",
+    )
+    .execute(ControllerCommand {
+        dispatch: ControllerDispatch::Help,
+        label: "help",
+    });
+    context.register_command(help, PERM_USE);
+
     // ---- /trreply <message> (aliases /r, /reply) ----
     let reply = Command::new(
         &[
@@ -614,6 +655,14 @@ fn is_reserved_alias(alias: &str) -> bool {
         "trunmute",
         "trshadowmute",
         "shadowmute",
+        // §1.4 Command-Controller compatible commands.
+        "arasple",
+        "ver",
+        "vers",
+        "version",
+        "versions",
+        "help",
+        "helps",
     ];
     RESERVED.iter().any(|r| r.eq_ignore_ascii_case(alias))
 }
@@ -1063,6 +1112,64 @@ impl CommandHandler for RedisReconnectCommand {
             return Ok(0);
         }
         send(&sender, &message("Redis-Reconnect-Started", &sender, &[]));
+        Ok(1)
+    }
+}
+
+/// Which §1.4 payload a controller command prints.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ControllerDispatch {
+    /// `/arasple` → `Command-About`.
+    About,
+    /// `/ver`, `/vers`, `/version`, `/versions` → the `/trchat status` overview.
+    Status,
+    /// `/help`, `/helps` → `Command-Help`.
+    Help,
+}
+
+/// §1.4 — the Command-Controller-compatible commands (`TRC:758-782, 397-428`).
+///
+/// These are registered without a permission node. At execution time the
+/// controller must be enabled *and* have a rule matching `label`; otherwise the
+/// handler prints `Command-Controller-Disabled`.
+///
+/// Deviation: `/help` is registered with the same literal as Pumpkin's built-in
+/// `/help`; the dispatcher merges the two, so the built-in executor is shadowed
+/// exactly as the upstream does (spec §1.4 note 15) while its `commandOrPage`
+/// argument children stay reachable.
+struct ControllerCommand {
+    dispatch: ControllerDispatch,
+    /// The label handed to `isCommandManaged` and echoed by the failure line.
+    label: &'static str,
+}
+
+impl CommandHandler for ControllerCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        if !command_controller::is_command_managed_line(config::global_config(), self.label) {
+            send(
+                &sender,
+                &message("Command-Controller-Disabled", &sender, &[self.label]),
+            );
+            return Ok(0);
+        }
+        match self.dispatch {
+            ControllerDispatch::About => {
+                // `Command-About` shows the plugin version in `{0}`.
+                let version = env!("CARGO_PKG_VERSION");
+                send(&sender, &message("Command-About", &sender, &[version]));
+            }
+            ControllerDispatch::Status => {
+                send(&sender, &status_overview(&sender, &server));
+            }
+            ControllerDispatch::Help => {
+                send(&sender, &message("Command-Help", &sender, &[]));
+            }
+        }
         Ok(1)
     }
 }
