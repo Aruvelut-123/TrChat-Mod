@@ -91,30 +91,56 @@ pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str)
     // the exact target name. The flattened templates are only the fallback for a
     // missing `Private` channel or a tier that yields no match
     // (`ChatService.java:174-185`, `ChannelRenderer.java:96-99`).
-    let (sender_view, receiver_view, sender_tpl, receiver_tpl) = {
+    let target_key = target_name.to_ascii_lowercase();
+    let (sender_view, receiver_view, mention_target, sender_tpl, receiver_tpl) = {
         let config = crate::config::global_config();
         let config = config.read();
         let channel = config.private_channel();
+        // §1.3 step 3 — the function pass runs for private messages too, gated by
+        // the `Private` channel's `Disabled-Functions` (`ChatService.java:171-173`;
+        // the shipped config disables `Mention` there, so only the item/snapshot
+        // functions fire).
+        let disabled: &[String] = channel
+            .map(|c| c.options.disabled_functions.as_slice())
+            .unwrap_or(&[]);
+        let processed = crate::functions::process(server, sender, message, &config, disabled);
+        // §1.3 step 9b — the target is notified when the message mentions them
+        // (`ChatService.java:203-205`).
+        let mention_target = processed
+            .as_ref()
+            .is_some_and(|out| out.mentioned.contains(&target_key));
         let local = [("trchat_toplayer", target_name.as_str())];
+        // Both views share the processed component (the Mod renders one and hands
+        // it to both `render` calls).
+        let processed = processed.as_ref();
         (
             crate::chat::render_audience_view(
-                channel,
-                Audience::Sender,
-                sender,
+                &crate::chat::AudienceRender {
+                    channel,
+                    audience: Audience::Sender,
+                    subject: sender,
+                    viewer: sender,
+                    message,
+                    processed,
+                    local: &local,
+                },
                 server,
                 &config,
-                message,
-                &local,
             ),
             crate::chat::render_audience_view(
-                channel,
-                Audience::Receiver,
-                sender,
+                &crate::chat::AudienceRender {
+                    channel,
+                    audience: Audience::Receiver,
+                    subject: sender,
+                    viewer: target,
+                    message,
+                    processed,
+                    local: &local,
+                },
                 server,
                 &config,
-                message,
-                &local,
             ),
+            mention_target,
             config.msg.sender.clone(),
             config.msg.receiver.clone(),
         )
@@ -146,6 +172,12 @@ pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str)
         let text = render_msg(&receiver_tpl, &sender_name, &target_name, message);
         let component = TextComponent::from_legacy_string_with_code(&text, '&');
         target.send_system_message(component, false);
+    }
+
+    // §1.3 step 9b — a mentioned target gets the mention notification, but only
+    // once the message really reached them (`ChatService.java:203-205`).
+    if mention_target {
+        crate::functions::notify_mentioned(target, &sender_name, &target.get_locale());
     }
 
     remember_correspondent(&target_name, &sender_name);

@@ -1152,61 +1152,130 @@ fn select_format_layer<'a>(ch: &'a ChannelConfig, player: &Player) -> Option<&'a
     select_audience_layer(ch, Audience::Chat, player)
 }
 
+/// §3 — one audience render request: everything `render_audience_view` needs to
+/// build a single view of a message.
+///
+/// Bundling these keeps the render call small and mirrors the Mod's
+/// `render(channel, audience, subject, viewer, messageComponent, message, local)`
+/// (`ChannelRenderer.java:88-100`).
+pub(crate) struct AudienceRender<'a> {
+    /// The channel to render; `None` means the plain fallback route.
+    pub channel: Option<&'a ChannelConfig>,
+    pub audience: Audience,
+    /// The player the tiers' `condition` and `%player_*%` are evaluated for — the
+    /// **sender** for both sides of a private message (`ChatService.java:174-185`).
+    pub subject: &'a Player,
+    /// The receiving player; their locale localises the function hover text.
+    pub viewer: &'a Player,
+    /// The raw message text (the `%message%` local and the body slot).
+    pub message: &'a str,
+    /// The component `functions::process` built when a function matched
+    /// (upstream `processed.component()`); it replaces the text body.
+    pub processed: Option<&'a crate::functions::FunctionOutcome>,
+    /// `%…%` context keys, e.g. `trchat_toplayer` for private messages.
+    pub local: &'a [(&'a str, &'a str)],
+}
+
 /// §3 — renders one `audience` view of a message into a component: the tier's
 /// component parts (their `condition`, hover, click, insertion and font), then
 /// the body coloured by `msg.default-color` (or the sender's chat colour), with
 /// `msg.hover` on the whole message.
 ///
-/// `subject` is the player the formats are evaluated for and the one `%player_*%`
-/// resolves against — the Mod passes the **sender** as subject for *both* sides
-/// of a private message (`ChatService.java:174-185`), with the recipient only as
-/// the viewer, and its token dispatch reads the subject
-/// (`PlaceholderResolver.java:101`). `local` carries the `%…%` context keys; the
-/// `trchat_toplayer` entry (the exact target name) also fills `{target}`.
-///
 /// `None` means the channel is absent or none of its tiers passed, which is the
 /// upstream `format == null` case — the caller then falls back to the flattened
 /// template (`ChannelRenderer.java:96-99`).
 pub(crate) fn render_audience_view(
-    channel: Option<&ChannelConfig>,
-    audience: Audience,
-    subject: &Player,
+    req: &AudienceRender<'_>,
     server: &Server,
     config: &TrChatConfig,
-    body: &str,
-    local: &[(&str, &str)],
 ) -> Option<TextComponent> {
-    let ch = channel?;
-    let layer = select_audience_layer(ch, audience, subject)?;
-    let name = subject.get_name();
-    let world = subject.get_world().get_name();
+    let ch = req.channel?;
+    let layer = select_audience_layer(ch, req.audience, req.subject)?;
+    let name = req.subject.get_name();
+    let world = req.subject.get_world().get_name();
     let server_name = config.server_name();
     // `messageContext` fills `trchat_message_color` once and both views of a
     // private message share it (`ChatService.java:169-185`).
-    let colour = sender_chat_color(subject);
-    // The prefix is *not* part of this template: `apply_prefix_events` builds it
-    // from the tier's parts, which is what keeps their events and conditions.
+    let colour = sender_chat_color(req.subject);
+    // The prefix/suffix are *not* part of this template: `apply_prefix_events`
+    // and `apply_suffix_events` build them from the tier's parts, which is what
+    // keeps their events and conditions.
     let template = crate::config::layer_body_template_with_colour(layer, &colour);
-    let text = render_template(
-        &template,
-        &name,
-        body,
-        &ch.id,
-        server_name,
-        &world,
-        local_target(local),
-        subject,
+    let component = match req.processed {
+        // §3.1 — a caller-supplied component replaces the text body: the
+        // template contributes only its formatting (`{message}` stays empty) and
+        // the processed body is appended as a child, exactly like the Mod's
+        // `Component.empty().withStyle(applyLegacyFormat(...)).append(component)`
+        // (`ChannelRenderer.java:127-133`).
+        Some(out) => {
+            let empty = render_template(
+                &template,
+                &name,
+                "",
+                &ch.id,
+                server_name,
+                &world,
+                local_target(req.local),
+                req.subject,
+                server,
+                config,
+            );
+            let locale = req.viewer.get_locale();
+            crate::functions::build_body_component(
+                &empty,
+                out,
+                &name,
+                &locale,
+                req.subject,
+                server,
+                config,
+            )
+        }
+        None => {
+            let text = render_template(
+                &template,
+                &name,
+                req.message,
+                &ch.id,
+                server_name,
+                &world,
+                local_target(req.local),
+                req.subject,
+                server,
+                config,
+            );
+            // §3 step 4 — the resource-pack wrap applies to the cleaned body and
+            // only when no component body was supplied (`:118-126`).
+            let text = wrap_special_characters(ch, req.audience, req.subject, &text);
+            TextComponent::from_legacy_string_with_code(&text, '&')
+        }
+    };
+    let component = apply_prefix_events(
+        component,
+        req.channel,
+        req.audience,
+        req.subject,
         server,
         config,
+        req.local,
     );
-    let component = TextComponent::from_legacy_string_with_code(&text, '&');
-    let component =
-        apply_prefix_events(component, channel, audience, subject, server, config, local);
     // §3 step 5 — suffix groups append after the body (`:144`).
-    let component =
-        apply_suffix_events(component, channel, audience, subject, server, config, local);
+    let component = apply_suffix_events(
+        component,
+        req.channel,
+        req.audience,
+        req.subject,
+        server,
+        config,
+        req.local,
+    );
     Some(apply_msg_hover(
-        component, channel, audience, subject, server, config,
+        component,
+        req.channel,
+        req.audience,
+        req.subject,
+        server,
+        config,
     ))
 }
 
