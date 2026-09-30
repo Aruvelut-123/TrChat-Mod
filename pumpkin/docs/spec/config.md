@@ -127,6 +127,8 @@
 | `Prefix` | List\<String\> | `[]` | 聊天前缀；**最长匹配优先**（`ChannelManager.java:125-137`）；U 侧 Private 频道强制为 null |
 | `Command` | List\<String\> | `[]` | 触发该频道的命令别名；`/trchat reload` 后立即刷新 |
 
+> **Pumpkin deviation（§1.1，WASM guest 约束）**：WIT 无 `unregister-command`，guest 侧无法在 reload 时先注销旧别名再重新注册。因此 Pumpkin 加载时（`on_load`）静态注册一次，此后 reload 只刷新配置，**不再刷新命令别名**（`trchat-pumpkin` issue #6 跟踪）。若上游将来补上 WIT `unregister-command`，本 dev 应撤回，Pumpkin 即可实现真正的热刷新。
+
 ### 4.3 `Formats` / `Sender` / `Receiver` / `Console`
 
 - `Formats`：公共频道格式；`Sender`/`Receiver`：仅 Private 频道使用；`Console`：后台日志格式。
