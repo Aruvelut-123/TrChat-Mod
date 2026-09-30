@@ -4,6 +4,8 @@
 //!
 //! * `/trchat reload`        — re-read the config from disk (`trchat.admin`)
 //! * `/trchat version`       — print the plugin version (open to everyone)
+//! * `/trchat status`        — plugin overview (open to everyone)
+//! * `/trchat status <player>` — one player's chat state (`trchat.admin`)
 //! * `/trchat mute`          — toggle the global mute (`trchat.mute`)
 //! * `/trchat mute on|off`   — set the global mute explicitly (`trchat.mute`)
 //! * `/trchat mute player <player> <duration> [reason]` — mute a player
@@ -37,6 +39,7 @@ use pumpkin_plugin_api::{
     Context, ItemStack, Screen, Server,
 };
 
+use crate::condition;
 use crate::config;
 use crate::lang;
 use crate::playerdata::SessionPlayers;
@@ -243,6 +246,18 @@ pub fn register_commands(context: &Context) {
     )
     .then(CommandNode::literal("reload").execute(ReloadCommand))
     .then(CommandNode::literal("version").execute(VersionCommand))
+    // §1.2 — `/trchat status` is open to everyone; `status <player>` needs
+    // `trchat.admin`, checked at runtime because the guest API has no
+    // per-subcommand requirement.
+    .then(
+        CommandNode::literal("status")
+            .then(
+                CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                    .suggest(PlayerNames)
+                    .execute(PlayerStatusCommand),
+            )
+            .execute(StatusCommand),
+    )
     // §1.2 — `/trchat mute` toggles the global mute, `mute on|off` sets it, and
     // `mute player <player> <duration> [reason]` mutes one player.
     .then(
@@ -524,6 +539,207 @@ impl CommandHandler for VersionCommand {
             ),
         );
         Ok(0)
+    }
+}
+
+/// `/trchat status` — plugin overview, open to everyone (spec §1.2).
+struct StatusCommand;
+
+impl CommandHandler for StatusCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        send(&sender, &status_overview(&sender, &server));
+        Ok(0)
+    }
+}
+
+/// `/trchat status <player>` — one player's chat state (`trchat.admin`).
+struct PlayerStatusCommand;
+
+impl CommandHandler for PlayerStatusCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        if !sender.has_permission(&server, PERM_ADMIN) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
+            return Ok(0);
+        }
+        let Some(name) = arg_string(&args, "player") else {
+            send(&sender, "&cUsage: /trchat status <player>");
+            return Ok(0);
+        };
+        let Some(target) = server.get_player_by_name(&name) else {
+            send(
+                &sender,
+                &message("General-Player-Not-Found", &sender, &[&name]),
+            );
+            return Ok(0);
+        };
+        send(&sender, &player_status_report(&sender, &target));
+        Ok(0)
+    }
+}
+
+/// `Status-State-Enabled` / `Status-State-Disabled` for a boolean flag.
+fn state_text(sender: &CommandSender, enabled: bool) -> String {
+    let key = if enabled {
+        "Status-State-Enabled"
+    } else {
+        "Status-State-Disabled"
+    };
+    message(key, sender, &[])
+}
+
+/// The `/trchat status` block: the overview line plus the creator, original
+/// author and repository credits closed by the footer.
+///
+/// Deviations, both forced by the runtime: Redis has no implementation in this
+/// port, so its state is reported as *disabled* rather than connected; and the
+/// link/credit lines are appended as plain text instead of click actions
+/// because the WIT feedback channel carries a single component per line.
+fn status_overview(sender: &CommandSender, server: &Server) -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let controller = {
+        let config = config::global_config();
+        let config = config.read();
+        // The default channel is the `Auto-Join` one, else the first channel.
+        let default_channel = config
+            .default_channel()
+            .map(|channel| channel.id.clone())
+            .unwrap_or_else(|| "-".to_string());
+        let channel_count = config.channels().len().to_string();
+        let controller = (
+            config.function.command_controller.enabled,
+            config.function.command_controller.rules.len().to_string(),
+        );
+        (channel_count, default_channel, controller)
+    };
+    let (channel_count, default_channel, (controller_enabled, rule_count)) = controller;
+
+    let globally_muted = {
+        let players = SessionPlayers::global()
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        players.is_global_muted()
+    };
+
+    let overview = message(
+        "Status-Overview",
+        sender,
+        &[
+            version,
+            &channel_count,
+            &default_channel,
+            // Redis is not implemented by this port.
+            &message("Status-State-Disabled", sender, &[]),
+            &state_text(sender, globally_muted),
+            &state_text(sender, controller_enabled),
+            &rule_count,
+            &server.get_player_count().to_string(),
+            &server.get_max_players().to_string(),
+        ],
+    );
+    let credits = format!(
+        "{}\n{}\n{}{}\n{}",
+        message("Status-Creator-Prefix", sender, &[])
+            + &message("Status-Creator-Link", sender, &[]),
+        message("Status-Original-Author", sender, &[]),
+        message("Status-Repository-Prefix", sender, &[]),
+        message("Status-Repository-Link", sender, &[]),
+        message("Status-Footer", sender, &[]),
+    );
+    format!("{overview}\n{credits}")
+}
+
+/// The `/trchat status <player>` block (spec §1.2).
+///
+/// A player who is online but has no session state yet (the join event has not
+/// been observed) reports the configured default channel and zero joined
+/// channels rather than failing.
+fn player_status_report(
+    sender: &CommandSender,
+    target: &pumpkin_plugin_api::player::Player,
+) -> String {
+    let name = target.get_name();
+    let (channel, joined, shadow, spy, muted, mute_until, mute_reason) = {
+        let session = SessionPlayers::global();
+        let session = session.read().unwrap_or_else(|e| e.into_inner());
+        let state = session.state(&name);
+        (
+            state.map(|state| state.active_channel.clone()),
+            state.map_or(0, |state| state.joined_channels.len()),
+            state.is_some_and(|state| state.shadow_muted),
+            state.is_some_and(|state| state.private_spy),
+            session.is_muted(&name),
+            session.mute_state(&name).map(|(until, _)| until),
+            session
+                .mute_state(&name)
+                .map(|(_, reason)| reason.to_string()),
+        )
+    };
+    let channel = channel.unwrap_or_else(|| {
+        let config = config::global_config();
+        let config = config.read();
+        config
+            .default_channel()
+            .map(|channel| channel.id.clone())
+            .unwrap_or_else(|| "-".to_string())
+    });
+
+    let mut report = message(
+        "Player-Status-Overview",
+        sender,
+        &[
+            &name,
+            &channel,
+            &joined.to_string(),
+            &target.get_ping().to_string(),
+            &state_text(sender, muted),
+            &state_text(sender, shadow),
+            &state_text(sender, spy),
+            &state_text(sender, condition::is_op(target)),
+            game_mode_name(target.get_gamemode()),
+        ],
+    );
+    if muted {
+        if let Some(until) = mute_until {
+            let expiry = if until < 0 {
+                message("Player-Status-Permanent", sender, &[])
+            } else {
+                crate::playerdata::mute_expiry_text(until)
+            };
+            let reason = {
+                let reason = mute_reason.unwrap_or_default();
+                if reason.is_empty() {
+                    "-".to_string()
+                } else {
+                    reason
+                }
+            };
+            report = format!(
+                "{report}\n{}",
+                message("Player-Status-Mute-Detail", sender, &[&expiry, &reason])
+            );
+        }
+    }
+    format!("{report}\n{}", message("Status-Footer", sender, &[]))
+}
+
+/// The game mode shown by `Player-Status-Overview` `{8}`.
+fn game_mode_name(mode: pumpkin_plugin_api::common::GameMode) -> &'static str {
+    use pumpkin_plugin_api::common::GameMode;
+    match mode {
+        GameMode::Survival => "survival",
+        GameMode::Creative => "creative",
+        GameMode::Adventure => "adventure",
+        GameMode::Spectator => "spectator",
     }
 }
 
@@ -1538,6 +1754,16 @@ mod tests {
     #[test]
     fn overflowing_durations_are_rejected() {
         assert_eq!(parse_duration("9999999999999999w"), None);
+    }
+
+    /// `Player-Status-Overview` `{8}` reports the lowercase game mode name.
+    #[test]
+    fn game_modes_render_in_lowercase() {
+        use pumpkin_plugin_api::common::GameMode;
+        assert_eq!(super::game_mode_name(GameMode::Survival), "survival");
+        assert_eq!(super::game_mode_name(GameMode::Creative), "creative");
+        assert_eq!(super::game_mode_name(GameMode::Adventure), "adventure");
+        assert_eq!(super::game_mode_name(GameMode::Spectator), "spectator");
     }
 
     fn request(remaining: &str) -> SuggestionRequest {
