@@ -11,6 +11,7 @@
 //! declares the network permissions the future proxy code will need.
 
 mod chat;
+mod clock;
 mod command_controller;
 mod commands;
 mod condition;

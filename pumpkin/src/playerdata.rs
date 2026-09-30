@@ -15,25 +15,45 @@ use std::sync::{OnceLock, RwLock};
 
 /// One player's chat state (mirrors `PlayerDataStore.PlayerState`).
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)] // `shadow_muted`/`colour` are Bukkit v2 surface, not wired yet
 pub struct PlayerState {
     /// Active channel id (original case, e.g. `Normal`).
     pub active_channel: String,
     /// Joined channel ids, lowercased.
     pub joined_channels: HashSet<String>,
-    /// True while the player is muted.
-    pub muted: bool,
+    /// Mute expiry: `0` = not muted, `< 0` = permanent, `> 0` = epoch millis
+    /// (spec §6, `ModerationService.java:56-61`).
+    pub mute_until: i64,
+    /// Reason reported by `General-Muted` and the player status report; a blank
+    /// reason is stored as `-` (`ModerationService.java:69-72`).
+    pub mute_reason: String,
     /// True while shadow-muted (messages are rendered back to the sender only).
     pub shadow_muted: bool,
     /// Players ignored by this player, lowercased names.
     pub ignored: HashSet<String>,
-    /// Chosen chat colour code (single char, no `&`).
+    /// Chosen chat colour code (single char, no `&`) — the `/trchat color`
+    /// surface, which this port does not implement yet.
+    #[allow(dead_code)]
     pub colour: String,
     /// Last player who privately messaged this player, lowercased — the target
     /// of `/trreply` (spec §1.6 `lastPrivateSender`).
     pub last_private_sender: String,
     /// True while private-message spy is enabled (`/trchat spy`).
     pub private_spy: bool,
+}
+
+impl PlayerState {
+    /// Whether the personal mute is in force at `now`.
+    ///
+    /// An expiry at or before `now` reads as unmuted; the upstream also clears
+    /// the field and persists that, which [`SessionPlayers::expire_mute`] does.
+    pub fn is_mute_active(&self, now: i64) -> bool {
+        match self.mute_until {
+            0 => false,
+            // Negative means `-1`, the permanent marker.
+            until if until < 0 => true,
+            until => until > now,
+        }
+    }
 }
 
 /// Session-wide registry: the online players' [`PlayerState`] plus the global
@@ -96,13 +116,77 @@ impl SessionPlayers {
         self.global_mute = muted;
     }
 
-    /// Whether `name` is muted (or globally muted).
+    /// Whether `name` carries an active *personal* mute.
+    ///
+    /// The global mute is a separate question ([`Self::is_global_muted`]) because
+    /// it does not apply to operators (spec §1.4 step 3).
     pub fn is_muted(&self, name: &str) -> bool {
-        self.global_mute
-            || self
-                .states
-                .get(&name.to_ascii_lowercase())
-                .is_some_and(|s| s.muted)
+        self.is_muted_at(name, crate::clock::now_millis())
+    }
+
+    /// [`Self::is_muted`] against an explicit clock, so the expiry rules are
+    /// testable without waiting.
+    pub fn is_muted_at(&self, name: &str, now: i64) -> bool {
+        self.states
+            .get(&name.to_ascii_lowercase())
+            .is_some_and(|state| state.is_mute_active(now))
+    }
+
+    /// Mutes `name` for `duration_millis`, returning the applied expiry.
+    ///
+    /// A negative duration is the permanent marker `-1`; otherwise the expiry is
+    /// `now + duration` (`ModerationService.java:74-77`). `None` means the
+    /// player has no session state.
+    pub fn mute(&mut self, name: &str, duration_millis: i64, reason: &str) -> Option<i64> {
+        let now = crate::clock::now_millis();
+        let until = if duration_millis < 0 {
+            -1
+        } else {
+            now.saturating_add(duration_millis)
+        };
+        self.state_mut(name).map(|state| {
+            state.mute_until = until;
+            // A blank reason is reported as `-` (`ModerationService.java:69-72`).
+            state.mute_reason = if reason.trim().is_empty() {
+                "-".to_string()
+            } else {
+                reason.trim().to_string()
+            };
+            until
+        })
+    }
+
+    /// Clears `name`'s personal mute, returning `true` when one was set.
+    pub fn unmute(&mut self, name: &str) -> Option<bool> {
+        self.state_mut(name).map(|state| {
+            let was_muted = state.mute_until != 0;
+            state.mute_until = 0;
+            state.mute_reason.clear();
+            was_muted
+        })
+    }
+
+    /// Drops an expired mute, mirroring the upstream auto-clear on read
+    /// (`ModerationService.java:54-62`). Returns `true` when one was cleared.
+    pub fn expire_mute(&mut self, name: &str) -> bool {
+        let now = crate::clock::now_millis();
+        self.state_mut(name).is_some_and(|state| {
+            // Anything other than a live expiry is left alone: `0` is unmuted
+            // and a negative value is permanent.
+            if state.mute_until > 0 && state.mute_until <= now {
+                state.mute_until = 0;
+                state.mute_reason.clear();
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    /// `(mute_until, mute_reason)` for `name`, or `None` when they are offline.
+    pub fn mute_state(&self, name: &str) -> Option<(i64, &str)> {
+        self.state(name)
+            .map(|state| (state.mute_until, state.mute_reason.as_str()))
     }
 
     /// Whether `muted_by` ignores `target`.
@@ -139,6 +223,18 @@ impl SessionPlayers {
     }
 }
 
+/// §6 `muteExpiry` — the literal `permanent` for the permanent marker (`-1`),
+/// otherwise the expiry as `yyyy-MM-dd HH:mm:ss`.
+///
+/// Shared by `General-Muted` and the `/trchat status <player>` report.
+pub fn mute_expiry_text(until: i64) -> String {
+    if until < 0 {
+        "permanent".to_string()
+    } else {
+        crate::clock::format_millis(until)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,7 +244,7 @@ mod tests {
         let mut s = SessionPlayers::default();
         s.join("Alice", "Normal");
         assert!(!s.is_muted("Alice"));
-        s.state_mut("alice").unwrap().muted = true;
+        s.state_mut("alice").unwrap().mute_until = -1;
         assert!(s.is_muted("Alice"));
 
         s.state_mut("alice")
@@ -159,11 +255,86 @@ mod tests {
         assert!(!s.ignores("Bob", "Alice"));
     }
 
+    /// §6 — `0` is unmuted, `< 0` is permanent, `> 0` expires against the clock.
+    #[test]
+    fn mute_expiry_follows_the_three_state_model() {
+        let mut s = SessionPlayers::default();
+        s.join("Alice", "Normal");
+        let state = s.state_mut("Alice").unwrap();
+
+        state.mute_until = 0;
+        assert!(!state.is_mute_active(1_000));
+
+        state.mute_until = -1;
+        assert!(state.is_mute_active(1_000));
+
+        state.mute_until = 2_000;
+        assert!(state.is_mute_active(1_000), "not yet expired");
+        assert!(!state.is_mute_active(2_000), "expiry is inclusive");
+
+        // No session state at all means nothing to look up.
+        assert!(!s.is_muted_at("Nobody", 1_000));
+    }
+
+    /// `mute` derives the expiry from the duration and normalises the reason.
+    #[test]
+    fn mute_records_duration_and_reason() {
+        let mut s = SessionPlayers::default();
+        assert_eq!(s.mute("Nobody", 1_000, "x"), None, "offline players");
+
+        s.join("Alice", "Normal");
+        let now = crate::clock::now_millis();
+
+        let until = s.mute("Alice", 60_000, "  spam  ").unwrap();
+        assert!(until > now, "a positive duration expires in the future");
+        assert!(s.is_muted("Alice"));
+        assert_eq!(s.mute_state("Alice"), Some((until, "spam")));
+
+        // A blank reason is reported as `-`.
+        s.mute("Alice", 60_000, "   ");
+        assert_eq!(s.mute_state("Alice").unwrap().1, "-");
+
+        // A negative duration is the permanent marker.
+        assert_eq!(s.mute("Alice", -5, "forever"), Some(-1));
+        assert!(s.is_muted("Alice"));
+
+        assert_eq!(s.unmute("Alice"), Some(true));
+        assert!(!s.is_muted("Alice"));
+        assert_eq!(s.unmute("Alice"), Some(false), "already unmuted");
+        assert_eq!(s.mute_state("Alice"), Some((0, "")));
+    }
+
+    /// An expired mute is dropped on read, like the upstream auto-clear.
+    #[test]
+    fn expired_mutes_are_cleared_on_read() {
+        let mut s = SessionPlayers::default();
+        s.join("Alice", "Normal");
+
+        // A timestamp strictly in the past, so the result cannot depend on how
+        // fast the clock ticks between the two calls.
+        s.state_mut("Alice").unwrap().mute_until = crate::clock::now_millis() - 1;
+        assert!(s.expire_mute("Alice"));
+        assert_eq!(s.mute_state("Alice").unwrap().0, 0);
+
+        // A permanent mute is never expired.
+        s.mute("Alice", -1, "forever");
+        assert!(!s.expire_mute("Alice"));
+        assert!(s.is_muted("Alice"));
+
+        // Neither is an unmuted player, and an offline one has no state.
+        s.unmute("Alice");
+        assert!(!s.expire_mute("Alice"));
+        assert!(!s.expire_mute("Nobody"));
+    }
+
     #[test]
     fn global_mute_overrides() {
         let mut s = SessionPlayers::default();
         s.set_global_muted(true);
-        assert!(s.is_muted("anyone"));
+        assert!(s.is_global_muted());
+        // The global mute is not a personal mute: the two are asked separately
+        // because operators bypass only the former (spec §1.4 step 3).
+        assert!(!s.is_muted("anyone"));
     }
 
     /// §1.3 step 6 — shadow mute is a per-player flag, set/cleared/toggled

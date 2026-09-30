@@ -262,20 +262,35 @@ fn chat_pipeline(
     //    while a personal mute applies to everyone. Order between them is fixed.
     let is_op = condition::is_op(player);
     {
+        // §6 — a personal mute whose expiry has passed clears itself on read
+        // (`ModerationService.java:54-62`).
+        {
+            let mut session = SessionPlayers::global()
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            session.expire_mute(&name);
+        }
         let session = SessionPlayers::global();
         let session = session.read().unwrap_or_else(|e| e.into_inner());
+        // The global mute is skipped for operators, the personal mute is not
+        // (spec §1.4 steps 3-4).
         let globally_muted = session.is_global_muted() && !is_op;
         let personally_muted = session.is_muted(&name);
         if globally_muted || personally_muted {
-            let key = if globally_muted {
-                "General-Global-Muting"
-            } else {
-                "General-Muted"
-            };
+            // `General-Muted` interpolates the expiry and the reason.
+            let detail = session.mute_state(&name).map(|(until, reason)| {
+                (
+                    crate::playerdata::mute_expiry_text(until),
+                    reason.to_string(),
+                )
+            });
             drop(session);
-            // The session store tracks no expiry/reason yet — fill the
-            // upstream `{0}`/`{1}` args with placeholder values.
-            return reject_with(player, &locale, key, &["∞", "—"]);
+            if globally_muted {
+                return reject_with(player, &locale, "General-Global-Muting", &[]);
+            }
+            let (expiry, reason) =
+                detail.unwrap_or_else(|| ("permanent".to_string(), "-".to_string()));
+            return reject_with(player, &locale, "General-Muted", &[&expiry, &reason]);
         }
     }
 
@@ -743,12 +758,7 @@ pub fn chat_log_line(
 /// The `HH:mm:ss` timestamp of §1.6, from the host clock (UTC — see
 /// [`log_to_console`] for why the sandbox cannot use the system timezone).
 fn clock_hhmmss() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let day = secs % 86_400;
-    format!("{:02}:{:02}:{:02}", day / 3600, (day % 3600) / 60, day % 60)
+    crate::clock::now_hhmmss()
 }
 
 /// `ChatLogService.safe()` — one line per record, so `\r` and `\n` become
