@@ -143,8 +143,13 @@ fn server_token(key: &str, player: &Player, server: &Server, config: &TrChatConf
             if let Some(dim) = key.strip_prefix("online_") {
                 return server_online_in_dimension(dim, server);
             }
-            // `time_<pattern>` / `countdown_*` need a full date formatter and
-            // `ZonedDateTime`; not available in the sandbox.
+            // §1.4 `%server_time_<pattern>%` — the pattern is used as it
+            // arrived, i.e. already lowercased (§1.1 step 3).
+            if let Some(pattern) = key.strip_prefix("time_") {
+                return crate::clock::format_pattern(pattern, crate::clock::now_millis());
+            }
+            // `countdown_*` needs `LocalDateTime`/`LocalDate` parsing, which the
+            // sandbox has no equivalent for; it stays unsupported → empty.
             let _ = player;
             String::new()
         }

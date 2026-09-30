@@ -70,9 +70,129 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (if month <= 2 { year + 1 } else { year }, month, day)
 }
 
+/// Renders an instant with the subset of `java.time.format.DateTimeFormatter`
+/// patterns TrChat's configs use.
+///
+/// Upstream `%server_time_<pattern>%` is
+/// `ZonedDateTime.now().format(DateTimeFormatter.ofPattern(pattern))`; an
+/// illegal pattern makes the formatter throw and the resolver returns `""`. WASI
+/// exposes no time zone database, so the instant is rendered in **UTC**
+/// (documented deviation — the Mod uses the server's system zone).
+///
+/// Supported letters (case-sensitive, as in Java): `y`/`yy`/`yyyy` years,
+/// `M`/`MM`/`MMM`/`MMMM` months (numeric/short/full English), `d`/`dd` days,
+/// `H`/`HH` 24-hour, `h`/`hh` 12-hour, `m`/`mm` minutes, `s`/`ss` seconds.
+/// `'` quotes literal text (`''` is a single quote). Any other ASCII letter is
+/// an illegal pattern → `""`.
+///
+/// Note that the placeholder resolver lowercases the whole token before routing
+/// it here (§1.1 step 3), so `%server_time_HH:mm:ss%` arrives as `hh:mm:ss` —
+/// the 12-hour clock. That is the upstream behaviour, not a bug here.
+pub fn format_pattern(pattern: &str, millis: i64) -> String {
+    const MONTHS: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    let seconds = millis.div_euclid(1_000);
+    let days = seconds.div_euclid(86_400);
+    let time_of_day = seconds.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    let hour24 = time_of_day / 3_600;
+    let minute = (time_of_day % 3_600) / 60;
+    let second = time_of_day % 60;
+    let hour12 = if hour24 % 12 == 0 { 12 } else { hour24 % 12 };
+
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\'' {
+            if chars.get(i + 1) == Some(&'\'') {
+                out.push('\'');
+                i += 2;
+                continue;
+            }
+            i += 1;
+            let mut closed = false;
+            while i < chars.len() {
+                // `''` inside a quoted section is a literal single quote that
+                // keeps the section open (Java rule).
+                if chars[i] == '\'' && chars.get(i + 1) == Some(&'\'') {
+                    out.push('\'');
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == '\'' {
+                    closed = true;
+                    i += 1;
+                    break;
+                }
+                out.push(chars[i]);
+                i += 1;
+            }
+            // Java rejects an unterminated quote.
+            if !closed {
+                return String::new();
+            }
+            continue;
+        }
+        if !c.is_ascii_alphabetic() {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        let mut end = i;
+        while end < chars.len() && chars[end] == c {
+            end += 1;
+        }
+        let run = end - i;
+        let piece = match c {
+            'y' => pad(year, run),
+            'M' => match run {
+                1 => month.to_string(),
+                2 => format!("{month:02}"),
+                3 => MONTHS[(month - 1) as usize][..3].to_string(),
+                4 => MONTHS[(month - 1) as usize].to_string(),
+                // 5+ letters are the narrow form, which the port does not ship.
+                _ => return String::new(),
+            },
+            'd' => pad(i64::from(day), run),
+            'H' => pad(hour24, run),
+            'h' => pad(hour12, run),
+            'm' => pad(minute, run),
+            's' => pad(second, run),
+            _ => return String::new(),
+        };
+        out.push_str(&piece);
+        i = end;
+    }
+    out
+}
+
+/// Zero-pads `value` to at least `width` digits; a single letter means "no
+/// padding", which is Java's minimum-width rule.
+fn pad(value: i64, width: usize) -> String {
+    if width <= 1 {
+        value.to_string()
+    } else {
+        format!("{value:0>width$}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{civil_from_days, format_millis, now_hhmmss};
+    use super::{civil_from_days, format_millis, format_pattern, now_hhmmss};
 
     /// The epoch itself, plus a leap day and a year boundary.
     #[test]
@@ -111,5 +231,43 @@ mod tests {
         assert_eq!(now.len(), 8, "{now}");
         assert_eq!(&now[2..3], ":");
         assert_eq!(&now[5..6], ":");
+    }
+
+    /// §1.4 — the pattern letters the shipped configs use. The instant is
+    /// 2024-03-01 13:05:09 UTC.
+    #[test]
+    fn patterns_render_the_instant() {
+        let millis = 1_709_298_309_000; // 2024-03-01 13:05:09 UTC
+        assert_eq!(format_millis(millis), "2024-03-01 13:05:09");
+        assert_eq!(
+            format_pattern("yyyy-MM-dd HH:mm:ss", millis),
+            "2024-03-01 13:05:09"
+        );
+        // Lowercased, as the resolver delivers it: `mm` is a *minute*.
+        assert_eq!(format_pattern("hh:mm:ss", millis), "01:05:09");
+        assert_eq!(format_pattern("yyyy-mm-dd", millis), "2024-05-01");
+        // Single letters are the unpadded numeric forms.
+        assert_eq!(format_pattern("y-M-d H:m:s", millis), "2024-3-1 13:5:9");
+        // Text months and the 12-hour clock (0:xx and 12:xx both map to 12).
+        assert_eq!(format_pattern("d MMMM yyyy", millis), "1 March 2024");
+        assert_eq!(format_pattern("d MMM yyyy", millis), "1 Mar 2024");
+        assert_eq!(format_pattern("h", 1_709_251_200_000), "12");
+        assert_eq!(format_pattern("H", 1_709_251_200_000), "0");
+    }
+
+    /// Literals, quoting, and the illegal-pattern path (Java throws, the
+    /// upstream resolver swallows it and yields `""`).
+    #[test]
+    fn patterns_handle_literals_and_reject_illegal_letters() {
+        let millis = 1_709_298_309_000; // 2024-03-01 13:05:09 UTC
+                                        // Non-letters pass through, including a quoted letter run.
+        assert_eq!(format_pattern("HH:mm 'o''clock'", millis), "13:05 o'clock");
+        assert_eq!(format_pattern("yyyy/MM/dd", millis), "2024/03/01");
+        // An unsupported letter, an unterminated quote and the narrow form.
+        assert_eq!(format_pattern("yyyy-MM-dd E", millis), "");
+        assert_eq!(format_pattern("HH:mm 'oops", millis), "");
+        assert_eq!(format_pattern("MMMMM", millis), "");
+        // An empty pattern renders empty rather than falling back to anything.
+        assert_eq!(format_pattern("", millis), "");
     }
 }
