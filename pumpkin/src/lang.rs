@@ -179,6 +179,42 @@ pub fn lang_init(data_folder: &str, default_language: &str) {
     *lock.write().unwrap_or_else(|e| e.into_inner()) = next;
 }
 
+/// `/trchat reload` language refresh — `ModerationService.reloadLanguages`
+/// (`ModerationService.java:41-43`).
+///
+/// Unlike [`lang_init`] the outcome is reported, so `/trchat reload` can list
+/// `lang` among the failed sections (`Reload-Partial`) and keep the previous
+/// table when a `lang/*.yml` file is unreadable or not a YAML mapping.
+pub fn reload(data_folder: &str, default_language: &str) -> Result<(), String> {
+    validate_folder(data_folder)?;
+    lang_init(data_folder, default_language);
+    Ok(())
+}
+
+/// Every `lang/*.yml` in `data_folder` must be a readable YAML mapping. A
+/// folder that does not exist yet is not a failure — there is nothing to
+/// override, so the bundled defaults simply stay in place.
+fn validate_folder(data_folder: &str) -> Result<(), String> {
+    let dir = std::path::Path::new(data_folder).join("lang");
+    let Ok(read_dir) = std::fs::read_dir(&dir) else {
+        return Ok(());
+    };
+    for entry in read_dir.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".yml") && !name.ends_with(".yaml") {
+            continue;
+        }
+        let raw =
+            std::fs::read_to_string(entry.path()).map_err(|e| format!("read lang/{name}: {e}"))?;
+        match serde_yaml::from_str::<Value>(&raw) {
+            Ok(Value::Mapping(_)) => {}
+            Ok(_) => return Err(format!("lang/{name} is not a YAML mapping")),
+            Err(e) => return Err(format!("parse lang/{name}: {e}")),
+        }
+    }
+    Ok(())
+}
+
 /// Parses one `lang/<locale>.yml` document into a flat key → string table.
 ///
 /// §3.1 — the only nested mapping a language file may have is

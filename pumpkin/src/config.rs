@@ -719,13 +719,19 @@ impl SharedConfig {
     }
 
     /// Re-reads every YAML file from disk and swaps the snapshot in place.
-    pub fn reload(&self, folder: &str) -> Result<(), String> {
-        let config = load_from_folder(folder)?;
-        let default_language = config.default_language().to_string();
-        crate::lang::lang_init(folder, &default_language);
-        crate::special::reload(Path::new(folder))?;
-        *self.0.write().unwrap_or_else(|e| e.into_inner()) = config;
-        Ok(())
+    ///
+    /// Mirrors `ChatService.reloadConfiguration` (`ChatService.java:348-364`):
+    /// a `settings.yml`/`channels` failure aborts the reload and the previous
+    /// snapshot stays in place (the Mod's `channelCount < 0` sentinel), while a
+    /// `function.yml`/`filter.yml`/`lang` failure only keeps that section's
+    /// previous value and marks the reload partial.
+    pub fn reload(&self, folder: &str) -> ReloadOutcome {
+        let previous = self.0.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let (next, outcome) = reload_from_folder(folder, &previous);
+        if !outcome.is_total_failure() {
+            *self.0.write().unwrap_or_else(|e| e.into_inner()) = next;
+        }
+        outcome
     }
 }
 
@@ -746,19 +752,174 @@ pub fn global_config() -> &'static SharedConfig {
 }
 
 /// `/trchat reload` — re-reads the YAML files from the data folder.
-pub fn reload_global() -> Result<(), String> {
+pub fn reload_global() -> Result<ReloadOutcome, String> {
     let folder = DATA_FOLDER
         .get()
         .ok_or_else(|| "trchat config is not initialized yet".to_string())?;
-    global_config().reload(folder)
+    Ok(global_config().reload(folder))
+}
+
+/// Outcome of `/trchat reload` — the Mod's `ChatService.ReloadResult`
+/// (`ChatService.java:348-364, 1226`).
+///
+/// The command picks the language key from this value (`TRC:430-458`):
+/// `channelCount < 0` → `Reload-Failed`, a non-empty section list →
+/// `Reload-Partial` (with the count and the list), otherwise `Reload-Success`
+/// (with the count).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReloadOutcome {
+    /// Channels that loaded. A negative value is the Mod's sentinel for a
+    /// channels failure, which aborts the whole reload
+    /// (`ChatService.java:350-352`).
+    pub channel_count: i32,
+    /// Sections that failed while the rest loaded (`function.yml`,
+    /// `filter.yml`, `lang`); each keeps its previous value.
+    pub failed_sections: Vec<String>,
+}
+
+impl ReloadOutcome {
+    /// Total failure — the caller keeps the previous snapshot.
+    pub fn failed(section: &str) -> Self {
+        Self {
+            channel_count: -1,
+            failed_sections: vec![section.to_string()],
+        }
+    }
+
+    /// `ReloadResult.success()` — no total failure and no partial section.
+    pub fn success(&self) -> bool {
+        self.channel_count >= 0 && self.failed_sections.is_empty()
+    }
+
+    /// `channelCount < 0` — the command prints `Reload-Failed`.
+    pub fn is_total_failure(&self) -> bool {
+        self.channel_count < 0
+    }
+
+    /// The failed sections joined the way the Mod passes them to the language
+    /// keys (`String.join(", ", result.failedSections())`, `TRC:437,450`).
+    pub fn failed_list(&self) -> String {
+        self.failed_sections.join(", ")
+    }
+}
+
+/// `/trchat reload` — re-reads every file, mirroring
+/// `ChatService.reloadConfiguration` (`ChatService.java:348-364`).
+///
+/// * `settings.yml` / `channels/*.yml` failures abort the reload and return the
+///   Mod's `channelCount < 0` sentinel, so the caller keeps the previous
+///   snapshot (`Reload-Failed`). `settings.yml` has no Mod counterpart — the
+///   Mod never re-reads it — but the port cannot rebuild the snapshot without
+///   it, so it is reported the same way a channels failure is.
+/// * `function.yml` / `filter.yml` / `lang` failures keep that section's
+///   previous value and are listed in `failed_sections` (`Reload-Partial`).
+/// * `datasource.yml`, `special-chars.yml` and Redis have no failure channel in
+///   the Mod either (`SpecialChars.reload()` is `void`, `reconnectRedis()` is a
+///   no-op here), so they never mark the reload partial.
+pub fn reload_from_folder(folder: &str, previous: &TrChatConfig) -> (TrChatConfig, ReloadOutcome) {
+    let root = Path::new(folder);
+    if let Err(e) = seed_defaults(root) {
+        eprintln!("[trchat] reload: {e}");
+        return (previous.clone(), ReloadOutcome::failed("config"));
+    }
+    let settings = match read_settings(root) {
+        Ok(settings) => settings,
+        Err(e) => {
+            eprintln!("[trchat] reload: {e}");
+            return (previous.clone(), ReloadOutcome::failed("settings.yml"));
+        }
+    };
+    let (channels, msg) = match read_channels(root) {
+        Ok(loaded) => loaded,
+        Err(e) => {
+            // `ChatService.java:350-352` — a channel failure is fatal for the
+            // whole reload and the command reports `channels`.
+            eprintln!("[trchat] reload: {e}");
+            return (previous.clone(), ReloadOutcome::failed("channels"));
+        }
+    };
+
+    let mut failed_sections = Vec::new();
+    let function = match parse_optional_strict(root, "function.yml", parse_function) {
+        Ok(function) => function,
+        Err(e) => {
+            eprintln!("[trchat] reload: {e}");
+            failed_sections.push("function.yml".to_string());
+            previous.function.clone()
+        }
+    };
+    let filter = match parse_optional_strict(root, "filter.yml", parse_filter) {
+        Ok(filter) => filter,
+        Err(e) => {
+            eprintln!("[trchat] reload: {e}");
+            failed_sections.push("filter.yml".to_string());
+            previous.filter.clone()
+        }
+    };
+    let next = TrChatConfig {
+        settings,
+        channels,
+        msg,
+        // The Mod does not reload `datasource.yml` at all; a malformed file
+        // keeps the previous section rather than aborting the reload.
+        datasource: parse_optional(
+            root,
+            "datasource.yml",
+            parse_datasource,
+            previous.datasource.clone(),
+        )
+        .unwrap_or_else(|_| previous.datasource.clone()),
+        function,
+        filter,
+    };
+
+    // `ModerationService.reloadLanguages` (`ModerationService.java:41-43`).
+    let default_language = next.default_language().to_string();
+    if let Err(e) = crate::lang::reload(folder, &default_language) {
+        eprintln!("[trchat] reload: lang: {e}");
+        failed_sections.push("lang".to_string());
+    }
+    // `SpecialChars.reload()` — no failure tracking in the Mod either.
+    let _ = crate::special::reload(root);
+
+    let outcome = ReloadOutcome {
+        channel_count: next.channels.len() as i32,
+        failed_sections,
+    };
+    (next, outcome)
 }
 
 // ---- loaders ----
 
 /// Full loader: seeds the data folder with bundled defaults (first run),
-/// then parses `settings.yml` and `channels/*.yml`.
+/// then parses `settings.yml`, `channels/*.yml` and the optional sections.
 pub fn load_from_folder(folder: &str) -> Result<TrChatConfig, String> {
     let root = Path::new(folder);
+    seed_defaults(root)?;
+    let settings = read_settings(root)?;
+    let (channels, msg) = read_channels(root)?;
+
+    Ok(TrChatConfig {
+        settings,
+        channels,
+        msg,
+        // datasource.yml / function.yml / filter.yml — parsed for future wiring
+        // (state store, command controller, chat functions); on this startup
+        // path a malformed file keeps the bundled defaults.
+        datasource: parse_optional(
+            root,
+            "datasource.yml",
+            parse_datasource,
+            DataSourceConfig::default(),
+        )?,
+        function: parse_optional(root, "function.yml", parse_function, FunctionConfig::default())?,
+        filter: parse_optional(root, "filter.yml", parse_filter, FilterConfig::default())?,
+    })
+}
+
+/// Seeds `settings.yml`, the optional files and the bundled `channels` /
+/// `lang` defaults. Only files that do not exist yet are written.
+fn seed_defaults(root: &Path) -> Result<(), String> {
     let channels_dir = root.join("channels");
     let lang_dir = root.join("lang");
     fs::create_dir_all(&channels_dir).map_err(|e| format!("create channels dir: {e}"))?;
@@ -795,13 +956,20 @@ pub fn load_from_folder(folder: &str) -> Result<TrChatConfig, String> {
     for (name, content) in defaults::LANGS {
         write_default(&lang_dir.join(format!("{name}.yml")), content, "lang/*.yml")?;
     }
+    Ok(())
+}
 
-    // settings.yml
+/// `settings.yml` — mandatory: the snapshot cannot be built without it.
+fn read_settings(root: &Path) -> Result<Settings, String> {
     let raw = fs::read_to_string(root.join("settings.yml"))
         .map_err(|e| format!("read settings.yml: {e}"))?;
-    let settings: Settings =
-        serde_yaml::from_str(&raw).map_err(|e| format!("parse settings.yml: {e}"))?;
+    serde_yaml::from_str(&raw).map_err(|e| format!("parse settings.yml: {e}"))
+}
 
+/// `channels/*.yml` — mandatory: `normal` must exist and at most one channel
+/// may be the Auto-Join one ([`validate_channels`]).
+fn read_channels(root: &Path) -> Result<(Vec<ChannelConfig>, PrivateMessageFormats), String> {
+    let channels_dir = root.join("channels");
     // channels/*.yml, in deterministic order; Example/Schema never load.
     let mut entries: Vec<(String, String)> = Vec::new();
     for entry in fs::read_dir(&channels_dir).map_err(|e| format!("read channels dir: {e}"))? {
@@ -832,36 +1000,36 @@ pub fn load_from_folder(folder: &str) -> Result<TrChatConfig, String> {
     let channels = parse_channels(&entries);
     validate_channels(&channels)?;
     let msg = private_formats(&channels);
+    Ok((channels, msg))
+}
 
-    // datasource.yml / function.yml — parsed for future wiring (state store,
-    // command controller, chat functions); defaults are seeded above.
-    let mut datasource = DataSourceConfig::default();
-    let raw = fs::read_to_string(root.join("datasource.yml"))
-        .map_err(|e| format!("read datasource.yml: {e}"))?;
-    if let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&raw) {
-        datasource = parse_datasource(&value);
-    }
-    let mut function = FunctionConfig::default();
-    let raw = fs::read_to_string(root.join("function.yml"))
-        .map_err(|e| format!("read function.yml: {e}"))?;
-    if let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&raw) {
-        function = parse_function(&value);
-    }
-    let mut filter = FilterConfig::default();
-    let raw =
-        fs::read_to_string(root.join("filter.yml")).map_err(|e| format!("read filter.yml: {e}"))?;
-    if let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&raw) {
-        filter = parse_filter(&value);
-    }
-
-    Ok(TrChatConfig {
-        settings,
-        channels,
-        msg,
-        datasource,
-        function,
-        filter,
+/// Optional-section parse: a read error is fatal, a YAML parse error keeps the
+/// caller's fallback (the Mod's tolerant first-run load).
+fn parse_optional<T>(
+    root: &Path,
+    file: &str,
+    parse: impl Fn(&serde_yaml::Value) -> T,
+    fallback: T,
+) -> Result<T, String> {
+    let raw = fs::read_to_string(root.join(file)).map_err(|e| format!("read {file}: {e}"))?;
+    Ok(match serde_yaml::from_str::<serde_yaml::Value>(&raw) {
+        Ok(value) => parse(&value),
+        Err(_) => fallback,
     })
+}
+
+/// Same as [`parse_optional`], but a malformed file is an error so
+/// `/trchat reload` can list the section as failed while keeping its previous
+/// value (`Reload-Partial`).
+fn parse_optional_strict<T>(
+    root: &Path,
+    file: &str,
+    parse: impl Fn(&serde_yaml::Value) -> T,
+) -> Result<T, String> {
+    let raw = fs::read_to_string(root.join(file)).map_err(|e| format!("read {file}: {e}"))?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(&raw)
+        .map_err(|e| format!("parse {file}: {e}"))?;
+    Ok(parse(&value))
 }
 
 fn write_default(path: &Path, content: &str, label: &str) -> Result<(), String> {
@@ -2417,6 +2585,139 @@ font: "minecraft:default"
         );
         let ids: Vec<&str> = config.channels().iter().map(|c| c.id.as_str()).collect();
         assert_eq!(ids, vec!["Global", "Normal", "Private", "Staff"]);
+    }
+
+    /// `/trchat reload` — the Mod's `ReloadResult` and the three language keys
+    /// the command derives from it (`ChatService.java:348-364`, `TRC:430-458`).
+    #[test]
+    fn reload_outcome_splits_into_success_partial_and_failure() {
+        let success = ReloadOutcome {
+            channel_count: 4,
+            failed_sections: Vec::new(),
+        };
+        assert!(success.success());
+        assert!(!success.is_total_failure());
+        assert_eq!(success.failed_list(), "");
+
+        // Partial: the count survives and the failed section is listed.
+        let partial = ReloadOutcome {
+            channel_count: 4,
+            failed_sections: vec!["filter.yml".to_string()],
+        };
+        assert!(!partial.success());
+        assert!(!partial.is_total_failure());
+        assert_eq!(partial.failed_list(), "filter.yml");
+
+        // Total failure: the Mod's `channelCount < 0` sentinel.
+        let failed = ReloadOutcome::failed("channels");
+        assert!(!failed.success());
+        assert!(failed.is_total_failure());
+        assert_eq!(failed.failed_list(), "channels");
+    }
+
+    /// A malformed `filter.yml` marks the reload partial, keeps the previous
+    /// filter and leaves the channel list intact (`Reload-Partial`).
+    #[test]
+    fn reload_keeps_previous_filter_and_lists_the_section() {
+        let dir = temp_dir("reload_partial_filter");
+        let root = std::path::PathBuf::from(&dir);
+        let previous = load_from_folder(&dir).expect("defaults must load");
+        let previous_words = previous.filter.local_words.len();
+        let previous_channels = previous.channels().len();
+
+        fs::write(root.join("filter.yml"), "Local: [unclosed\n").expect("break filter.yml");
+        let (next, outcome) = reload_from_folder(&dir, &previous);
+
+        assert_eq!(outcome.failed_sections, vec!["filter.yml".to_string()]);
+        assert!(
+            !outcome.is_total_failure(),
+            "an optional section never aborts the reload"
+        );
+        assert!(!outcome.success(), "a failed section means Reload-Partial");
+        assert_eq!(outcome.channel_count as usize, previous_channels);
+        assert_eq!(
+            next.filter.local_words.len(),
+            previous_words,
+            "the previous filter is kept"
+        );
+        assert_eq!(
+            next.channels().len(),
+            previous_channels,
+            "the channels still load"
+        );
+    }
+
+    /// A channels failure is the Mod's *total* failure: `channelCount < 0` and
+    /// the caller keeps the previous snapshot (`Reload-Failed`).
+    #[test]
+    fn reload_reports_channels_failure() {
+        let dir = temp_dir("reload_channels_failure");
+        let root = std::path::PathBuf::from(&dir);
+        let previous = load_from_folder(&dir).expect("defaults must load");
+        let previous_channels = previous.channels().len();
+
+        // §2.5 — `normal` is mandatory. The file itself stays in place (so the
+        // default seeder does not rewrite it) but no longer parses, which makes
+        // the channel scan fail the same way a missing `normal` would.
+        fs::write(root.join("channels").join("Normal.yml"), "\tnot: [valid\n")
+            .expect("break Normal.yml");
+        let (next, outcome) = reload_from_folder(&dir, &previous);
+
+        assert!(outcome.is_total_failure());
+        assert_eq!(outcome.failed_list(), "channels");
+        assert_eq!(
+            next.channels().len(),
+            previous_channels,
+            "the reload returns the previous snapshot"
+        );
+    }
+
+    /// A healthy folder reports every channel and no failed section
+    /// (`Reload-Success`).
+    #[test]
+    fn reload_success_counts_every_channel() {
+        let dir = temp_dir("reload_success");
+        let previous = load_from_folder(&dir).expect("defaults must load");
+
+        let (next, outcome) = reload_from_folder(&dir, &previous);
+
+        assert!(outcome.success());
+        assert_eq!(outcome.channel_count as usize, next.channels().len());
+        assert_eq!(outcome.channel_count, previous.channels().len() as i32);
+    }
+
+    /// `settings.yml` is mandatory, so it aborts the reload like a channels
+    /// failure does (the port has no Mod counterpart: the Mod never re-reads
+    /// its own config file).
+    #[test]
+    fn reload_reports_settings_failure() {
+        let dir = temp_dir("reload_settings_failure");
+        let root = std::path::PathBuf::from(&dir);
+        let previous = load_from_folder(&dir).expect("defaults must load");
+
+        fs::write(root.join("settings.yml"), "General: [unclosed\n").expect("break settings.yml");
+        let (next, outcome) = reload_from_folder(&dir, &previous);
+
+        assert!(outcome.is_total_failure());
+        assert_eq!(outcome.failed_list(), "settings.yml");
+        assert_eq!(next.message_max_length(), previous.message_max_length());
+    }
+
+    /// A malformed `lang/*.yml` is reported as the `lang` section while the
+    /// rest of the reload still applies (`Reload-Partial`).
+    #[test]
+    fn reload_keeps_previous_lang_and_lists_the_section() {
+        let dir = temp_dir("reload_partial_lang");
+        let root = std::path::PathBuf::from(&dir);
+        let previous = load_from_folder(&dir).expect("defaults must load");
+
+        fs::write(root.join("lang").join("en_US.yml"), "Not: [a mapping\n")
+            .expect("break en_US.yml");
+        let (_next, outcome) = reload_from_folder(&dir, &previous);
+
+        assert_eq!(outcome.failed_sections, vec!["lang".to_string()]);
+        assert!(!outcome.success());
+        assert!(!outcome.is_total_failure());
     }
 
     /// `load_from_folder` seeds a fresh folder and parses the Mod defaults.

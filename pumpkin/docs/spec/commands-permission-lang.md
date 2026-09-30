@@ -40,6 +40,14 @@
 | `/trchat clear <player\|*>` | `word` | `trchat.command.clear` | 向目标发 80 行空组件清屏；`*` = 全服 | 成功 `Clear-Success`；`General-Player-Not-Found` |
 | `/trchat view <snapshot>` | `word` | 无 | 打开 function 背包快照 UI | 过期 `Function-Snapshot-Expired` |
 
+> **Pumpkin deviation（§1.2，`/trchat reload` 的三态）**：Mod 的 `ReloadResult(success, channelCount, failedSections)`（`ChatService.java:348-364, 1226`）在 Rust 侧落成 `config::ReloadOutcome { channel_count, failed_sections }`，`ReloadCommand` 据此输出三个语言键，与 `TRC:430-458` 一致：`channel_count < 0` → `Reload-Failed`（参数 = `failed_sections` 逗号连接）、`failed_sections` 非空 → `Reload-Partial`（频道数 + 列表）、否则 → `Reload-Success`（频道数）。
+> 段级语义：`channels` 失败 = 整次 reload 中止并保留上一份快照（对应 Mod 的 `channelCount < 0`）；`function.yml` / `filter.yml` / `lang` 失败只保留该段旧值并计入 `failedSections`。
+> `settings.yml` 在 Mod 侧**根本不会重读**，但 Rust 侧快照无法在缺少它时重建，因此其失败也按整次失败上报（段名 `settings.yml`）；`datasource.yml`、`special-chars.yml` 与 Redis 在 Mod 侧同样没有失败通道（`SpecialChars.reload()` 为 `void`，`reconnectRedis()` 在本移植中是 no-op），因此不会把 reload 标记为 partial。
+>
+> **Pumpkin deviation（§1.2，`/trchat channel join <channel> <player>` 的未知频道键）**：Mod 的两条分支用不同键 —— 自助 `selectChannel` 用 `Channel-Unknown`（`TRC:603-608`），代他人 `setPlayerChannel` 先过 `isJoinable()`（`!privateChannel()`，`TRC:628`）再报 `Channel-Not-Found`（`TRC:631`）。Rust 侧 `ChannelJoinCommand` 已按 target 是否存在选键，并对 target 分支施加同一 `private` 过滤。
+>
+> **Pumpkin open deviation（§1.2，`/trchat reload` 的权限门）**：Mod 用注册期 `.requires(hasPermission(2))`（`TRC:91-97`），**不认** `trchat.admin`；Rust 侧改查 `trchat:trchat.admin` 节点，而该节点注册默认值就是 `Op(Two)`，故对 OP2 玩家等价，差别仅在“非 OP 被额外显式授予 `trchat.admin`”也会放行。要与 Mod 完全一致应改用 OP 等级判定（`sender.has_permission_lvl(Two)`）；**尚未修改，待定**。
+
 ### 1.3 顶层命令与别名（`TRC:238-257, 784-808`）
 
 | 命令 | 权限 | 行为 |
@@ -200,6 +208,10 @@
 | `Reload-*` | 3 | `Reload-Success`、`Reload-Partial`、`Reload-Failed` |
 | `Global-*` | 2 | `Global-Mute-On`、`Global-Mute-Off` |
 | 单键 | 5 | `Console-Name`、`Clear-Success`、`Cooldowns-Chat`、`Filter-Anvil-Blocked`、`Placeholder-Translations`（映射，19 条：`yes`/`no`、4 个游戏模式、`Overworld`/`Nether`/`The End`、8 个方位 `N`…`NW`、`invalid date`、`invalid format and time`） |
+
+> **Pumpkin deviation（§3.3，默认文件里存在但 Rust 侧无引用点的键）**：三份默认语言文件保留了完整的 Mod 键集，下列键暂未被引用，因为对应子系统不在本次移植范围：
+> `Console-Name`（Mod 用作 console 日志前缀/查看者名，Rust 侧 console 视图另行拼装）、`Filter-Anvil-Blocked`（告示牌/铁砧过滤 out of scope，见 `config.rs` 中 `FilterConfig` 的 `dead_code` 注释）、`Updater-*`（UpdateChecker 未移植）、`Status-State-Connected` / `Status-State-Reconnecting`（Redis 未实现，`/trchat status` 固定报 `Status-State-Disabled`）、`Status-Creator-Link-Hover` / `Status-Repository-Link-Hover`（WIT 反馈通道每条只承载一个组件，链接以纯文本附加，hover 丢弃）。
+> 其余“只在 Mod 源码出现”的字符串 —— `TrChat-Data-Save`、`TrChat-Filter-Cloud`、`trchat-message`、`trchat-neoforge`、`User-Agent` —— 分别是线程名、虚拟线程名、配置频道名、旧版数据目录名与 HTTP 头，**不是语言键**。
 
 ---
 

@@ -791,6 +791,11 @@ fn message(key: &str, sender: &CommandSender, args: &[&str]) -> String {
 }
 
 /// `/trchat reload` — swap the process-wide config from disk.
+///
+/// Reports the Mod's three states (`ChatService.ReloadResult` →
+/// `TRC:430-458`): a negative channel count is `Reload-Failed`, a non-empty
+/// failed-section list is `Reload-Partial` (count + list), otherwise
+/// `Reload-Success` (count).
 struct ReloadCommand;
 
 impl CommandHandler for ReloadCommand {
@@ -805,8 +810,35 @@ impl CommandHandler for ReloadCommand {
             return Ok(0);
         }
         match config::reload_global() {
-            Ok(()) => send(&sender, "&a[TrChat] Configuration reloaded."),
-            Err(e) => send(&sender, &format!("&c[TrChat] Reload failed: {e}")),
+            Ok(outcome) if outcome.is_total_failure() => {
+                send(
+                    &sender,
+                    &message("Reload-Failed", &sender, &[&outcome.failed_list()]),
+                );
+            }
+            Ok(outcome) if !outcome.success() => {
+                send(
+                    &sender,
+                    &message(
+                        "Reload-Partial",
+                        &sender,
+                        &[&outcome.channel_count.to_string(), &outcome.failed_list()],
+                    ),
+                );
+            }
+            Ok(outcome) => {
+                send(
+                    &sender,
+                    &message(
+                        "Reload-Success",
+                        &sender,
+                        &[&outcome.channel_count.to_string()],
+                    ),
+                );
+            }
+            // The data folder is not initialised yet: no section could even be
+            // read, so it is reported like the Mod's total failure.
+            Err(e) => send(&sender, &message("Reload-Failed", &sender, &[&e])),
         }
         Ok(0)
     }
@@ -1737,9 +1769,22 @@ impl CommandHandler for ChannelJoinCommand {
         };
 
         let guard = config.read();
-        let Some(channel) = guard.channel_by_id(&name) else {
-            send(&sender, &message("Channel-Unknown", &sender, &[&name]));
-            return Ok(0);
+        // §1.2 — the self branch reports `Channel-Unknown` for an unknown id
+        // (`TRC:603-608`), while the `other` branch filters the lookup through
+        // `isJoinable()` (`!privateChannel()`, `TRC:628`) and reports
+        // `Channel-Not-Found`.
+        let channel = match (guard.channel_by_id(&name), other.is_some()) {
+            (Some(channel), false) => channel,
+            (Some(channel), true) if !channel.options.private => channel,
+            _ => {
+                let key = if other.is_some() {
+                    "Channel-Not-Found"
+                } else {
+                    "Channel-Unknown"
+                };
+                send(&sender, &message(key, &sender, &[&name]));
+                return Ok(0);
+            }
         };
         // Join permission: empty permission opens the channel to everyone.
         if !channel.permission().is_empty()
