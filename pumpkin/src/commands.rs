@@ -11,13 +11,15 @@
 //! * `/trchat mute player <player> <duration> [reason]` — mute a player
 //! * `/trchat unmute <player>` — clear a player's mute (`trchat.mute`)
 //! * `/trmute`, `/mute`, `/trunmute` — standalone aliases of the above
-//! * `/trchat ignore <player>` — toggle ignoring a player (open to everyone)
+//! * `/trchat ignore <player> [on|off]` — toggle ignoring a player (open)
+//! * `/ignore`, `/trignore <player> [on|off]`, `/ignorelist` — §1.3 aliases
+//! * `/trspy [on|off]`       — standalone alias of `/trchat spy`
 //! * `/trchat channel join|quit …` — channel membership (open to everyone)
 //! * `/trchat shadowmute <player> [on|off]` — shadow mute (§2.2)
 //! * `/trchat view <snapshot>` — open a read-only inventory snapshot (§2.11)
 //! * `/channel join|quit …`  — alias of `trchat channel …`
 //! * `/trshadowmute`, `/shadowmute` — alias of `trchat shadowmute`
-//! * `/msg <target> <msg>`   — private message (`tell` alias)
+//! * `/msg <target> <msg>`   — private message (`tell`, `/trmsg` aliases)
 //!
 //! Registration permissions are declared in [`register_permissions`]: Pumpkin
 //! resolves the requirement attached by `Context::register_command` against the
@@ -59,6 +61,8 @@ const PERM_CHANNEL_OTHER: &str = "trchat:trchat.command.channel.other";
 const PERM_SHADOWMUTE: &str = "trchat:trchat.shadowmute";
 /// Permission to mute players and toggle the global mute (spec §2.2).
 const PERM_MUTE: &str = "trchat:trchat.mute";
+/// Permission to ignore players — open to everyone (`PERM:46-48`).
+const PERM_IGNORE: &str = "trchat:trchat.command.ignore";
 
 /// Registers the permission nodes backing the commands above.
 ///
@@ -104,6 +108,13 @@ fn register_permissions(context: &Context) {
             PERM_MUTE,
             "Mute players and toggle the global mute",
             PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        (
+            PERM_IGNORE,
+            "Ignore other players",
+            // `trchat.command.ignore` is one of the always-open nodes
+            // (`PERM:131-135`).
+            PermissionDefault::Allow,
         ),
     ];
 
@@ -298,6 +309,10 @@ pub fn register_commands(context: &Context) {
         CommandNode::literal("ignore").then(
             CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
                 .suggest(PlayerNames)
+                .then(
+                    CommandNode::argument("state", &ArgumentType::String(StringType::SingleWord))
+                        .execute(IgnoreCommand),
+                )
                 .execute(IgnoreCommand),
         ),
     )
@@ -396,9 +411,13 @@ pub fn register_commands(context: &Context) {
     );
     context.register_command(unmute, PERM_MUTE);
 
-    // ---- /msg <target> <message> ----
+    // ---- /msg <target> <message> (aliases /tell, /trmsg) ----
     let msg = Command::new(
-        &[String::from("msg"), String::from("tell")],
+        &[
+            String::from("msg"),
+            String::from("tell"),
+            String::from("trmsg"),
+        ],
         "Send a private message to a player",
     )
     .then(
@@ -408,6 +427,36 @@ pub fn register_commands(context: &Context) {
         ),
     );
     context.register_command(msg, PERM_USE);
+
+    // ---- /trspy [on|off] (standalone alias of `/trchat spy`) ----
+    let spy = Command::new(&[String::from("trspy")], "Toggle private-message spy")
+        .then(
+            CommandNode::argument("state", &ArgumentType::String(StringType::SingleWord))
+                .execute(SpyCommand),
+        )
+        .execute(SpyCommand);
+    context.register_command(spy, PERM_USE);
+
+    // ---- /ignore, /trignore <player> [on|off] and /ignorelist ----
+    // §1.3 — the standalone spellings share the `/trchat ignore` executor.
+    let ignore = Command::new(
+        &[String::from("ignore"), String::from("trignore")],
+        "Ignore or unignore a player",
+    )
+    .then(
+        CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+            .suggest(PlayerNames)
+            .then(
+                CommandNode::argument("state", &ArgumentType::String(StringType::SingleWord))
+                    .execute(IgnoreCommand),
+            )
+            .execute(IgnoreCommand),
+    );
+    context.register_command(ignore, PERM_IGNORE);
+
+    let ignorelist = Command::new(&[String::from("ignorelist")], "List ignored players")
+        .execute(IgnoreListCommand);
+    context.register_command(ignorelist, PERM_IGNORE);
 
     // ---- /trreply <message> (aliases /r, /reply) ----
     let reply = Command::new(
@@ -468,7 +517,25 @@ fn register_bound_aliases(context: &Context) {
 /// Aliases that already have a hand-written registration earlier in
 /// [`register_commands`] and must not be registered twice.
 fn is_reserved_alias(alias: &str) -> bool {
-    const RESERVED: &[&str] = &["msg", "tell", "r", "reply", "trreply", "channel", "trchat"];
+    const RESERVED: &[&str] = &[
+        "msg",
+        "tell",
+        "trmsg",
+        "r",
+        "reply",
+        "trreply",
+        "channel",
+        "trchat",
+        "ignore",
+        "trignore",
+        "ignorelist",
+        "trspy",
+        "trmute",
+        "mute",
+        "trunmute",
+        "trshadowmute",
+        "shadowmute",
+    ];
     RESERVED.iter().any(|r| r.eq_ignore_ascii_case(alias))
 }
 
@@ -945,6 +1012,9 @@ fn reason_or_dash(reason: &str) -> String {
 }
 
 /// Whether `name` belongs to an online player (case-insensitive).
+///
+/// The upstream ignore command also consults the Redis-known player list;
+/// without Redis this port only knows who is online.
 fn player_exists(server: &Server, name: &str) -> bool {
     server
         .get_all_players()
@@ -1004,41 +1074,120 @@ impl CommandHandler for IgnoreCommand {
     fn handle(
         &self,
         sender: CommandSender,
-        _server: Server,
+        server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
+        if !sender.has_permission(&server, PERM_IGNORE) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
+            return Ok(0);
+        }
         let me = sender.get_name();
         let Some(target) = arg_string(&args, "player") else {
-            send(&sender, "&cUsage: /trchat ignore <player>");
+            send(&sender, "&cUsage: /ignore <player> [on|off]");
             return Ok(0);
         };
         if target.eq_ignore_ascii_case(&me) {
-            send(&sender, "&cYou cannot ignore yourself.");
+            send(&sender, &message("Ignore-Self", &sender, &[]));
             return Ok(0);
         }
-        let mut players = SessionPlayers::global()
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
-        match players.state_mut(&me) {
-            Some(state) => {
-                let lower = target.to_ascii_lowercase();
-                if state.ignored.remove(&lower) {
-                    send(
-                        &sender,
-                        &format!("&a[TrChat] You are no longer ignoring {target}."),
-                    );
-                } else {
-                    state.ignored.insert(lower);
-                    send(
-                        &sender,
-                        &format!("&a[TrChat] You are now ignoring {target}."),
-                    );
-                }
+        // The target has to be a known player. The upstream also consults the
+        // Redis-known list; this port only knows who is online.
+        if !player_exists(&server, &target) {
+            send(
+                &sender,
+                &message("General-Player-Not-Found", &sender, &[&target]),
+            );
+            return Ok(0);
+        }
+        // `on` / `off` are explicit; an omitted state toggles.
+        let requested = match arg_string(&args, "state") {
+            Some(raw) if raw.eq_ignore_ascii_case("on") => Some(true),
+            Some(raw) if raw.eq_ignore_ascii_case("off") => Some(false),
+            Some(other) => {
+                send(
+                    &sender,
+                    &format!("&cUnknown state '{other}' (expected on/off)."),
+                );
+                return Ok(0);
             }
+            None => None,
+        };
+        let outcome = {
+            let mut players = SessionPlayers::global()
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            players
+                .state_mut(&me)
+                .map(|state| apply_ignore(&mut state.ignored, &target, requested))
+        };
+        match outcome {
+            Some(now_ignored) => {
+                let key = if now_ignored {
+                    "Ignore-Ignored-Player"
+                } else {
+                    "Ignore-Cancel-Player"
+                };
+                send(&sender, &message(key, &sender, &[&target]));
+            }
+            // No session state means the join event has not been seen yet.
             None => send(&sender, "&c[TrChat] Your chat session is not ready yet."),
         }
         Ok(0)
     }
+}
+
+/// `/ignorelist` — the players the sender ignores (`TRC:805-808`).
+struct IgnoreListCommand;
+
+impl CommandHandler for IgnoreListCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        if !sender.has_permission(&server, PERM_IGNORE) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
+            return Ok(0);
+        }
+        let me = sender.get_name();
+        let list = {
+            let players = SessionPlayers::global()
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
+            players.state(&me).map(|state| {
+                let mut names: Vec<&str> = state.ignored.iter().map(String::as_str).collect();
+                names.sort_unstable();
+                names.join(", ")
+            })
+        };
+        // An empty list renders as the literal `-` (spec §1.3).
+        let list = list
+            .filter(|list| !list.is_empty())
+            .unwrap_or_else(|| "-".to_string());
+        send(&sender, &message("Ignore-List", &sender, &[&list]));
+        Ok(0)
+    }
+}
+
+/// Applies an `/ignore` request to `ignored` and reports whether `target` ends
+/// up ignored.
+///
+/// `requested` is `Some(true)` for `on`, `Some(false)` for `off` and `None` for
+/// the toggle form. Names are stored lowercased, like the rest of the store.
+fn apply_ignore(
+    ignored: &mut std::collections::HashSet<String>,
+    target: &str,
+    requested: Option<bool>,
+) -> bool {
+    let lower = target.to_ascii_lowercase();
+    let now_ignored = requested.unwrap_or_else(|| !ignored.contains(&lower));
+    if now_ignored {
+        ignored.insert(lower);
+    } else {
+        ignored.remove(&lower);
+    }
+    now_ignored
 }
 
 /// `/trchat channel` (bare) — lists the configured channels.
@@ -1764,6 +1913,31 @@ mod tests {
         assert_eq!(super::game_mode_name(GameMode::Creative), "creative");
         assert_eq!(super::game_mode_name(GameMode::Adventure), "adventure");
         assert_eq!(super::game_mode_name(GameMode::Spectator), "spectator");
+    }
+
+    /// §1.3 — `on` / `off` are explicit, an omitted state toggles, and names are
+    /// compared case-insensitively.
+    #[test]
+    fn ignore_requests_set_clear_and_toggle() {
+        use std::collections::HashSet;
+        let mut ignored = HashSet::new();
+
+        assert!(super::apply_ignore(&mut ignored, "Bob", None), "toggles on");
+        assert_eq!(ignored.len(), 1);
+        assert!(ignored.contains("bob"), "stored lowercased");
+
+        // Toggling again clears it.
+        assert!(!super::apply_ignore(&mut ignored, "bob", None));
+        assert!(ignored.is_empty());
+
+        // Explicit states are idempotent.
+        assert!(super::apply_ignore(&mut ignored, "Carol", Some(true)));
+        assert!(super::apply_ignore(&mut ignored, "CAROL", Some(true)));
+        assert_eq!(ignored.len(), 1, "re-ignoring is not a duplicate");
+        assert!(!super::apply_ignore(&mut ignored, "carol", Some(false)));
+        // Unignoring again keeps it unignored.
+        assert!(!super::apply_ignore(&mut ignored, "carol", Some(false)));
+        assert!(ignored.is_empty(), "unignoring twice is still unignored");
     }
 
     fn request(remaining: &str) -> SuggestionRequest {
