@@ -786,14 +786,15 @@ fn console_audience_line(
         return Some(assemble_console_text(&[], &message));
     };
 
-    // §3 step 3 — every passing prefix group, in YAML order. The component path
-    // attaches these as children with their hover/click events; the console
-    // keeps the text only.
+    // §3 step 3 — one variant per prefix group, in YAML order, keeping the first
+    // variant of the group whose `condition` passes (`ChannelRenderer.java:155-159`).
+    // The component path attaches these as children with their hover/click
+    // events; the console keeps the text only.
     let mut prefix: Vec<String> = Vec::new();
-    for part in &layer.prefix {
-        if !condition::test(&part.condition, player) {
+    for group in &layer.prefix {
+        let Some(part) = group.select(|condition| condition::test(condition, player)) else {
             continue;
-        }
+        };
         prefix.push(
             placeholder::resolve_with_local(&part.text, player, server, config, local)
                 .replace("{player}", &name)
@@ -968,14 +969,16 @@ fn apply_prefix_events(
     };
     // §3 step 3 — prefix groups keep YAML order; within the selected tier each
     // part's own `condition` is evaluated for the sender, so a conditional part
-    // (e.g. the OP badge) now renders exactly when it applies.
+    // (e.g. the OP badge) now renders exactly when it applies — and a group
+    // renders **only its first passing variant**, so an operator sees the OP
+    // badge *or* the default name, never both (`ChannelRenderer.java:155-159`).
     let Some(layer) = select_audience_layer(ch, audience, subject) else {
         return body;
     };
     let parts: Vec<&crate::config::PrefixPart> = layer
         .prefix
         .iter()
-        .filter(|part| condition::test(&part.condition, subject))
+        .filter_map(|group| group.select(|condition| condition::test(condition, subject)))
         .collect();
     if parts.is_empty() {
         return body;

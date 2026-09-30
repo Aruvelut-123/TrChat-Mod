@@ -273,8 +273,10 @@ pub struct FormatLayer {
     /// the legacy renderer picks the first unconditional tier instead.
     #[allow(dead_code)]
     pub priority: i64,
-    /// Ordered prefix components (group name → text), e.g. `server`, `player`.
-    pub prefix: Vec<PrefixPart>,
+    /// Ordered prefix groups (group name → variants), e.g. `server`, `player`.
+    /// Each group renders at most one variant: the first whose `condition`
+    /// passes, in YAML order (`ChannelRenderer.java:148-160`).
+    pub prefix: Vec<PartGroup>,
     /// `msg.default-color` — message text color (`7`, `&f`, …).
     pub msg_default_color: String,
     /// `msg.special-char-color` — color applied to configured special
@@ -295,7 +297,7 @@ pub struct FormatLayer {
 /// The component renderer still emits plain legacy text, so these fields are
 /// parsed and validated now but not yet attached to the outgoing component;
 /// [`PrefixPart::click_action`] is the accessor that wiring will call.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PrefixPart {
     pub condition: String,
     pub text: String,
@@ -323,6 +325,38 @@ pub struct PrefixPart {
     /// `font` — resource font (`ResourceLocation`).
     #[allow(dead_code)]
     pub font: String,
+}
+
+/// §3 step 3 — one named `prefix:` / `suffix:` group and its condition
+/// variants, in YAML order.
+///
+/// The Mod keeps the groups in a `LinkedHashMap` and, per group, renders the
+/// **first** variant whose `condition` passes (`ChannelRenderer.java:148-160`).
+/// Keeping the boundary is therefore load-bearing: a group such as
+/// `player: [op variant, default variant]` must render exactly one name, not
+/// both when the player is an operator.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PartGroup {
+    /// The YAML key of the group (`server`, `player`, `part-before-msg`, …).
+    pub name: String,
+    pub variants: Vec<PrefixPart>,
+}
+
+impl PartGroup {
+    /// §3 step 3 — the variant this group renders: the first whose `condition`
+    /// passes, in YAML order (`ChannelRenderer.java:155-159`, `findFirst`).
+    ///
+    /// `passes` is the caller's condition evaluator, which keeps this host-free.
+    pub fn select(&self, passes: impl Fn(&str) -> bool) -> Option<&PrefixPart> {
+        self.variants.iter().find(|part| passes(&part.condition))
+    }
+
+    /// The variant the legacy flattening keeps: the first one it can render
+    /// without evaluating conditions (`ChannelRenderer`-free paths such as the
+    /// private-message fallback templates).
+    pub fn unconditional(&self) -> Option<&PrefixPart> {
+        self.variants.iter().find(|part| part.is_rendered())
+    }
 }
 
 /// The click action a component part contributes, if any.
@@ -374,9 +408,9 @@ impl PrefixPart {
         None
     }
 
-    /// Whether this part should be rendered at all: the legacy renderer keeps
-    /// unconditional parts and parts whose condition it cannot evaluate.
-    #[allow(dead_code)]
+    /// Whether this part renders without evaluating conditions: the legacy
+    /// flattening keeps unconditional parts (and `~` catch-alls), while the
+    /// renderer picks the first variant whose `condition` actually passes.
     pub fn is_rendered(&self) -> bool {
         self.condition.is_empty() || self.condition == "~"
     }
@@ -1507,7 +1541,7 @@ fn parse_layers(v: Option<&serde_yaml::Value>) -> Vec<FormatLayer> {
                 .unwrap_or_default()
                 .to_string(),
             priority: tier.get("priority").and_then(|p| p.as_i64()).unwrap_or(0),
-            prefix: parse_prefix(tier.get("prefix")),
+            prefix: parse_part_groups(tier.get("prefix")),
             msg_default_color: msg
                 .and_then(|m| m.get("default-color"))
                 .and_then(|c| c.as_str())
@@ -1539,10 +1573,13 @@ fn parse_layers(v: Option<&serde_yaml::Value>) -> Vec<FormatLayer> {
     layers
 }
 
-/// Parses a `prefix:` mapping into ordered parts. Component groups with a
-/// list of variants (`player:`) yield every variant in order; the legacy
-/// renderer later keeps only the unconditional ones.
-fn parse_prefix(v: Option<&serde_yaml::Value>) -> Vec<PrefixPart> {
+/// Parses a `prefix:` / `suffix:` mapping into ordered groups.
+///
+/// Each group keeps its own variants: a mapping entry is one variant, a
+/// sequence entry is a list of variants in YAML order (the Mod's
+/// `List<ComponentPart>`), and the renderer keeps the first passing one per
+/// group (`ChannelRenderer.java:155-159`).
+fn parse_part_groups(v: Option<&serde_yaml::Value>) -> Vec<PartGroup> {
     let Some(serde_yaml::Value::Mapping(map)) = v else {
         return Vec::new();
     };
@@ -1563,39 +1600,45 @@ fn parse_prefix(v: Option<&serde_yaml::Value>) -> Vec<PrefixPart> {
         "console",
         "staff",
     ];
-    let mut entries: Vec<(usize, &serde_yaml::Value)> = map
+    let mut entries: Vec<(usize, &str, &serde_yaml::Value)> = map
         .iter()
         .map(|(k, v)| {
             let name = k.as_str().unwrap_or("");
             let order = ORDER.iter().position(|n| *n == name).unwrap_or(usize::MAX);
-            (order, v)
+            (order, name, v)
         })
         .collect();
-    entries.sort_by_key(|(order, _)| *order);
+    entries.sort_by_key(|(order, _, _)| *order);
 
-    let mut parts = Vec::new();
-    for (_, v) in entries {
-        match v {
+    let mut groups = Vec::new();
+    for (_, name, v) in entries {
+        let variants: Vec<PrefixPart> = match v {
             serde_yaml::Value::String(text) if !text.is_empty() => {
                 // A bare string entry carries no hover/click fields.
-                parts.push(PrefixPart {
+                vec![PrefixPart {
                     text: text.clone(),
                     ..Default::default()
-                });
+                }]
             }
-            serde_yaml::Value::Mapping(m) => {
-                parts.push(part_from_map(m));
-            }
-            serde_yaml::Value::Sequence(seq) => {
-                parts.extend(seq.iter().filter_map(|v| match v {
+            serde_yaml::Value::Mapping(m) => vec![part_from_map(m)],
+            serde_yaml::Value::Sequence(seq) => seq
+                .iter()
+                .filter_map(|v| match v {
                     serde_yaml::Value::Mapping(m) => Some(part_from_map(m)),
                     _ => None,
-                }));
-            }
-            _ => {}
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        if variants.is_empty() {
+            continue;
         }
+        groups.push(PartGroup {
+            name: name.to_string(),
+            variants,
+        });
     }
-    parts
+    groups
 }
 
 fn part_from_map(m: &serde_yaml::Mapping) -> PrefixPart {
@@ -1659,11 +1702,12 @@ pub fn layer_template(layer: &FormatLayer) -> String {
 /// [`layer_body_template_with_colour`].
 pub fn layer_template_with_colour(layer: &FormatLayer, colour: &str) -> String {
     let mut out = String::new();
-    for part in &layer.prefix {
-        if !part.condition.is_empty() && part.condition != "~" {
-            continue; // cannot evaluate conditions — keep catch-all variants
+    // One part per group, as the component renderer does: the first variant it
+    // could render without evaluating conditions.
+    for group in &layer.prefix {
+        if let Some(part) = group.unconditional() {
+            out.push_str(&part.text);
         }
-        out.push_str(&part.text);
     }
     if colour.is_empty() {
         out.push_str(&color_code(&layer.msg_default_color));
@@ -2068,17 +2112,20 @@ mod tests {
 
     /// §3 step 1 — selection order is `priority` descending but *stable*, so
     /// equal priorities keep their YAML order. `layer_template` flattens one
-    /// tier and skips its conditional prefix parts; `select_layer` is the
-    /// viewer-free pick used by the private-message templates.
+    /// tier, keeping one variant per group; `select_layer` is the viewer-free
+    /// pick used by the private-message templates.
     #[test]
     fn format_candidates_order_by_priority_and_layer_template_flattens() {
         let layers = vec![
             FormatLayer {
                 condition: "perm \"trchat.staff\"".into(),
                 priority: 10,
-                prefix: vec![PrefixPart {
-                    text: "&c[Staff] ".into(),
-                    ..Default::default()
+                prefix: vec![PartGroup {
+                    name: "staff".into(),
+                    variants: vec![PrefixPart {
+                        text: "&c[Staff] ".into(),
+                        ..Default::default()
+                    }],
                 }],
                 msg_default_color: "f".into(),
                 special_char_color: String::new(),
@@ -2088,18 +2135,31 @@ mod tests {
                 condition: "~".into(),
                 priority: 0,
                 prefix: vec![
-                    PrefixPart {
-                        text: "&8[&fSite&8] ".into(),
-                        hover: "Click".into(),
-                        url: "https://example.com/".into(),
-                        ..Default::default()
+                    PartGroup {
+                        name: "server".into(),
+                        variants: vec![PrefixPart {
+                            text: "&8[&fSite&8] ".into(),
+                            hover: "Click".into(),
+                            url: "https://example.com/".into(),
+                            ..Default::default()
+                        }],
                     },
-                    PrefixPart {
-                        // Flattening cannot evaluate this, so it is dropped
-                        // here; `chat.rs` re-evaluates it per player instead.
-                        condition: "player op".into(),
-                        text: "&7[OP] ".into(),
-                        ..Default::default()
+                    PartGroup {
+                        // A `player:` group holds the OP variant first and the
+                        // catch-all second, exactly like `Normal.yml`; only one
+                        // of the two may render (`findFirst` upstream).
+                        name: "player".into(),
+                        variants: vec![
+                            PrefixPart {
+                                condition: "player op".into(),
+                                text: "&4[OP] ".into(),
+                                ..Default::default()
+                            },
+                            PrefixPart {
+                                text: "&7[Player] ".into(),
+                                ..Default::default()
+                            },
+                        ],
                     },
                 ],
                 msg_default_color: "7".into(),
@@ -2110,9 +2170,12 @@ mod tests {
                 // Same priority as the first tier → YAML order breaks the tie.
                 condition: "player op".into(),
                 priority: 10,
-                prefix: vec![PrefixPart {
-                    text: "&4[OP] ".into(),
-                    ..Default::default()
+                prefix: vec![PartGroup {
+                    name: "staff".into(),
+                    variants: vec![PrefixPart {
+                        text: "&4[OP] ".into(),
+                        ..Default::default()
+                    }],
                 }],
                 msg_default_color: "c".into(),
                 special_char_color: String::new(),
@@ -2123,14 +2186,17 @@ mod tests {
         let candidates = format_candidates(&layers);
         assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].priority, 10);
-        assert_eq!(candidates[0].prefix[0].text, "&c[Staff] ");
+        assert_eq!(candidates[0].prefix[0].variants[0].text, "&c[Staff] ");
         assert_eq!(candidates[1].priority, 10, "the tie keeps YAML order");
-        assert_eq!(candidates[1].prefix[0].text, "&4[OP] ");
+        assert_eq!(candidates[1].prefix[0].variants[0].text, "&4[OP] ");
         assert_eq!(candidates[2].priority, 0);
 
-        // The flattened tier keeps the catch-all part and drops the OP one.
+        // The flattened tier keeps one variant per group: the server group
+        // stays, and the `player` group falls through to its catch-all rather
+        // than its OP badge (this path cannot evaluate conditions).
         let template = layer_template(candidates[2]);
         assert!(template.starts_with("&8[&fSite&8] "));
+        assert!(template.contains("&7[Player] "));
         assert!(template.contains("&7{message}"));
         assert!(!template.contains("[OP]"));
 
@@ -2150,6 +2216,38 @@ mod tests {
             layer_body_template_with_colour(candidates[2], "c"),
             "&c{message}"
         );
+    }
+
+    /// §3 step 3 — `PartGroup::select` is `findFirst`: the first variant whose
+    /// condition passes wins, later passing variants stay silent, and a group
+    /// whose variants all fail contributes nothing.
+    #[test]
+    fn part_group_keeps_only_the_first_passing_variant() {
+        let group = PartGroup {
+            name: "player".into(),
+            variants: vec![
+                PrefixPart {
+                    condition: "player op".into(),
+                    text: "&4[OP] ".into(),
+                    ..Default::default()
+                },
+                PrefixPart {
+                    condition: "~".into(),
+                    text: "&7[Player] ".into(),
+                    ..Default::default()
+                },
+            ],
+        };
+        // An operator: both variants pass, the OP badge wins and the catch-all
+        // must *not* render on top of it.
+        assert_eq!(group.select(|c| c == "player op").unwrap().text, "&4[OP] ");
+        assert_eq!(group.select(|_| true).unwrap().text, "&4[OP] ");
+        // A normal player: only the catch-all passes.
+        assert_eq!(group.select(|c| c == "~").unwrap().text, "&7[Player] ");
+        // Nothing passes → the group renders nothing at all.
+        assert!(group.select(|_| false).is_none());
+        // The flattening counterpart skips the conditional OP variant.
+        assert_eq!(group.unconditional().unwrap().text, "&7[Player] ");
     }
 
     /// §4.4/§4.5 — the component-part fields survive parsing from YAML.
