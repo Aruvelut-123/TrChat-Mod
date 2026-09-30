@@ -596,6 +596,8 @@ fn chat_pipeline(
             server,
             config,
         );
+        // §3 step 4 — `msg.hover` hovers the message body itself.
+        let component = apply_msg_hover(component, channel, player, server, config);
         let _ = player.send_system_message(component, false);
         receivers.push(player);
     }
@@ -742,6 +744,26 @@ fn wrap_special_characters(ch: &ChannelConfig, body: &str) -> String {
     let color = color_code(&layer.special_char_color);
     let default = color_code(&layer.msg_default_color);
     special::wrap_special_chars(body, &color, &default)
+}
+
+/// §3 step 4 — a non-empty `msg.hover` puts `HoverEvent.ShowText` on the message
+/// body. This renderer produces a single component for the whole line, so the
+/// hover lands on that component; an empty value leaves it untouched.
+fn apply_msg_hover(
+    component: TextComponent,
+    channel: Option<&ChannelConfig>,
+    player: &Player,
+    server: &Server,
+    config: &TrChatConfig,
+) -> TextComponent {
+    let Some(layer) = channel.and_then(|ch| ch.render_layer()) else {
+        return component;
+    };
+    if layer.msg_hover.trim().is_empty() {
+        return component;
+    }
+    let hover = placeholder::resolve(&layer.msg_hover, player, server, config);
+    component.hover_show_text(TextComponent::from_legacy_string_with_code(&hover, '&'))
 }
 
 /// Emits a localised guard hint and reports the rejection. The per-player

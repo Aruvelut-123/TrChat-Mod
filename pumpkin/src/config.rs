@@ -269,6 +269,9 @@ pub struct FormatLayer {
     /// `msg.special-char-color` — color applied to configured special
     /// characters (resource-pack glyphs); empty = wrap disabled.
     pub special_char_color: String,
+    /// `msg.hover` — hover text attached to the whole message body when
+    /// non-empty (§3 step 4). Kept as legacy text; applied at render time.
+    pub msg_hover: String,
 }
 
 /// A single prefix component; `text` is the legacy plain-text payload.
@@ -1454,6 +1457,18 @@ fn parse_bindings(v: Option<&serde_yaml::Value>) -> ChannelBindings {
     }
 }
 
+/// `msg.special-char.enabled` (§3.1 note) — the Mod reads the lowercase key but
+/// also accepts the capitalised `Enabled` spelling, so both are honoured here.
+fn special_char_enabled(special: Option<&serde_yaml::Value>) -> bool {
+    let Some(special) = special else {
+        return false;
+    };
+    ["enabled", "Enabled"]
+        .iter()
+        .find_map(|key| special.get(*key).and_then(|e| e.as_bool()))
+        .unwrap_or(false)
+}
+
 /// Parses a `Formats` / `Sender` / `Receiver` / `Console` list of tiers.
 fn parse_layers(v: Option<&serde_yaml::Value>) -> Vec<FormatLayer> {
     let Some(serde_yaml::Value::Sequence(seq)) = v else {
@@ -1476,19 +1491,27 @@ fn parse_layers(v: Option<&serde_yaml::Value>) -> Vec<FormatLayer> {
                 .and_then(|c| c.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            special_char_color: if special
-                .and_then(|s| s.get("enabled"))
-                .and_then(|e| e.as_bool())
-                .unwrap_or(false)
-            {
-                special
+            special_char_color: if special_char_enabled(special) {
+                let configured = special
                     .and_then(|s| s.get("special-char-color"))
                     .and_then(|c| c.as_str())
                     .unwrap_or_default()
-                    .to_string()
+                    .trim();
+                // §3.1 note: a blank colour falls back to `&f` rather than
+                // disabling the wrap.
+                if configured.is_empty() {
+                    "&f".to_string()
+                } else {
+                    configured.to_string()
+                }
             } else {
                 String::new()
             },
+            msg_hover: msg
+                .and_then(|m| m.get("hover"))
+                .and_then(|h| h.as_str())
+                .unwrap_or_default()
+                .to_string(),
         });
     }
     layers
@@ -1910,6 +1933,64 @@ mod tests {
         assert_eq!(bad.click_action(), None);
     }
 
+    /// §3.1 — `msg.special-char` accepts both `enabled` and the capitalised
+    /// `Enabled`, a blank colour falls back to `&f`, and `msg.hover` is parsed
+    /// for the renderer to attach.
+    #[test]
+    fn message_body_options_follow_the_spec() {
+        let yaml = "\
+- condition: ~
+  msg:
+    default-color: '7'
+    special-char:
+      Enabled: true
+      special-char-color: ''
+    hover: '&7hovered'
+";
+        let doc: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let layers = parse_layers(Some(&doc));
+        assert_eq!(layers.len(), 1);
+        let layer = &layers[0];
+        // The capitalised `Enabled` key is honoured, and a blank colour defaults
+        // to `&f` rather than disabling the wrap.
+        assert_eq!(layer.special_char_color, "&f");
+        assert_eq!(layer.msg_default_color, "7");
+        assert_eq!(layer.msg_hover, "&7hovered");
+    }
+
+    /// The special-char wrap needs an explicit enable flag; without one the
+    /// colour stays empty (wrap off) even when a colour is configured.
+    #[test]
+    fn special_char_wrap_requires_an_enabled_flag() {
+        let color_of = |yaml: &str| {
+            let doc: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+            parse_layers(Some(&doc))[0].special_char_color.clone()
+        };
+
+        // Lowercase key with an explicit colour is kept verbatim.
+        assert_eq!(
+            color_of("- msg: {special-char: {enabled: true, special-char-color: '&b'}}"),
+            "&b"
+        );
+        // Disabled → empty, so the wrapping never runs.
+        assert_eq!(
+            color_of("- msg: {special-char: {enabled: false, special-char-color: '&b'}}"),
+            ""
+        );
+        // Enabled but no colour → the `&f` fallback.
+        assert_eq!(color_of("- msg: {special-char: {enabled: true}}"), "&f");
+        // A whitespace-only colour counts as blank too.
+        assert_eq!(
+            color_of("- msg: {special-char: {enabled: true, special-char-color: '   '}}"),
+            "&f"
+        );
+        // No `special-char` block at all → off, and no hover either.
+        let doc: serde_yaml::Value = serde_yaml::from_str("- msg: {default-color: 'f'}").unwrap();
+        let layer = &parse_layers(Some(&doc))[0];
+        assert_eq!(layer.special_char_color, "");
+        assert_eq!(layer.msg_hover, "");
+    }
+
     /// §4.4/§4.5 — `selected_prefix_parts` feeds the click/hover wiring in
     /// `chat.rs`, so it must pick the same tier and order as the flattened
     /// template and skip conditional parts.
@@ -1925,6 +2006,7 @@ mod tests {
                 }],
                 msg_default_color: "f".into(),
                 special_char_color: String::new(),
+                msg_hover: String::new(),
             },
             FormatLayer {
                 condition: "~".into(),
@@ -1946,6 +2028,7 @@ mod tests {
                 ],
                 msg_default_color: "7".into(),
                 special_char_color: String::new(),
+                msg_hover: String::new(),
             },
         ];
 
