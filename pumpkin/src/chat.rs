@@ -520,7 +520,7 @@ fn chat_pipeline(
                 server,
                 config,
             );
-            wrap_special_characters(ch, Audience::Chat, player, &text)
+            wrap_special_characters(ch, Audience::Chat, player, &text, &chat_colour)
         }
         (None, None) => render_template(
             &template,
@@ -1084,8 +1084,9 @@ fn group_components(
 
 /// §3 step 4 special-char wrapping (`SpecialChars.wrapSpecialChars` /
 /// `ChannelRenderer` behavior): configured resource-pack glyphs get the
-/// channel's `msg.special-char-color`, with the message default color
-/// restored after each glyph run. `special-chars.yml` is loaded process-wide
+/// channel's `msg.special-char-color`, with the body's effective colour
+/// restored after each glyph run. `colour` is the sender's picked chat colour
+/// code (`""` when they have none). `special-chars.yml` is loaded process-wide
 /// by [`crate::special::reload`]; an empty table or an empty color leaves the
 /// body untouched.
 fn wrap_special_characters(
@@ -1093,6 +1094,7 @@ fn wrap_special_characters(
     audience: Audience,
     player: &Player,
     body: &str,
+    colour: &str,
 ) -> String {
     let Some(layer) = select_audience_layer(ch, audience, player) else {
         return body.to_string();
@@ -1101,8 +1103,23 @@ fn wrap_special_characters(
         return body.to_string();
     }
     let color = color_code(&layer.special_char_color);
-    let default = color_code(&layer.msg_default_color);
-    special::wrap_special_chars(body, &color, &default)
+    let restore = special_char_restore(layer, colour);
+    special::wrap_special_chars(body, &color, &restore)
+}
+
+/// §3 step 4 — the colour restored after each `special-char` glyph run.
+///
+/// Upstream restores the **effective** body colour: `"&" + color`, where `color`
+/// is the picked `trchat_message_color` when the sender has one, else
+/// `msg.default-color` (`ChannelRenderer.java:104-126`). Restoring the channel
+/// default instead would repaint the tail of a message the sender coloured.
+/// `colour` is that picked code (`""` when there is none).
+fn special_char_restore(layer: &FormatLayer, colour: &str) -> String {
+    if colour.is_empty() {
+        color_code(&layer.msg_default_color)
+    } else {
+        format!("&{colour}")
+    }
 }
 
 /// §3 step 4 — the sender's effective chat colour code, or an empty string.
@@ -1246,7 +1263,7 @@ pub(crate) fn render_audience_view(
             );
             // §3 step 4 — the resource-pack wrap applies to the cleaned body and
             // only when no component body was supplied (`:118-126`).
-            let text = wrap_special_characters(ch, req.audience, req.subject, &text);
+            let text = wrap_special_characters(ch, req.audience, req.subject, &text, &colour);
             TextComponent::from_legacy_string_with_code(&text, '&')
         }
     };
@@ -1458,9 +1475,9 @@ mod tests {
     use super::{
         assemble_console_text, chat_log_line, clean_message, is_whitelisted_unit, levenshtein,
         local_target, max_consecutive_repeat, normalize_for_similarity, period_or_default,
-        similarity_score,
+        similarity_score, special_char_restore,
     };
-    use crate::config::TrChatConfig;
+    use crate::config::{FormatLayer, TrChatConfig};
 
     /// §1.6 — `{0}` is the clock, `{1}` the sender, `{2}` the message; the
     /// private form pushes the target into `{2}` and the message into `{3}`.
@@ -1502,6 +1519,32 @@ mod tests {
 
         let private = chat_log_line(&config, "Alice", Some("Bob"), "psst");
         assert!(private.ends_with("] Alice -> Bob: psst"), "{private}");
+    }
+
+    /// §3 step 4 — the special-char wrap restores the sender's picked colour when
+    /// they have one, else the tier's `msg.default-color`
+    /// (`ChannelRenderer.java:104-126`), so a coloured message keeps its colour
+    /// after a resource-pack glyph.
+    #[test]
+    fn special_char_restore_follows_the_effective_colour() {
+        let layer = FormatLayer {
+            condition: "~".into(),
+            priority: 0,
+            prefix: Vec::new(),
+            suffix: Vec::new(),
+            msg_default_color: "7".into(),
+            special_char_color: "c".into(),
+            msg_hover: String::new(),
+        };
+        // No picked colour → the tier default.
+        assert_eq!(special_char_restore(&layer, ""), "&7");
+        // A picked colour wins, and a `&`-prefixed default stores the same code.
+        assert_eq!(special_char_restore(&layer, "b"), "&b");
+        let amped = FormatLayer {
+            msg_default_color: "&f".into(),
+            ..layer
+        };
+        assert_eq!(special_char_restore(&amped, ""), "&f");
     }
 
     /// §1.6 — `component().getString()` drops every legacy code, so the console
