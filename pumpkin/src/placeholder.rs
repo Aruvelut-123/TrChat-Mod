@@ -481,12 +481,17 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         "saturation" => format_number(player.get_saturation() as f64),
         "absorption" => format_number(player.get_absorption() as f64),
         "exp" => format_number(player.get_experience_progress() as f64),
-        // §1.6 exp family (spec lines 273–274, 287): `player_exp_to_level` is
-        // the points still needed for the next level, `player_total_exp` the
-        // accumulated points, and `player_current_exp` the level itself.
+        // §1.6 exp family (spec lines 268, 273–274, 287, 327): `player_exp_to_level`
+        // is the points still needed for the next level, `player_total_exp` the
+        // accumulated points, `player_current_exp` the total at the current level
+        // (base + in-bar progress), and `player_level` the level number itself.
         "exp_to_level" => exp_to_level(player).to_string(),
         "total_exp" => player.get_experience_points().to_string(),
-        "current_exp" => player.get_experience_level().to_string(),
+        "current_exp" => total_exp_at_current_level(
+            player.get_experience_level(),
+            player.get_experience_progress(),
+        )
+        .to_string(),
         // §1.6 `player_level` — the experience level (spec line 327).
         "level" => player.get_experience_level().to_string(),
         // §1.6 — `player_time_offset` and `player_max_no_damage_ticks` are
@@ -511,6 +516,21 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         "item_in_offhand_data" => item_data(held_item(player, Hand::Left)),
         "item_in_offhand_durability" => item_durability(held_item(player, Hand::Left)),
         "empty_slots" => empty_slots(player),
+
+        // §1.6 armor (spec lines 224–235) — each slot's name/data/durability,
+        // using the same item renderers as the held items.
+        "armor_helmet_name" => item_name(armor_item(player, "helmet")),
+        "armor_helmet_data" => item_data(armor_item(player, "helmet")),
+        "armor_helmet_durability" => item_durability(armor_item(player, "helmet")),
+        "armor_chestplate_name" => item_name(armor_item(player, "chestplate")),
+        "armor_chestplate_data" => item_data(armor_item(player, "chestplate")),
+        "armor_chestplate_durability" => item_durability(armor_item(player, "chestplate")),
+        "armor_leggings_name" => item_name(armor_item(player, "leggings")),
+        "armor_leggings_data" => item_data(armor_item(player, "leggings")),
+        "armor_leggings_durability" => item_durability(armor_item(player, "leggings")),
+        "armor_boots_name" => item_name(armor_item(player, "boots")),
+        "armor_boots_data" => item_data(armor_item(player, "boots")),
+        "armor_boots_durability" => item_durability(armor_item(player, "boots")),
 
         // §1.6 state booleans. Sneak/sprint/air/lifetime live on the entity
         // handle, so they are reached through `as_entity`.
@@ -663,17 +683,50 @@ fn exp_to_level(player: &Player) -> i64 {
     )
 }
 
-/// The pure part of [`exp_to_level`]: the vanilla level-cost curve plus the bar
-/// progress, split out so it is testable without a live `Player`.
-fn exp_to_level_from(level: i32, progress: f32) -> i64 {
-    let cost = match level {
+/// The vanilla XP cost to advance from `level` to the next one — the same curve
+/// Bukkit's `getXpNeededForNextLevel` implements. Shared by [`exp_to_level`]
+/// (as the remaining-bar denominator) and [`total_exp_at_current_level`] (as
+/// the in-bar fraction).
+fn xp_needed_for_next_level(level: i32) -> i32 {
+    match level {
         i32::MIN..=15 => 2 * level + 7,
         16..=30 => 5 * level - 38,
         _ => 9 * level - 158,
-    };
+    }
+}
+
+/// The pure part of [`exp_to_level`]: the vanilla level-cost curve plus the bar
+/// progress, split out so it is testable without a live `Player`.
+fn exp_to_level_from(level: i32, progress: f32) -> i64 {
+    let cost = xp_needed_for_next_level(level);
     let progress = progress.clamp(0.0, 1.0);
     let remaining = (f64::from(cost) * (1.0 - f64::from(progress))).round() as i64;
     remaining.max(0)
+}
+
+/// §1.6 `player_current_exp` — `totalExperienceAtCurrentLevel` (spec line 268,
+/// 538–546): the total XP at the player's level plus the in-bar progress, where
+/// the base is the piecewise vanilla cumulative formula (`level² + 6·level` up
+/// to 16, then `2.5·level² − 40.5·level + 360` up to 31, else
+/// `4.5·level² − 162.5·level + 2220`).
+fn total_exp_at_current_level(level: i32, progress: f32) -> i64 {
+    let base: i64 = match level {
+        i32::MIN..=16 => {
+            let l = i64::from(level);
+            l * l + 6 * l
+        }
+        17..=31 => {
+            let l = f64::from(level);
+            (2.5 * l * l - 40.5 * l + 360.0) as i64
+        }
+        _ => {
+            let l = f64::from(level);
+            (4.5 * l * l - 162.5 * l + 2220.0) as i64
+        }
+    };
+    let progress = progress.clamp(0.0, 1.0);
+    let bar = f64::from(xp_needed_for_next_level(level)) * f64::from(progress);
+    base + bar.round() as i64
 }
 
 /// §1.6 `player_biome` — the biome key as `minecraft:<snake_case>`, matching
@@ -821,6 +874,20 @@ fn format_number(value: f64) -> String {
 /// Returns the item in the given hand, or `None` when empty.
 fn held_item(player: &Player, hand: Hand) -> Option<ItemStack> {
     player.get_item_in_hand(hand)
+}
+
+/// §1.6 armor slots (spec lines 224–235) — the sandbox exposes dedicated
+/// accessors per armor slot on the player inventory, mirroring Bukkit's
+/// `getItemBySlot(EquipmentSlot.HEAD/CHEST/LEGS/FEET)`.
+fn armor_item(player: &Player, slot: &str) -> Option<ItemStack> {
+    let inv = player.get_inventory();
+    match slot {
+        "helmet" => inv.get_helmet(),
+        "chestplate" => inv.get_chestplate(),
+        "leggings" => inv.get_leggings(),
+        "boots" => inv.get_boots(),
+        _ => None,
+    }
 }
 
 /// §1.7 `registryName` — the registry path **without** the namespace, upper
@@ -1284,6 +1351,27 @@ mod tests {
         // Out-of-range progress is clamped rather than producing negatives.
         assert_eq!(exp_to_level_from(0, 5.0), 0);
         assert_eq!(exp_to_level_from(0, -1.0), 7);
+    }
+
+    /// §1.6 `player_current_exp` — `totalExperienceAtCurrentLevel`: the piecewise
+    /// cumulative base plus the in-bar progress times the level's cost.
+    #[test]
+    fn current_exp_is_total_at_level_plus_bar_progress() {
+        // Level 0: base 0, empty bar → 0; a full bar adds the 7-point cost.
+        assert_eq!(total_exp_at_current_level(0, 0.0), 0);
+        assert_eq!(total_exp_at_current_level(0, 1.0), 7);
+        assert_eq!(total_exp_at_current_level(0, 0.5), 4, "round(3.5) = 4");
+        // Level 16 (top of the quadratic branch): 16² + 6·16 = 352.
+        assert_eq!(total_exp_at_current_level(16, 0.0), 352);
+        assert_eq!(total_exp_at_current_level(16, 0.5), 373, "352 + 42·0.5");
+        // Level 17: 2.5·17² − 40.5·17 + 360 = 394.
+        assert_eq!(total_exp_at_current_level(17, 0.0), 394);
+        // Level 31 (end of the second branch): 2.5·31² − 40.5·31 + 360 = 1507.
+        assert_eq!(total_exp_at_current_level(31, 0.0), 1507);
+        // Level 32 (cubic branch): 4.5·32² − 162.5·32 + 2220 = 1628.
+        assert_eq!(total_exp_at_current_level(32, 0.0), 1628);
+        // Out-of-range progress is clamped.
+        assert_eq!(total_exp_at_current_level(0, 5.0), 7);
     }
 
     /// §1.6 `player_biome` / `player_biome_capitalized` — the WIT enum variant
