@@ -31,7 +31,8 @@ use std::time::Instant;
 
 use crate::condition;
 use crate::config::{
-    color_code, ChannelConfig, ChannelTarget, FormatLayer, Route, SharedConfig, TrChatConfig,
+    color_code, Audience, ChannelConfig, ChannelTarget, FormatLayer, Route, SharedConfig,
+    TrChatConfig,
 };
 use crate::filter::{MessageGuard, TextFilter};
 use crate::functions;
@@ -561,7 +562,7 @@ fn chat_pipeline(
     // (nor relayed to other servers).
     if shadow_muted {
         player.send_system_message(build_component(player), false);
-        log_to_console(config, &name, channel, &body);
+        log_to_console(config, player, channel, server, &body);
         return ChatOutcome::Accepted;
     }
 
@@ -659,7 +660,7 @@ fn chat_pipeline(
 
     // §1.3 step 10 — `logToConsole`. Uses the `Console` tier when the channel
     //    declares one, otherwise the same template the chat audience saw.
-    log_to_console(config, &name, channel, &body);
+    log_to_console(config, player, channel, server, &body);
 
     // Accepted — update the cooldown timestamp.
     {
@@ -681,40 +682,140 @@ const DEFAULT_PRIVATE_MESSAGE_FORMAT: &str = "[{0}] {1} -> {2}: {3}";
 
 /// §1.6 `logToConsole` — writes one line to the server console.
 ///
-/// The line is built by [`chat_log_line`] from `logging.normalMessageFormat` /
-/// `logging.privateMessageFormat` and emitted at INFO through the host logger.
+/// The console line is the rendered audience view: the channel's `Console`
+/// tier when the section is non-empty, otherwise its `Formats`
+/// (`ChannelRenderer.java:86-99`), printed as plain text the way upstream
+/// `LOGGER.info(...)` prints `component().getString()`. The `chatLogs` record
+/// built from `logging.normalMessageFormat` / `logging.privateMessageFormat`
+/// goes to the daily file upstream, which the WASM sandbox cannot create, so it
+/// is emitted at **debug** level instead — the console keeps matching the
+/// in-game format.
 ///
-/// Two upstream behaviours are deliberately not reproduced: the daily plain-text
-/// files under `logs/` (and with them `logging.retentionDays`) need filesystem
-/// access the WASM sandbox does not grant, and `{0}` is rendered from the host
-/// clock in **UTC** because the sandbox carries no timezone database for the
-/// Mod's system-local timestamp.
+/// `{0}` of that record is rendered from the host clock in **UTC** because the
+/// sandbox carries no timezone database for the Mod's system-local timestamp.
 fn log_to_console(
     config: &TrChatConfig,
-    sender: &str,
+    player: &Player,
     channel: Option<&ChannelConfig>,
-    message: &str,
+    server: &Server,
+    body: &str,
 ) {
     // `Private: true` marks a channel whose sends are private messages; the
     // public path never reaches here with one (routing drops it at §1.2 step 5),
     // so the target is only known on the `/msg` path.
     let target = channel.filter(|c| c.options.private).map(|_| "");
-    let line = chat_log_line(config, sender, target, message);
-    log_line(&line);
+    log_record(&chat_log_line(config, &player.get_name(), target, body));
+    if let Some(line) = console_audience_line(channel, player, server, config, body, &[]) {
+        log_line(&line);
+    }
 }
 
-/// §1.6 — records a private message (`logPrivate`) through the same formatter
-/// used by [`log_to_console`], with the real target filled into `{2}`.
-pub fn log_private_message(config: &TrChatConfig, sender: &str, target: &str, message: &str) {
-    log_line(&chat_log_line(config, sender, Some(target), message));
+/// §1.6 — the private-message half of [`log_to_console`]: the `chatLogs`
+/// `logPrivate` record plus the rendered `Sender`/`Receiver`/`Console` view,
+/// with the target exposed to the formatter as the `%trchat_toplayer%` local.
+pub fn log_private_message(
+    config: &TrChatConfig,
+    player: &Player,
+    server: &Server,
+    target: &str,
+    message: &str,
+) {
+    log_record(&chat_log_line(
+        config,
+        &player.get_name(),
+        Some(target),
+        message,
+    ));
+    let channel = config.private_channel();
+    if let Some(line) = console_audience_line(
+        channel,
+        player,
+        server,
+        config,
+        message,
+        &[("trchat_toplayer", target)],
+    ) {
+        log_line(&line);
+    }
 }
 
-/// Emits one formatted line at INFO through the host logger.
+/// §1.6 — the console view of one message (`ChatService.java:960-969`).
+///
+/// `renderer.render(channel, CONSOLE-or-CHAT, player, null, message, local)` is
+/// printed as `.component().getString()`, so the port strips the legacy codes it
+/// used to build the text. `None` means the message was routed without a
+/// channel (the legacy `Plain` route), which the upstream cannot reach.
+fn console_audience_line(
+    channel: Option<&ChannelConfig>,
+    player: &Player,
+    server: &Server,
+    config: &TrChatConfig,
+    body: &str,
+    local: &[(&str, &str)],
+) -> Option<String> {
+    let ch = channel?;
+    let name = player.get_name();
+    let world = player.get_world().get_name();
+    let server_name = config.server_name();
+    // §1.6 — an empty `Console` section renders with the chat audience.
+    let audience = if ch.console.is_empty() {
+        Audience::Chat
+    } else {
+        Audience::Console
+    };
+
+    // §1.12 — the body is resolved once; `%message%` echoes its own raw text.
+    let mut locals: Vec<(&str, &str)> = local.to_vec();
+    locals.push(("message", body));
+    let message = placeholder::resolve_with_local(body, player, server, config, &locals);
+
+    // No tier passes → the bare resolved message is rendered (`:96-99`).
+    let Some(layer) = select_audience_layer(ch, audience, player) else {
+        return Some(assemble_console_text(&[], &message));
+    };
+
+    // §3 step 3 — every passing prefix group, in YAML order. The component path
+    // attaches these as children with their hover/click events; the console
+    // keeps the text only.
+    let mut prefix: Vec<String> = Vec::new();
+    for part in &layer.prefix {
+        if !condition::test(&part.condition, player) {
+            continue;
+        }
+        prefix.push(
+            placeholder::resolve_with_local(&part.text, player, server, config, local)
+                .replace("{player}", &name)
+                .replace("{channel}", &ch.id)
+                .replace("{server}", server_name)
+                .replace("{world}", &world),
+        );
+    }
+    Some(assemble_console_text(&prefix, &message))
+}
+
+/// Joins a tier's resolved prefix groups with the resolved body and strips the
+/// legacy codes, which is how the port reproduces upstream's
+/// `component().getString()`. The body colour code is irrelevant here because
+/// `getString()` drops formatting, so no colour is emitted.
+fn assemble_console_text(prefix: &[String], message: &str) -> String {
+    let mut text = prefix.concat();
+    text.push_str(message);
+    functions::strip_legacy_codes(&text)
+}
+
+/// Emits a rendered console line at INFO through the host logger.
 fn log_line(line: &str) {
     pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Info, line);
 }
 
-/// Builds a console log line: `logging.normalMessageFormat` for public chat and
+/// Emits one `chatLogs` record at DEBUG — the sandbox cannot write the daily
+/// file the record belongs to, so it stays available without doubling the
+/// console output of every chat message (see [`log_to_console`]).
+fn log_record(line: &str) {
+    pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Debug, line);
+}
+
+/// Builds a `chatLogs` record: `logging.normalMessageFormat` for public chat and
 /// `logging.privateMessageFormat` when a `target` is given. `{0}` is the current
 /// `HH:mm:ss`, and every field is flattened to a single line because the
 /// upstream `ChatLogService.safe()` replaces `\r` / `\n` with spaces.
@@ -925,10 +1026,24 @@ fn sender_chat_color(player: &Player) -> String {
 /// order (`priority` descending, stable) with the first passing `condition`
 /// winning. Returns `None` when no tier matches, which the renderer treats as
 /// the Mod's plain fallback (§3 step 2).
-fn select_format_layer<'a>(ch: &'a ChannelConfig, player: &Player) -> Option<&'a FormatLayer> {
-    crate::config::format_candidates(&ch.formats)
+/// §3 steps 1–2 — the first tier of `audience` whose `condition` passes for
+/// `player`, in `priority` order (descending, stable).
+///
+/// A tier list that yields no match is the upstream `format == null` case: the
+/// caller renders the bare resolved message instead (`ChannelRenderer.java:96-99`).
+fn select_audience_layer<'a>(
+    ch: &'a ChannelConfig,
+    audience: Audience,
+    player: &Player,
+) -> Option<&'a FormatLayer> {
+    crate::config::format_candidates(ch.audience_formats(audience))
         .into_iter()
         .find(|layer| condition::test(&layer.condition, player))
+}
+
+/// The public `CHAT` tier of a channel — every in-game render walks `Formats`.
+fn select_format_layer<'a>(ch: &'a ChannelConfig, player: &Player) -> Option<&'a FormatLayer> {
+    select_audience_layer(ch, Audience::Chat, player)
 }
 
 /// §3 step 4 — a non-empty `msg.hover` puts `HoverEvent.ShowText` on the message
@@ -1097,8 +1212,8 @@ fn levenshtein(a: &[char], b: &[char]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        chat_log_line, is_whitelisted_unit, levenshtein, max_consecutive_repeat,
-        normalize_for_similarity, period_or_default, similarity_score,
+        assemble_console_text, chat_log_line, is_whitelisted_unit, levenshtein,
+        max_consecutive_repeat, normalize_for_similarity, period_or_default, similarity_score,
     };
     use crate::config::TrChatConfig;
 
@@ -1142,6 +1257,18 @@ mod tests {
 
         let private = chat_log_line(&config, "Alice", Some("Bob"), "psst");
         assert!(private.ends_with("] Alice -> Bob: psst"), "{private}");
+    }
+
+    /// §1.6 — `component().getString()` drops every legacy code, so the console
+    /// line is plain text: the tier's prefix groups followed by the body.
+    #[test]
+    fn console_text_is_plain_and_ordered() {
+        let prefix = vec!["&8[&aServer&8] ".to_string(), "&7".to_string()];
+        let line = assemble_console_text(&prefix, "&fhello &cthere");
+        assert_eq!(line, "[Server] hello there");
+
+        // No tier, no prefix: the bare resolved message survives.
+        assert_eq!(assemble_console_text(&[], "plain"), "plain");
     }
 
     /// Normalisation is `toLowerCase(ROOT)` plus removal of *all* whitespace.

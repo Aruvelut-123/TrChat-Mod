@@ -179,17 +179,34 @@ pub struct ChannelConfig {
     pub id: String,
     pub options: ChannelOptions,
     pub bindings: ChannelBindings,
-    /// Format tiers parsed for the future component renderer; the legacy
-    /// string renderer consumes the flattened [`ChannelConfig::template`].
-    #[allow(dead_code)] // consumed by the upcoming component renderer
+    /// `Formats` — the public tiers, walked by [`Audience::Chat`].
     pub formats: Vec<FormatLayer>,
     /// Private-message tiers (never broadcast to the channel).
     pub sender: Vec<FormatLayer>,
     pub receiver: Vec<FormatLayer>,
-    /// Console tiers — the upstream renders a console-only variant; this port
-    /// keeps the parsed data for that follow-up.
-    #[allow(dead_code)] // consumed by the upcoming console renderer
+    /// `Console` — the server-console tiers. An empty section falls back to
+    /// [`ChannelConfig::formats`] (`ChannelRenderer.java:89`), so both the
+    /// in-game and the console views share one list then.
     pub console: Vec<FormatLayer>,
+}
+
+/// §3 step 1 — `ChannelRenderer.Audience`: which format list a render walks.
+///
+/// `Chat` is the public channel view; `Sender`/`Receiver` are the two
+/// private-message views of a `Private: true` channel, wired by the
+/// private-message renderer follow-up (the `/msg` path still renders the
+/// flattened `Sender`/`Receiver` templates today); `Console` is the
+/// server-console view (`ChatService.java:960-969`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Audience {
+    Chat,
+    /// `/msg` sender view — selected but not yet rendered (see above).
+    #[allow(dead_code)]
+    Sender,
+    /// `/msg` receiver view — selected but not yet rendered (see above).
+    #[allow(dead_code)]
+    Receiver,
+    Console,
 }
 
 /// §2.3 `Options.Target` — who may receive a channel's broadcast.
@@ -397,6 +414,27 @@ pub fn valid_url(raw: &str) -> Option<String> {
 }
 
 impl ChannelConfig {
+    /// §3 step 1 — the tier list `audience` selects from, still in YAML order;
+    /// callers walk it with [`format_candidates`] to get `priority` order.
+    ///
+    /// An empty `Console` section falls back to `Formats`
+    /// (`ChatService.java:960-964`); `Sender`/`Receiver` have no fallback, so a
+    /// private channel that declares none renders the bare message.
+    pub fn audience_formats(&self, audience: Audience) -> &[FormatLayer] {
+        match audience {
+            Audience::Chat => &self.formats,
+            Audience::Sender => &self.sender,
+            Audience::Receiver => &self.receiver,
+            Audience::Console => {
+                if self.console.is_empty() {
+                    &self.formats
+                } else {
+                    &self.console
+                }
+            }
+        }
+    }
+
     /// Effective permission required to speak in this channel. The Mod uses
     /// `Options.Join-Permission` for join *and* use; a channel without one
     /// (e.g. `Normal`) is public.
@@ -573,6 +611,12 @@ impl TrChatConfig {
             .iter()
             .find(|c| c.options.auto_join)
             .or_else(|| self.channels.first())
+    }
+
+    /// The private-message channel (`Options.Private: true`) whose `Sender` /
+    /// `Receiver` / `Console` tiers the `/msg` path renders with.
+    pub fn private_channel(&self) -> Option<&ChannelConfig> {
+        self.channels.iter().find(|c| c.options.private)
     }
 
     /// Fallback template when no channel is configured (legacy `Plain` route).
@@ -2380,6 +2424,66 @@ font: "minecraft:default"
             std::env::temp_dir().join(format!("trchat-pumpkin-test-{}-{tag}", std::process::id()));
         let _ = fs::remove_dir_all(&dir); // clean from a previous run
         dir.to_string_lossy().into_owned()
+    }
+
+    /// §1.6 / §3 step 1 — every audience walks its own tier list, and only an
+    /// empty `Console` section falls back to `Formats` (`ChannelRenderer.java:86-91`).
+    #[test]
+    fn audience_tiers_select_and_fall_back() {
+        let full = "\
+Formats:
+  - priority: 0
+    msg:
+      default-color: '7'
+Sender:
+  - priority: 0
+    msg:
+      default-color: 'a'
+Receiver:
+  - priority: 0
+    msg:
+      default-color: 'b'
+Console:
+  - priority: 0
+    msg:
+      default-color: 'd'
+";
+        let channels = parse_channels(&[("Global".to_string(), full.to_string())]);
+        assert_eq!(channels.len(), 1, "the sample channel must parse");
+        let ch = &channels[0];
+        assert_eq!(
+            ch.audience_formats(Audience::Chat)[0].msg_default_color,
+            "7"
+        );
+        assert_eq!(
+            ch.audience_formats(Audience::Sender)[0].msg_default_color,
+            "a"
+        );
+        assert_eq!(
+            ch.audience_formats(Audience::Receiver)[0].msg_default_color,
+            "b"
+        );
+        assert_eq!(
+            ch.audience_formats(Audience::Console)[0].msg_default_color,
+            "d"
+        );
+
+        // Without a `Console` section the console renders the public tiers; the
+        // private audiences have no fallback and stay empty.
+        let without_console = "\
+Formats:
+  - priority: 0
+    msg:
+      default-color: '7'
+";
+        let channels = parse_channels(&[("Global".to_string(), without_console.to_string())]);
+        let ch = &channels[0];
+        assert_eq!(
+            ch.audience_formats(Audience::Console)[0].msg_default_color,
+            "7"
+        );
+        assert!(ch.audience_formats(Audience::Sender).is_empty());
+        assert!(ch.audience_formats(Audience::Receiver).is_empty());
     }
 
     #[test]
