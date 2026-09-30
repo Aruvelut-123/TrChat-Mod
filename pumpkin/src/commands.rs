@@ -84,14 +84,35 @@ const COLOR_CODES: &str = "0123456789abcdef";
 /// and an unregistered node defaults to **deny**. Without these nodes every
 /// command below would be invisible to ordinary players — only the console
 /// (which is granted everything) could run them.
+///
+/// Every node is registered under **two** spellings, because Pumpkin's lookup
+/// keys on the exact string:
+///
+/// * the bare `trchat.mute` that user YAML writes in `perm "trchat.mute"`
+///   conditions and channel permissions, and
+/// * the `trchat:trchat.mute` that `Context::register_command` builds for the
+///   command requirements.
 fn register_permissions(context: &Context) {
-    use pumpkin_plugin_api::permission::{Permission, PermissionDefault, PermissionLevel};
+    use pumpkin_plugin_api::permission::{PermissionDefault, PermissionLevel};
 
-    // Nodes mirror the upstream plugin: `/trchat status`, `/channel`, `/msg`,
-    // `/ignore` and the alias commands are open to everyone; the moderation and
-    // spy commands require operator level 2, matching `hasPermission(2)`
-    // (`TRC:93-96`) and the `trchat.*` nodes of `PERM:44`.
+    // Nodes mirror the upstream plugin (`PERM:22-69`): `/trchat status`,
+    // `/channel`, `/msg`, `/ignore` and the alias commands are open to everyone;
+    // the moderation, spy and bypass nodes require operator level 2. The two
+    // always-open channel nodes are listed first because the *default* channel
+    // configs reference them by name — without them `perm "trchat.global"`
+    // would evaluate false for everyone and the Global channel would be
+    // unspeakable.
     let nodes = [
+        (
+            "trchat.global",
+            "Speak in channels gated on the global node",
+            PermissionDefault::Allow,
+        ),
+        (
+            "trchat.private",
+            "Use the private-message channel",
+            PermissionDefault::Allow,
+        ),
         (
             PERM_USE,
             "Use TrChat chat commands",
@@ -139,30 +160,105 @@ fn register_permissions(context: &Context) {
             "Clear other players' chat",
             PermissionDefault::Op(PermissionLevel::Two),
         ),
+        // §2.1 `PERM:40-42` — the built-in chat functions' nodes, read from
+        // `function.yml` (e.g. `Permission: 'trchat.function.mentionall'`).
+        (
+            "trchat.function.mentionall",
+            "@everyone in chat",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        (
+            "trchat.function.inventoryshow",
+            "Show your inventory in chat",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        (
+            "trchat.function.enderchestshow",
+            "Show your ender chest in chat",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        // §2.1 `PERM:52-55` — the anti-spam bypass nodes the chat guard reads.
+        (
+            "trchat.bypass.cmdcooldown",
+            "Bypass Command-Controller cooldowns",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        (
+            "trchat.bypass.repeat",
+            "Bypass the anti-repeat check",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        (
+            "trchat.bypass.duplicate",
+            "Bypass the anti-duplicate check",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        (
+            "trchat.bypass.highfrequency",
+            "Bypass the anti-high-frequency check",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
     ];
-    for node in &nodes {
-        let permission = Permission {
-            node: node.0.to_string(),
-            description: node.1.to_string(),
-            default: node.2,
-            children: Vec::new(),
-        };
-        if let Err(error) = context.register_permission(&permission) {
-            eprintln!("[TrChat] could not register permission {}: {error}", node.0);
-        }
+    for (node, description, default) in nodes {
+        register_permission_pair(context, node, description, default);
     }
     // §2.1 — the 16 `trchat.color.<code>` nodes, one per hex digit.
     for code in COLOR_CODES.chars() {
+        register_permission_pair(
+            context,
+            &format!("trchat.color.{code}"),
+            &format!("Use &{code} as a chat colour"),
+            PermissionDefault::Op(PermissionLevel::Two),
+        );
+    }
+}
+
+/// Registers `node` both bare and under the plugin namespace.
+///
+/// `Context::register_command` rewrites a permission without a `:` into
+/// `trchat:<permission>`, so the command tree resolves against the namespaced
+/// key while conditions and channel permissions from YAML use the bare one.
+fn register_permission_pair(
+    context: &Context,
+    node: &str,
+    description: &str,
+    default: pumpkin_plugin_api::permission::PermissionDefault,
+) {
+    use pumpkin_plugin_api::permission::Permission;
+
+    for key in permission_lookup_keys(node) {
         let permission = Permission {
-            node: format!("trchat:trchat.color.{code}"),
-            description: format!("Use &{code} as a chat colour"),
-            default: PermissionDefault::Op(PermissionLevel::Two),
+            node: key.clone(),
+            description: description.to_string(),
+            default,
             children: Vec::new(),
         };
         if let Err(error) = context.register_permission(&permission) {
-            eprintln!("[TrChat] could not register permission trchat.color.{code}: {error}");
+            eprintln!("[TrChat] could not register permission {key}: {error}");
         }
     }
+}
+
+/// The two registry keys `node` is registered under.
+///
+/// Pumpkin's permission lookup keys on the **exact** string, and the same
+/// plugin node is reached two different ways:
+///
+/// * `trchat.mute` — written by hand in YAML (`perm "trchat.mute"` conditions,
+///   channel `Join-Permission`), so it is looked up bare, and
+/// * `trchat:trchat.mute` — what `Context::register_command` builds for a
+///   permission without a `:`, so the command tree resolves against it.
+///
+/// Registering both keeps a node from being open to one caller and denied to
+/// the other.
+fn permission_lookup_keys(node: &str) -> [String; 2] {
+    let bare = node.strip_prefix("trchat:").unwrap_or(node).to_string();
+    let namespaced = if node.contains(':') {
+        node.to_string()
+    } else {
+        format!("trchat:{node}")
+    };
+    [bare, namespaced]
 }
 
 /// The `join` / `quit` subtree shared by `/trchat channel` and `/channel`.
@@ -2296,6 +2392,32 @@ mod tests {
         for bad in ["", "&a", "§a", "red", "ab", "g", "1 2", "aa"] {
             assert_eq!(super::parse_color_request(bad), Invalid, "{bad:?}");
         }
+    }
+
+    /// §2.1 — every node must answer under both spellings, or the command tree
+    /// and the YAML conditions disagree about who is allowed.
+    #[test]
+    fn permission_nodes_are_registered_under_both_spellings() {
+        assert_eq!(
+            super::permission_lookup_keys(super::PERM_MUTE),
+            ["trchat.mute".to_string(), "trchat:trchat.mute".to_string()]
+        );
+        // A node written in its bare (config) spelling gains the namespace…
+        assert_eq!(
+            super::permission_lookup_keys("trchat.global"),
+            [
+                "trchat.global".to_string(),
+                "trchat:trchat.global".to_string()
+            ]
+        );
+        // …and the always-open pair is never left unnamed.
+        assert_eq!(
+            super::permission_lookup_keys("trchat.private"),
+            [
+                "trchat.private".to_string(),
+                "trchat:trchat.private".to_string()
+            ]
+        );
     }
 
     /// §1.3 — `on` / `off` are explicit, an omitted state toggles, and names are
