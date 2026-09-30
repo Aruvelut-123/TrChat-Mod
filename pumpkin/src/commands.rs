@@ -4,9 +4,11 @@
 //!
 //! * `/trchat reload`        — re-read the config from disk (`trchat.admin`)
 //! * `/trchat version`       — print the plugin version (open to everyone)
-//! * `/trchat muteall`       — toggle the global chat mute (`trchat.admin`)
-//! * `/trchat mute <player>` — mute a player (`trchat.admin`)
-//! * `/trchat unmute <player>` — unmute a player (`trchat.admin`)
+//! * `/trchat mute`          — toggle the global mute (`trchat.mute`)
+//! * `/trchat mute on|off`   — set the global mute explicitly (`trchat.mute`)
+//! * `/trchat mute player <player> <duration> [reason]` — mute a player
+//! * `/trchat unmute <player>` — clear a player's mute (`trchat.mute`)
+//! * `/trmute`, `/mute`, `/trunmute` — standalone aliases of the above
 //! * `/trchat ignore <player>` — toggle ignoring a player (open to everyone)
 //! * `/trchat channel join|quit …` — channel membership (open to everyone)
 //! * `/trchat shadowmute <player> [on|off]` — shadow mute (§2.2)
@@ -52,6 +54,8 @@ const PERM_SPY: &str = "trchat:trchat.spy";
 const PERM_CHANNEL_OTHER: &str = "trchat:trchat.command.channel.other";
 /// Permission to shadow-mute a player (spec §2.2, `TRC:886-904`).
 const PERM_SHADOWMUTE: &str = "trchat:trchat.shadowmute";
+/// Permission to mute players and toggle the global mute (spec §2.2).
+const PERM_MUTE: &str = "trchat:trchat.mute";
 
 /// Registers the permission nodes backing the commands above.
 ///
@@ -91,6 +95,11 @@ fn register_permissions(context: &Context) {
         (
             PERM_SHADOWMUTE,
             "Shadow-mute players",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        (
+            PERM_MUTE,
+            "Mute players and toggle the global mute",
             PermissionDefault::Op(PermissionLevel::Two),
         ),
     ];
@@ -177,6 +186,28 @@ impl CommandSuggestionHandler for ChannelIds {
     }
 }
 
+/// §1.6 — tab-completes the fixed duration literals the upstream offers
+/// (`TRC:117-120`). Free-form durations such as `1h30m` still parse; these are
+/// only the suggestions.
+struct Durations;
+
+/// The duration literals shown by `/trchat mute player <player> <duration>`.
+const DURATION_LITERALS: [&str; 6] = ["30s", "5m", "1h", "1d", "7d", "permanent"];
+
+impl CommandSuggestionHandler for Durations {
+    fn suggest(
+        &self,
+        _sender: CommandSender,
+        _server: Server,
+        request: SuggestionRequest,
+    ) -> CommandSuggestions {
+        suggest_matching(
+            &request,
+            DURATION_LITERALS.iter().map(|item| (*item).to_string()),
+        )
+    }
+}
+
 /// Case-insensitive prefix filter shared by the suggestion handlers above.
 fn suggest_matching(
     request: &SuggestionRequest,
@@ -212,13 +243,34 @@ pub fn register_commands(context: &Context) {
     )
     .then(CommandNode::literal("reload").execute(ReloadCommand))
     .then(CommandNode::literal("version").execute(VersionCommand))
-    .then(CommandNode::literal("muteall").execute(MuteAllCommand))
+    // §1.2 — `/trchat mute` toggles the global mute, `mute on|off` sets it, and
+    // `mute player <player> <duration> [reason]` mutes one player.
     .then(
-        CommandNode::literal("mute").then(
-            CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
-                .suggest(PlayerNames)
-                .execute(MuteCommand),
-        ),
+        CommandNode::literal("mute")
+            .then(CommandNode::literal("on").execute(MuteStateCommand { muted: true }))
+            .then(CommandNode::literal("off").execute(MuteStateCommand { muted: false }))
+            .then(
+                CommandNode::literal("player").then(
+                    CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                        .suggest(PlayerNames)
+                        .then(
+                            CommandNode::argument(
+                                "duration",
+                                &ArgumentType::String(StringType::SingleWord),
+                            )
+                            .suggest(Durations)
+                            .then(
+                                CommandNode::argument(
+                                    "reason",
+                                    &ArgumentType::String(StringType::Greedy),
+                                )
+                                .execute(MuteCommand),
+                            )
+                            .execute(MuteCommand),
+                        ),
+                ),
+            )
+            .execute(MuteAllCommand),
     )
     .then(
         CommandNode::literal("unmute").then(
@@ -299,6 +351,35 @@ pub fn register_commands(context: &Context) {
             .execute(ShadowMuteCommand),
     );
     context.register_command(shadowmute, PERM_SHADOWMUTE);
+
+    // ---- /trmute, /mute, /trunmute ----
+    // §1.3 — the standalone mute commands are the player-mute form only: no
+    // `on|off` branch (`TRC:860-884`), and they share one command object.
+    let mute = Command::new(
+        &[String::from("trmute"), String::from("mute")],
+        "Mute a player",
+    )
+    .then(
+        CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+            .suggest(PlayerNames)
+            .then(
+                CommandNode::argument("duration", &ArgumentType::String(StringType::SingleWord))
+                    .suggest(Durations)
+                    .then(
+                        CommandNode::argument("reason", &ArgumentType::String(StringType::Greedy))
+                            .execute(MuteCommand),
+                    )
+                    .execute(MuteCommand),
+            ),
+    );
+    context.register_command(mute, PERM_MUTE);
+
+    let unmute = Command::new(&[String::from("trunmute")], "Unmute a player").then(
+        CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+            .suggest(PlayerNames)
+            .execute(UnmuteCommand),
+    );
+    context.register_command(unmute, PERM_MUTE);
 
     // ---- /msg <target> <message> ----
     let msg = Command::new(
@@ -446,7 +527,56 @@ impl CommandHandler for VersionCommand {
     }
 }
 
-/// `/trchat muteall` — toggle the global mute.
+/// §6 `parseDuration` — `s/m/h/d/w` segments plus the permanent keywords.
+///
+/// The whole string must be consumed and the total must be positive, so `5x`,
+/// `1h30` and `0s` are all invalid. Returns `None` for a malformed input and
+/// `Some(-1)` for the permanent spellings, matching the upstream contract where
+/// a negative duration marks a permanent mute (`ModerationService.java:148-178`).
+fn parse_duration(raw: &str) -> Option<i64> {
+    let text = raw.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let lowered = text.to_ascii_lowercase();
+    if matches!(lowered.as_str(), "permanent" | "forever" | "perm" | "永久") {
+        return Some(-1);
+    }
+
+    let mut total: i64 = 0;
+    let mut number = String::new();
+    for ch in lowered.chars() {
+        if ch.is_ascii_digit() {
+            number.push(ch);
+            continue;
+        }
+        // A unit must directly follow at least one digit.
+        let unit = match ch {
+            's' => 1_000,
+            'm' => 60_000,
+            'h' => 3_600_000,
+            'd' => 86_400_000,
+            'w' => 604_800_000,
+            _ => return None,
+        };
+        let value: i64 = number.parse().ok()?;
+        number.clear();
+        // `Math.addExact`/`multiplyExact` in the upstream; `checked_*` here.
+        total = total.checked_add(value.checked_mul(unit)?)?;
+    }
+    // A trailing number with no unit means the string was not fully consumed.
+    if !number.is_empty() {
+        return None;
+    }
+    (total > 0).then_some(total)
+}
+
+/// §6 `muteExpiry` — see [`crate::playerdata::mute_expiry_text`].
+fn mute_expiry_text(until: i64) -> String {
+    crate::playerdata::mute_expiry_text(until)
+}
+
+/// `/trchat mute` (bare) — toggle the global mute.
 struct MuteAllCommand;
 
 impl CommandHandler for MuteAllCommand {
@@ -456,26 +586,71 @@ impl CommandHandler for MuteAllCommand {
         server: Server,
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_ADMIN) {
-            send(&sender, "&cYou do not have permission to use this command.");
+        if !sender.has_permission(&server, PERM_MUTE) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
-        let mut players = SessionPlayers::global()
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
-        let next = !players.is_global_muted();
-        players.set_global_muted(next);
-        drop(players);
-        if next {
-            send(&sender, "&c[TrChat] Chat has been globally muted.");
-        } else {
-            send(&sender, "&a[TrChat] Chat is no longer globally muted.");
-        }
+        let current = {
+            let players = SessionPlayers::global()
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
+            players.is_global_muted()
+        };
+        set_global_mute(&sender, &server, !current);
         Ok(0)
     }
 }
 
-/// `/trchat mute <player>` — mute one player.
+/// `/trchat mute on|off` — set the global mute explicitly (spec §1.2).
+///
+/// `on` and `off` are literal nodes, so the target state travels in the handler
+/// rather than through an argument.
+struct MuteStateCommand {
+    /// The state this literal requests.
+    muted: bool,
+}
+
+impl CommandHandler for MuteStateCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        if !sender.has_permission(&server, PERM_MUTE) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
+            return Ok(0);
+        }
+        set_global_mute(&sender, &server, self.muted);
+        Ok(0)
+    }
+}
+
+/// Applies the global mute and announces it to every online player, as
+/// `ChatService.setGlobalMute` does (`ChatService.java:332-342`).
+fn set_global_mute(sender: &CommandSender, server: &Server, muted: bool) {
+    {
+        let mut players = SessionPlayers::global()
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        players.set_global_muted(muted);
+    }
+    // The announcement goes to everyone online, including the issuer.
+    let key = if muted {
+        "Global-Mute-On"
+    } else {
+        "Global-Mute-Off"
+    };
+    let text = message(key, sender, &[]);
+    for online in server.get_all_players() {
+        online.send_system_message(
+            TextComponent::from_legacy_string_with_code(&text, '&'),
+            false,
+        );
+    }
+}
+
+/// `/trchat mute player <player> <duration> [reason]` — mute one player.
 struct MuteCommand;
 
 impl CommandHandler for MuteCommand {
@@ -485,29 +660,83 @@ impl CommandHandler for MuteCommand {
         server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_ADMIN) {
-            send(&sender, "&cYou do not have permission to use this command.");
+        if !sender.has_permission(&server, PERM_MUTE) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
         let Some(name) = arg_string(&args, "player") else {
-            send(&sender, "&cUsage: /trchat mute <player>");
+            send(
+                &sender,
+                "&cUsage: /trchat mute player <player> <duration> [reason]",
+            );
             return Ok(0);
         };
-        let mut players = SessionPlayers::global()
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
-        match players.state_mut(&name) {
-            Some(state) => {
-                state.muted = true;
-                send(&sender, &format!("&a[TrChat] Muted {name}."));
-            }
-            None => send(&sender, &format!("&c[TrChat] {name} is not online.")),
+        let Some(raw_duration) = arg_string(&args, "duration") else {
+            send(
+                &sender,
+                "&cUsage: /trchat mute player <player> <duration> [reason]",
+            );
+            return Ok(0);
+        };
+        let Some(duration) = parse_duration(&raw_duration) else {
+            send(
+                &sender,
+                &message("Mute-Wrong-Format", &sender, &[&raw_duration]),
+            );
+            return Ok(0);
+        };
+        if !player_exists(&server, &name) {
+            send(
+                &sender,
+                &message("General-Player-Not-Found", &sender, &[&name]),
+            );
+            return Ok(0);
+        }
+        // An omitted reason is reported as `-` by the store.
+        let reason = arg_string(&args, "reason").unwrap_or_default();
+
+        let applied = {
+            let mut players = SessionPlayers::global()
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            players.mute(&name, duration, &reason)
+        };
+        match applied {
+            Some(until) => send(
+                &sender,
+                &message(
+                    "Mute-Muted-Player",
+                    &sender,
+                    &[&name, &mute_expiry_text(until), &reason_or_dash(&reason)],
+                ),
+            ),
+            None => send(
+                &sender,
+                &message("General-Player-Not-Found", &sender, &[&name]),
+            ),
         }
         Ok(0)
     }
 }
 
-/// `/trchat unmute <player>` — unmute one player.
+/// The `-` the store substitutes for a blank mute reason.
+fn reason_or_dash(reason: &str) -> String {
+    if reason.trim().is_empty() {
+        "-".to_string()
+    } else {
+        reason.trim().to_string()
+    }
+}
+
+/// Whether `name` belongs to an online player (case-insensitive).
+fn player_exists(server: &Server, name: &str) -> bool {
+    server
+        .get_all_players()
+        .iter()
+        .any(|player| player.get_name().eq_ignore_ascii_case(name))
+}
+
+/// `/trchat unmute <player>` — clear a player's mute.
 struct UnmuteCommand;
 
 impl CommandHandler for UnmuteCommand {
@@ -517,23 +746,36 @@ impl CommandHandler for UnmuteCommand {
         server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_ADMIN) {
-            send(&sender, "&cYou do not have permission to use this command.");
+        if !sender.has_permission(&server, PERM_MUTE) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
         let Some(name) = arg_string(&args, "player") else {
             send(&sender, "&cUsage: /trchat unmute <player>");
             return Ok(0);
         };
-        let mut players = SessionPlayers::global()
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
-        match players.state_mut(&name) {
-            Some(state) => {
-                state.muted = false;
-                send(&sender, &format!("&a[TrChat] Unmuted {name}."));
-            }
-            None => send(&sender, &format!("&c[TrChat] {name} is not online.")),
+        if !player_exists(&server, &name) {
+            send(
+                &sender,
+                &message("General-Player-Not-Found", &sender, &[&name]),
+            );
+            return Ok(0);
+        }
+        let cleared = {
+            let mut players = SessionPlayers::global()
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            players.unmute(&name)
+        };
+        match cleared {
+            Some(_) => send(
+                &sender,
+                &message("Mute-Cancel-Muted-Player", &sender, &[&name]),
+            ),
+            None => send(
+                &sender,
+                &message("General-Player-Not-Found", &sender, &[&name]),
+            ),
         }
         Ok(0)
     }
@@ -950,7 +1192,11 @@ impl CommandHandler for BoundAliasCommand {
 ///
 /// A channel with `Always-Listen` keeps its `joined` record on exit, so the
 /// player stops sending to it but still receives from it.
-fn toggle_channel(sender: &CommandSender, name: &str, channel_id: &str) -> Result<i32, CommandError> {
+fn toggle_channel(
+    sender: &CommandSender,
+    name: &str,
+    channel_id: &str,
+) -> Result<i32, CommandError> {
     let always_listen = {
         let config = config::global_config();
         let config = config.read();
@@ -1248,9 +1494,51 @@ impl CommandHandler for UsageCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_channel_toggle, suggest_matching, ChannelToggle};
+    use super::{apply_channel_toggle, parse_duration, suggest_matching, ChannelToggle};
     use crate::playerdata::PlayerState;
     use pumpkin_plugin_api::command::SuggestionRequest;
+
+    /// §6 `parseDuration` — single and combined `s/m/h/d/w` segments, plus the
+    /// permanent spellings that map onto the `-1` marker.
+    #[test]
+    fn durations_parse_segments_and_permanent_keywords() {
+        assert_eq!(parse_duration("30s"), Some(30_000));
+        assert_eq!(parse_duration("5m"), Some(300_000));
+        assert_eq!(parse_duration("1h"), Some(3_600_000));
+        assert_eq!(parse_duration("1d"), Some(86_400_000));
+        assert_eq!(parse_duration("7d"), Some(604_800_000));
+        assert_eq!(parse_duration("1w"), Some(604_800_000));
+        // Segments are summed, and the input may be padded.
+        assert_eq!(parse_duration(" 1h30m "), Some(5_400_000));
+        assert_eq!(
+            parse_duration("1M"),
+            Some(60_000),
+            "units are case-insensitive"
+        );
+        // Only the *total* must be positive, so a zero-valued trailing segment
+        // is still a fully consumed, valid duration.
+        assert_eq!(parse_duration("1h0m"), Some(3_600_000));
+
+        for permanent in ["permanent", "PERMANENT", "forever", "perm", "永久"] {
+            assert_eq!(parse_duration(permanent), Some(-1), "{permanent}");
+        }
+    }
+
+    /// The whole string must be consumed and the total must be positive.
+    #[test]
+    fn malformed_durations_are_rejected() {
+        for invalid in [
+            "", "   ", "5", "5x", "1h30", "abc", "s", "-5s", "`5s`", "0s", "0m",
+        ] {
+            assert_eq!(parse_duration(invalid), None, "{invalid:?} must not parse");
+        }
+    }
+
+    /// Overflow is rejected rather than wrapping, mirroring `Math.multiplyExact`.
+    #[test]
+    fn overflowing_durations_are_rejected() {
+        assert_eq!(parse_duration("9999999999999999w"), None);
+    }
 
     fn request(remaining: &str) -> SuggestionRequest {
         SuggestionRequest {
