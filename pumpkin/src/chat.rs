@@ -504,8 +504,11 @@ fn chat_pipeline(
             config,
         ),
         (None, Some(ch)) => {
-            let body = wrap_special_characters(ch, Audience::Chat, player, &body);
-            render_template(
+            // §3 step 4 — the Mod cleans the body first and only then wraps the
+            // resource-pack glyphs (`wrapSpecialChars(bodyText, …)` runs on the
+            // already colour-stripped `bodyText`), so the wrap must happen after
+            // `render_template` has stripped the player's own codes.
+            let text = render_template(
                 &template,
                 &name,
                 &body,
@@ -516,7 +519,8 @@ fn chat_pipeline(
                 player,
                 server,
                 config,
-            )
+            );
+            wrap_special_characters(ch, Audience::Chat, player, &text)
         }
         (None, None) => render_template(
             &template,
@@ -885,9 +889,13 @@ fn sanitise_log_field(value: &str) -> String {
 /// `%player_name%`-style tokens to these `{…}` names.
 ///
 /// `%token%` placeholders (`%server_online%`, `%player_health%`, …) are
-/// resolved first (§1.1), against the **message subject** for `player_*`.
-/// Message bodies are resolved *and then* legacy-code-stripped, matching the
-/// Mod's body pipeline (§1.1 / `ChannelRenderer.java:116-133`).
+/// resolved first (§1.1), against the **message subject** for `player_*`. The
+/// `{message}` slot takes the Mod's `cleanMessage`: the raw text with its
+/// placeholders resolved and its legacy codes **stripped**, so a player cannot
+/// colour their own message — the channel's `msg.default-color` (or the picked
+/// `trchat.color`) decides how it looks (`ChannelRenderer.java:116-133`,
+/// chat.md §3 step 4). A format's own `%message%` still echoes the raw text,
+/// which is what the `local` map holds (`ChatService.java:633`).
 fn render_template(
     template: &str,
     name: &str,
@@ -900,16 +908,12 @@ fn render_template(
     server_ref: &Server,
     config: &crate::config::TrChatConfig,
 ) -> String {
-    let template = placeholder::resolve(template, player, server_ref, config);
     // §1.12 — `%message%` is a `local` context key: it holds this message's raw
     // text, so a format may echo it before `{message}` substitution.
-    let message = placeholder::resolve_with_local(
-        message,
-        player,
-        server_ref,
-        config,
-        &[("message", message)],
-    );
+    let local = [("message", message)];
+    let template = placeholder::resolve_with_local(template, player, server_ref, config, &local);
+    let message = placeholder::resolve_with_local(message, player, server_ref, config, &local);
+    let message = clean_message(&message);
     template
         .replace("{player}", name)
         .replace("{message}", &message)
@@ -917,6 +921,14 @@ fn render_template(
         .replace("{server}", server)
         .replace("{world}", world)
         .replace("{target}", target)
+}
+
+/// §3 step 4 — `LegacyText.stripLegacyCodes(message)`: the resolved message with
+/// every `&`/`§` code removed, so the body colour comes from the tier and not
+/// from the text the player typed. Pure, so the strip can be asserted without a
+/// host.
+fn clean_message(resolved: &str) -> String {
+    functions::strip_legacy_codes(resolved)
 }
 
 /// §4.4/§4.5 — re-attaches the selected tier's component-part hover and click
@@ -1311,8 +1323,9 @@ fn levenshtein(a: &[char], b: &[char]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        assemble_console_text, chat_log_line, is_whitelisted_unit, levenshtein, local_target,
-        max_consecutive_repeat, normalize_for_similarity, period_or_default, similarity_score,
+        assemble_console_text, chat_log_line, clean_message, is_whitelisted_unit, levenshtein,
+        local_target, max_consecutive_repeat, normalize_for_similarity, period_or_default,
+        similarity_score,
     };
     use crate::config::TrChatConfig;
 
@@ -1380,6 +1393,18 @@ mod tests {
         assert_eq!(local_target(&[("TRCHAT_TOPLAYER", "Carol")]), "Carol");
         assert_eq!(local_target(&[("message", "hi")]), "");
         assert_eq!(local_target(&[]), "");
+    }
+
+    /// §3 step 4 — the `{message}` slot drops legacy codes, so only the tier's
+    /// colour (or the sender's picked `trchat.color`) decides how a message
+    /// looks; a player cannot colour their own text with `&c`.
+    #[test]
+    fn message_body_drops_legacy_codes() {
+        assert_eq!(clean_message("&chello &lworld"), "hello world");
+        assert_eq!(clean_message("plain text"), "plain text");
+        // A trailing lone symbol survives, matching the Mod's scanner.
+        assert_eq!(clean_message("x&"), "x&");
+        assert_eq!(clean_message("&c"), "");
     }
 
     /// Normalisation is `toLowerCase(ROOT)` plus removal of *all* whitespace.
