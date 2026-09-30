@@ -693,6 +693,12 @@ Custom 的 `FunctionSettings` 是硬编码的（行 825–837）：`enabled=true
 **注意**：`reload()`（行 59–73）先 `words = settings.localWords()`，随后异步刷新；
 若云端尚未返回，只有本地词生效。云端失败时**本地词仍然生效**（因为 HashSet 以 localWords 起始）。
 
+**Pumpkin 支持情况**：`Cloud-Thesaurus.*` 三个键被解析进 `FilterConfig`（`config.rs:1094-1102`）但标注
+`#[allow(dead_code)]`——WASM 沙盒无后台线程与 HTTP 拉取，云端词库刷新为 out-of-scope；
+`Local` / `WhiteList` / `Ignored-Punctuations` / `Replacement` 全部接入聊天管线
+（`chat.rs:447-467` 先 `TextFilter` 后 `MessageGuard`）。沙盒内该偏差等价于云端拉取持续失败，
+而规格第 20 条保证本地词仍然生效。
+
 ---
 
 ## 4. 关键结论与实现坑（≤20 行）
