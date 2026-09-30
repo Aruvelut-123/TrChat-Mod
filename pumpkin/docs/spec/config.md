@@ -253,3 +253,4 @@
 9. **`Example.yml`/`Server.yml` 必须硬排除**；`Normal` 缺失与 `Auto-Join` 重复是**致命错误**（加载失败，不是警告）。
 10. **点击动作择一**：`suggest`>`command`>`url`>`copy`>`file`，且 `url` 必须能通过 URI 校验才生效。
 11. **`SpecialChars` 按码点匹配并跳过 ZWJ/肤色/VS16**，且玩家手动颜色码优先于自动包裹色。
+12. **Pumpkin deviation（§6.2，WASM guest 约束）**：M 侧 `YamlConfigSynchronizer` 会把**缺失键补成 bundled 默认值**并写回文件（schema 键「缺失不补」仅限 schema 文件）；Pumpkin 加载用 `#[serde(default)]`，缺失键落到 **Rust 类型默认**（`""`/`0`/`false`），不会写回文件。首次生成文件完整时两者等价；用户删键后语义不同（如 `chat.serverName` 缺失 → M 补 `"A Minecraft Server"`，Pumpkin 得 `""`）。已确认无崩溃路径：`defaultLanguage` 空串会被 lang 链回退到 `en_US`（`lang.rs` fallback），其余缺失键按各自消费者处理为空值。
