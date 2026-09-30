@@ -1602,6 +1602,16 @@ pub fn format_candidates(layers: &[FormatLayer]) -> Vec<&FormatLayer> {
 /// viewer pick the tier with [`format_candidates`] first; the placeholder-free
 /// paths (private-message templates) fall back to [`select_layer`].
 pub fn layer_template(layer: &FormatLayer) -> String {
+    layer_template_with_colour(layer, "")
+}
+
+/// §3 step 4 — the same flattened template, but with the message body coloured
+/// by `colour` (a bare hex digit such as `a`) instead of `msg.default-color`.
+///
+/// This is the `trchat_message_color` local of the upstream renderer: a sender
+/// who picked a chat colour overrides the channel default for their own
+/// message body. An empty `colour` reproduces [`layer_template`].
+pub fn layer_template_with_colour(layer: &FormatLayer, colour: &str) -> String {
     let mut out = String::new();
     for part in &layer.prefix {
         if !part.condition.is_empty() && part.condition != "~" {
@@ -1609,7 +1619,13 @@ pub fn layer_template(layer: &FormatLayer) -> String {
         }
         out.push_str(&part.text);
     }
-    out.push_str(&color_code(&layer.msg_default_color));
+    if colour.is_empty() {
+        out.push_str(&color_code(&layer.msg_default_color));
+    } else {
+        // The stored code is already validated as one hex digit.
+        out.push('&');
+        out.push_str(colour);
+    }
     out.push_str("{message}");
     normalize_placeholders(&out)
 }

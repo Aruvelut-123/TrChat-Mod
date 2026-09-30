@@ -462,8 +462,11 @@ fn chat_pipeline(
     // `priority` descending (stable). When a channel exists but no tier passes,
     // the Mod renders the bare resolved message — no prefix, no suffix.
     let layer = channel.and_then(|ch| select_format_layer(ch, player));
+    // §1.3 step 4 / §3: a chat colour the sender picked overrides the channel's
+    // `msg.default-color` for their body, but only when the sender may use it.
+    let chat_colour = sender_chat_color(player);
     let template = match (layer, channel) {
-        (Some(layer), _) => crate::config::layer_template(layer),
+        (Some(layer), _) => crate::config::layer_template_with_colour(layer, &chat_colour),
         (None, Some(_)) => "{message}".to_string(),
         (None, None) => config.plain_template(),
     };
@@ -895,6 +898,27 @@ fn wrap_special_characters(ch: &ChannelConfig, player: &Player, body: &str) -> S
     let color = color_code(&layer.special_char_color);
     let default = color_code(&layer.msg_default_color);
     special::wrap_special_chars(body, &color, &default)
+}
+
+/// §3 step 4 — the sender's effective chat colour code, or an empty string.
+///
+/// The stored colour only takes effect when the sender is an operator or holds
+/// the matching `trchat.color.<code>` node, mirroring `ChatService.java:637-643`
+/// which writes `trchat_message_color` under that same condition.
+fn sender_chat_color(player: &Player) -> String {
+    let colour = {
+        let session = SessionPlayers::global();
+        let session = session.read().unwrap_or_else(|e| e.into_inner());
+        session.chat_color(&player.get_name())
+    };
+    if colour.is_empty() {
+        return colour;
+    }
+    if condition::is_op(player) || player.has_permission(&format!("trchat.color.{colour}")) {
+        colour
+    } else {
+        String::new()
+    }
 }
 
 /// §3 step 1 — the tier that applies to `player`: the candidates in selection

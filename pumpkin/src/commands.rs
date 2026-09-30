@@ -10,6 +10,7 @@
 //! * `/trchat mute on|off`   — set the global mute explicitly (`trchat.mute`)
 //! * `/trchat mute player <player> <duration> [reason]` — mute a player
 //! * `/trchat unmute <player>` — clear a player's mute (`trchat.mute`)
+//! * `/trchat color <color>` — set the chat colour (`trchat.command.color`)
 //! * `/trmute`, `/mute`, `/trunmute` — standalone aliases of the above
 //! * `/trchat ignore <player> [on|off]` — toggle ignoring a player (open)
 //! * `/ignore`, `/trignore <player> [on|off]`, `/ignorelist` — §1.3 aliases
@@ -63,6 +64,11 @@ const PERM_SHADOWMUTE: &str = "trchat:trchat.shadowmute";
 const PERM_MUTE: &str = "trchat:trchat.mute";
 /// Permission to ignore players — open to everyone (`PERM:46-48`).
 const PERM_IGNORE: &str = "trchat:trchat.command.ignore";
+/// Permission to set one's own chat colour (OP level 2, `PERM:49`).
+const PERM_COLOR: &str = "trchat:trchat.command.color";
+/// The 16 `trchat.color.<code>` nodes that gate using a chat colour
+/// (`PERM:56-69`). All default to OP level 2.
+const COLOR_CODES: &str = "0123456789abcdef";
 
 /// Registers the permission nodes backing the commands above.
 ///
@@ -116,17 +122,33 @@ fn register_permissions(context: &Context) {
             // (`PERM:131-135`).
             PermissionDefault::Allow,
         ),
+        (
+            PERM_COLOR,
+            "Set your own chat colour",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
     ];
-
-    for (node, description, default) in nodes {
-        let node = Permission {
-            node: node.to_string(),
-            description: description.to_string(),
-            default,
+    for node in &nodes {
+        let permission = Permission {
+            node: node.0.to_string(),
+            description: node.1.to_string(),
+            default: node.2,
             children: Vec::new(),
         };
-        if let Err(error) = context.register_permission(&node) {
-            eprintln!("[TrChat] could not register permission: {error}");
+        if let Err(error) = context.register_permission(&permission) {
+            eprintln!("[TrChat] could not register permission {}: {error}", node.0);
+        }
+    }
+    // §2.1 — the 16 `trchat.color.<code>` nodes, one per hex digit.
+    for code in COLOR_CODES.chars() {
+        let permission = Permission {
+            node: format!("trchat:trchat.color.{code}"),
+            description: format!("Use &{code} as a chat colour"),
+            default: PermissionDefault::Op(PermissionLevel::Two),
+            children: Vec::new(),
+        };
+        if let Err(error) = context.register_permission(&permission) {
+            eprintln!("[TrChat] could not register permission trchat.color.{code}: {error}");
         }
     }
 }
@@ -222,6 +244,32 @@ impl CommandSuggestionHandler for Durations {
     }
 }
 
+/// §1.6 — tab-completes the chat colours the sender may use, plus `reset`.
+///
+/// Without a player (console) only `reset` is offered, matching
+/// `TRC:210-214, 687-694`.
+struct Colors;
+
+impl CommandSuggestionHandler for Colors {
+    fn suggest(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        request: SuggestionRequest,
+    ) -> CommandSuggestions {
+        let mut candidates: Vec<String> = Vec::new();
+        if let Some(player) = sender.as_player() {
+            for code in COLOR_CODES.chars() {
+                if player.has_permission(&format!("trchat.color.{code}")) {
+                    candidates.push(code.to_string());
+                }
+            }
+        }
+        candidates.push("reset".to_string());
+        suggest_matching(&request, candidates.into_iter())
+    }
+}
+
 /// Case-insensitive prefix filter shared by the suggestion handlers above.
 fn suggest_matching(
     request: &SuggestionRequest,
@@ -303,6 +351,14 @@ pub fn register_commands(context: &Context) {
             CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
                 .suggest(PlayerNames)
                 .execute(UnmuteCommand),
+        ),
+    )
+    // §1.2 — `/trchat color <color>` sets the sender's chat colour.
+    .then(
+        CommandNode::literal("color").then(
+            CommandNode::argument("color", &ArgumentType::String(StringType::SingleWord))
+                .suggest(Colors)
+                .execute(ColorCommand),
         ),
     )
     .then(
@@ -807,6 +863,88 @@ fn game_mode_name(mode: pumpkin_plugin_api::common::GameMode) -> &'static str {
         GameMode::Creative => "creative",
         GameMode::Adventure => "adventure",
         GameMode::Spectator => "spectator",
+    }
+}
+
+/// What `/trchat color <color>` asked for, after the upstream normalisation
+/// (`ChatService.setChatColor`): trim, lowercase (`ROOT`), then match `[0-9a-f]`.
+#[derive(Debug, PartialEq, Eq)]
+enum ColorRequest {
+    /// `reset` / `null` / `default` — clear the stored colour.
+    Reset,
+    /// A valid one-character hex colour code.
+    Set(char),
+    /// Anything else; the *original* argument is echoed by `Color-Invalid`.
+    Invalid,
+}
+
+fn parse_color_request(raw: &str) -> ColorRequest {
+    let value = raw.trim().to_ascii_lowercase();
+    if matches!(value.as_str(), "reset" | "null" | "default") {
+        return ColorRequest::Reset;
+    }
+    let mut chars = value.chars();
+    match (chars.next(), chars.next()) {
+        // Lowercased already, so an ASCII hex digit is exactly `[0-9a-f]`.
+        (Some(code), None) if code.is_ascii_hexdigit() => ColorRequest::Set(code),
+        _ => ColorRequest::Invalid,
+    }
+}
+
+/// Stores (or clears) `name`'s chat colour in the session store.
+fn store_chat_color(name: &str, colour: Option<char>) {
+    SessionPlayers::global()
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .set_chat_color(name, colour);
+}
+
+/// `/trchat color <color>` — set/reset the sender's chat colour.
+struct ColorCommand;
+
+impl CommandHandler for ColorCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        if !sender.has_permission(&server, PERM_COLOR) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
+            return Ok(0);
+        }
+        let Some(player) = sender.as_player() else {
+            send(&sender, &message("General-Player-Only", &sender, &[]));
+            return Ok(0);
+        };
+        let Some(raw) = arg_string(&args, "color") else {
+            send(&sender, "&cUsage: /trchat color <color>");
+            return Ok(0);
+        };
+        let code = match parse_color_request(&raw) {
+            ColorRequest::Reset => {
+                store_chat_color(&player.get_name(), None);
+                send(&sender, &message("Color-Reset", &sender, &[]));
+                return Ok(0);
+            }
+            ColorRequest::Invalid => {
+                send(&sender, &message("Color-Invalid", &sender, &[&raw]));
+                return Ok(0);
+            }
+            ColorRequest::Set(code) => code,
+        };
+        // Operators may use any colour; otherwise the matching
+        // `trchat.color.<code>` node is required (`ChatService.java:315-322`).
+        if !condition::is_op(&player) && !player.has_permission(&format!("trchat.color.{code}")) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
+            return Ok(0);
+        }
+        store_chat_color(&player.get_name(), Some(code));
+        // The sample is the colour code applied to its own letter, exactly as
+        // the upstream passes `"&" + color + color`.
+        let sample = format!("&{code}{code}");
+        send(&sender, &message("Color-Selected", &sender, &[&sample]));
+        Ok(0)
     }
 }
 
@@ -1913,6 +2051,25 @@ mod tests {
         assert_eq!(super::game_mode_name(GameMode::Creative), "creative");
         assert_eq!(super::game_mode_name(GameMode::Adventure), "adventure");
         assert_eq!(super::game_mode_name(GameMode::Spectator), "spectator");
+    }
+
+    /// `ChatService.setChatColor` — trim + lowercase, then reset keywords, then
+    /// a single `[0-9a-f]` code; everything else is invalid.
+    #[test]
+    fn color_requests_follow_the_upstream_normalisation() {
+        use super::ColorRequest::{Invalid, Reset, Set};
+        assert_eq!(super::parse_color_request("reset"), Reset);
+        assert_eq!(super::parse_color_request(" NULL "), Reset);
+        assert_eq!(super::parse_color_request("Default"), Reset);
+
+        assert_eq!(super::parse_color_request("a"), Set('a'));
+        assert_eq!(super::parse_color_request(" A "), Set('a'), "lowercased");
+        assert_eq!(super::parse_color_request("f"), Set('f'));
+
+        // `&a` is *not* stripped by the upstream, and only one char is allowed.
+        for bad in ["", "&a", "§a", "red", "ab", "g", "1 2", "aa"] {
+            assert_eq!(super::parse_color_request(bad), Invalid, "{bad:?}");
+        }
     }
 
     /// §1.3 — `on` / `off` are explicit, an omitted state toggles, and names are

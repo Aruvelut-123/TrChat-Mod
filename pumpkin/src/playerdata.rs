@@ -30,9 +30,7 @@ pub struct PlayerState {
     pub shadow_muted: bool,
     /// Players ignored by this player, lowercased names.
     pub ignored: HashSet<String>,
-    /// Chosen chat colour code (single char, no `&`) — the `/trchat color`
-    /// surface, which this port does not implement yet.
-    #[allow(dead_code)]
+    /// Chosen chat colour code (single char, no `&`), empty when unset.
     pub colour: String,
     /// Last player who privately messaged this player, lowercased — the target
     /// of `/trreply` (spec §1.6 `lastPrivateSender`).
@@ -189,6 +187,23 @@ impl SessionPlayers {
             .map(|state| (state.mute_until, state.mute_reason.as_str()))
     }
 
+    /// Stores `name`'s chat colour code, or clears it when `colour` is `None`.
+    ///
+    /// Returns `false` when the player has no session state (offline).
+    pub fn set_chat_color(&mut self, name: &str, colour: Option<char>) -> bool {
+        self.state_mut(name).is_some_and(|state| {
+            state.colour = colour.map(|code| code.to_string()).unwrap_or_default();
+            true
+        })
+    }
+
+    /// `name`'s chat colour code, or an empty string when unset or offline.
+    pub fn chat_color(&self, name: &str) -> String {
+        self.state(name)
+            .map(|state| state.colour.clone())
+            .unwrap_or_default()
+    }
+
     /// Whether `muted_by` ignores `target`.
     pub fn ignores(&self, muted_by: &str, target: &str) -> bool {
         self.states
@@ -335,6 +350,25 @@ mod tests {
         // The global mute is not a personal mute: the two are asked separately
         // because operators bypass only the former (spec §1.4 step 3).
         assert!(!s.is_muted("anyone"));
+    }
+
+    /// `/trchat color` — the chosen code is stored per player and cleared by
+    /// `None`; an offline player has nothing to update.
+    #[test]
+    fn chat_color_is_stored_and_cleared() {
+        let mut s = SessionPlayers::default();
+        assert_eq!(s.chat_color("Alice"), "", "unset by default");
+        assert!(!s.set_chat_color("Alice", Some('a')), "offline players");
+
+        s.join("Alice", "Normal");
+        assert!(s.set_chat_color("alice", Some('a')));
+        assert_eq!(s.chat_color("Alice"), "a", "lookup is case-insensitive");
+
+        assert!(s.set_chat_color("Alice", Some('f')));
+        assert_eq!(s.chat_color("Alice"), "f");
+
+        assert!(s.set_chat_color("Alice", None));
+        assert_eq!(s.chat_color("Alice"), "");
     }
 
     /// §1.3 step 6 — shadow mute is a per-player flag, set/cleared/toggled
