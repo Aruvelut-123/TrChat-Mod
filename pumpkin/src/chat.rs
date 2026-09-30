@@ -668,66 +668,140 @@ fn wrap_special_characters(ch: &ChannelConfig, body: &str) -> String {
     special::wrap_special_chars(body, &color, &default)
 }
 
-/// Normalized similarity in `[0, 1]` (a plain-normalized Jaro–Winkler stand-in
-/// for the ordered similarity used by the Bukkit anti-repeat guard).
-fn similarity_score(a: &str, b: &str) -> f64 {
+/// §5 `similarity(left, right)` (`MessageGuard.java:23-34`).
+///
+/// Both sides are normalised first (`toLowerCase(ROOT)` + **all** whitespace
+/// removed); identical results score `1.0` (which also covers two empty
+/// strings), otherwise the score is
+/// `1 - levenshtein(a, b) / max(len(a), len(b))`.
+///
+/// The Mod uses a rolling-array Levenshtein with unit insert/delete/substitute
+/// costs (`:49-66`). Comparison is per `char`; Java's `char` is a UTF-16 code
+/// unit, so the two differ only for astral-plane characters (emoji).
+fn similarity_score(left: &str, right: &str) -> f64 {
+    let a = normalize_for_similarity(left);
+    let b = normalize_for_similarity(right);
     if a == b {
         return 1.0;
     }
-    let ca: Vec<char> = a.chars().collect();
-    let cb: Vec<char> = b.chars().collect();
-    if ca.is_empty() || cb.is_empty() {
-        return 0.0;
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let longest = a.len().max(b.len());
+    if longest == 0 {
+        // Both sides normalised to nothing; equal-handling above covers this,
+        // but guard the division in case that branch ever changes.
+        return 1.0;
     }
-    let max_dist = (ca.len().max(cb.len()) / 2).saturating_sub(1);
-    let mut a_matched = vec![false; ca.len()];
-    let mut b_matched = vec![false; cb.len()];
-    let mut matches = 0usize;
-    for (i, &ca_i) in ca.iter().enumerate() {
-        let lo = i.saturating_sub(max_dist);
-        let hi = (i + max_dist + 1).min(cb.len());
-        for j in lo..hi {
-            if !b_matched[j] && cb[j] == ca_i {
-                a_matched[i] = true;
-                b_matched[j] = true;
-                matches += 1;
-                break;
-            }
-        }
+    1.0 - (levenshtein(&a, &b) as f64 / longest as f64)
+}
+
+/// `toLowerCase(ROOT)` + `\s+` removal — the anti-repeat normalisation.
+/// `to_lowercase` can expand one char into several (`İ` → `i̇`), so the
+/// lowercase step is flattened rather than mapped 1:1.
+fn normalize_for_similarity(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Rolling-array Levenshtein distance; insert, delete and substitute all cost 1.
+fn levenshtein(a: &[char], b: &[char]) -> usize {
+    if a.is_empty() {
+        return b.len();
     }
-    if matches == 0 {
-        return 0.0;
+    if b.is_empty() {
+        return a.len();
     }
-    let mut t = 0usize;
-    let mut j = 0usize;
-    for (i, matched) in a_matched.iter().enumerate() {
-        if !*matched {
-            continue;
+    // `prev[j]` is the distance for `a[..i]` vs `b[..j]`.
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, &ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, &cb) in b.iter().enumerate() {
+            let substitute = prev[j] + usize::from(ca != cb);
+            let delete = prev[j + 1] + 1;
+            let insert = cur[j] + 1;
+            cur[j + 1] = substitute.min(delete).min(insert);
         }
-        while j < b_matched.len() && !b_matched[j] {
-            j += 1;
-        }
-        if j >= b_matched.len() {
-            break;
-        }
-        if ca[i] != cb[j] {
-            t += 1;
-        }
-        j += 1;
+        std::mem::swap(&mut prev, &mut cur);
     }
-    let m = matches as f64;
-    let t = t as f64 / 2.0;
-    (m / ca.len() as f64 + m / cb.len() as f64 + (m - t) / m) / 3.0
+    prev[b.len()]
 }
 
 #[cfg(test)]
 mod tests {
-    use super::similarity_score;
+    use super::{levenshtein, normalize_for_similarity, similarity_score};
 
+    /// Normalisation is `toLowerCase(ROOT)` plus removal of *all* whitespace.
     #[test]
-    fn similarity_basics() {
+    fn similarity_normalisation_folds_case_and_whitespace() {
+        assert_eq!(normalize_for_similarity("Hello World"), "helloworld");
+        assert_eq!(normalize_for_similarity("  A\tB\nC  "), "abc");
+        assert_eq!(normalize_for_similarity(""), "");
+
+        // Identical after normalisation → 1.0.
+        assert_eq!(similarity_score("Hello World", "helloworld"), 1.0);
+        assert_eq!(similarity_score("HELLO", "hello"), 1.0);
+    }
+
+    /// The score is `1 - levenshtein / max(len)` on the normalised text.
+    #[test]
+    fn similarity_scores_match_normalised_levenshtein() {
+        // Identical → 1.0, and two empty strings are documented as 1.0.
         assert_eq!(similarity_score("hello", "hello"), 1.0);
-        assert!(similarity_score("hello", "helloo") > 0.9);
-        assert!(similarity_score("hello", "world") < 0.5);
+        assert_eq!(similarity_score("", ""), 1.0);
+
+        // One empty side → 0.0 (levenshtein == the other length).
+        assert_eq!(similarity_score("", "abc"), 0.0);
+        assert_eq!(similarity_score("abc", ""), 0.0);
+
+        // hello/world: 4 substitutions over max length 5 → 0.2.
+        assert!((similarity_score("hello", "world") - 0.2).abs() < 1e-9);
+
+        // hello/helloo: one insertion over max length 6 → 5/6.
+        let one_insert = 1.0 - 1.0 / 6.0;
+        assert!((similarity_score("hello", "helloo") - one_insert).abs() < 1e-9);
+
+        // abc/abd: one substitution over 3 → 2/3.
+        assert!((similarity_score("abc", "abd") - 2.0 / 3.0).abs() < 1e-9);
+
+        // kitten/sitting: 3 edits over 7 → 4/7.
+        assert!((similarity_score("kitten", "sitting") - 4.0 / 7.0).abs() < 1e-9);
+
+        // flaw/lawn: 2 edits over 4 → 0.5.
+        assert!((similarity_score("flaw", "lawn") - 0.5).abs() < 1e-9);
+    }
+
+    /// The default `antiRepeatSimilarity` of 0.85 must separate a repeated
+    /// message from an unrelated one.
+    #[test]
+    fn similarity_threshold_separates_repeats_from_unrelated_text() {
+        const THRESHOLD: f64 = 0.85;
+        assert!(similarity_score("hello there", "hello there") >= THRESHOLD);
+        // A single extra character keeps a near-duplicate above the threshold.
+        assert!(similarity_score("hello there", "hello theree") >= THRESHOLD);
+        // A genuinely different sentence falls well below it.
+        assert!(similarity_score("hello there", "goodbye world") < THRESHOLD);
+    }
+
+    /// Rolling-array Levenshtein: unit costs, and correct on the degenerate
+    /// axes that the rolling buffer could get wrong.
+    #[test]
+    fn levenshtein_uses_unit_costs() {
+        let chars = |s: &str| s.chars().collect::<Vec<char>>();
+        assert_eq!(levenshtein(&chars(""), &chars("")), 0);
+        assert_eq!(levenshtein(&chars(""), &chars("abc")), 3);
+        assert_eq!(levenshtein(&chars("abc"), &chars("")), 3);
+        assert_eq!(levenshtein(&chars("abc"), &chars("abc")), 0);
+        // Pure insertion / deletion / substitution.
+        assert_eq!(levenshtein(&chars("abc"), &chars("abcd")), 1);
+        assert_eq!(levenshtein(&chars("abcd"), &chars("abc")), 1);
+        assert_eq!(levenshtein(&chars("abc"), &chars("axc")), 1);
+        // Symmetry on a longer pair.
+        assert_eq!(
+            levenshtein(&chars("kitten"), &chars("sitting")),
+            levenshtein(&chars("sitting"), &chars("kitten"))
+        );
     }
 }
