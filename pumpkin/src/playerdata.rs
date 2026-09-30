@@ -111,6 +111,32 @@ impl SessionPlayers {
             .get(&muted_by.to_ascii_lowercase())
             .is_some_and(|s| s.ignored.contains(&target.to_ascii_lowercase()))
     }
+
+    /// Whether `name` is shadow-muted — their messages are echoed back to them
+    /// alone instead of being broadcast (spec §1.3 step 6).
+    pub fn is_shadow_muted(&self, name: &str) -> bool {
+        self.states
+            .get(&name.to_ascii_lowercase())
+            .is_some_and(|s| s.shadow_muted)
+    }
+
+    /// Sets the shadow-mute flag, returning the new state — or `None` when the
+    /// player is not online (no session state to touch).
+    pub fn set_shadow_muted(&mut self, name: &str, muted: bool) -> Option<bool> {
+        self.state_mut(name).map(|state| {
+            state.shadow_muted = muted;
+            muted
+        })
+    }
+
+    /// Flips the shadow-mute flag, returning the new state — or `None` when the
+    /// player is not online.
+    pub fn toggle_shadow_muted(&mut self, name: &str) -> Option<bool> {
+        self.state_mut(name).map(|state| {
+            state.shadow_muted = !state.shadow_muted;
+            state.shadow_muted
+        })
+    }
 }
 
 #[cfg(test)]
@@ -138,5 +164,30 @@ mod tests {
         let mut s = SessionPlayers::default();
         s.set_global_muted(true);
         assert!(s.is_muted("anyone"));
+    }
+
+    /// §1.3 step 6 — shadow mute is a per-player flag, set/cleared/toggled
+    /// through the session store; an offline player has no state to change.
+    #[test]
+    fn shadow_mute_is_tracked_per_player() {
+        let mut s = SessionPlayers::default();
+        assert!(!s.is_shadow_muted("Alice"), "unseen players are not muted");
+        assert_eq!(
+            s.set_shadow_muted("Alice", true),
+            None,
+            "no session state means nothing to update"
+        );
+
+        s.join("Alice", "Normal");
+        assert_eq!(s.set_shadow_muted("Alice", true), Some(true));
+        // Lookup is case-insensitive, like the rest of the store.
+        assert!(s.is_shadow_muted("alice"));
+
+        assert_eq!(s.toggle_shadow_muted("Alice"), Some(false));
+        assert!(!s.is_shadow_muted("Alice"));
+        assert_eq!(s.toggle_shadow_muted("Alice"), Some(true));
+
+        // Shadow mute is independent of the plain mute flag.
+        assert!(!s.is_muted("Alice"));
     }
 }

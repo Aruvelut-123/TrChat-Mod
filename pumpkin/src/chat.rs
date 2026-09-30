@@ -509,6 +509,44 @@ fn chat_pipeline(
         ),
     };
 
+    // §1.3 step 6 — the shadow-mute flag is read once, before broadcasting.
+    let shadow_muted = {
+        let session = SessionPlayers::global();
+        let session = session.read().unwrap_or_else(|e| e.into_inner());
+        session.is_shadow_muted(&name)
+    };
+
+    // The receiver-specific component: the template rendered around the
+    // processed body, plus the selected tier's prefix events and `msg.hover`.
+    let build_component = |viewer: &pumpkin_plugin_api::player::Player| {
+        let component = match &outcome {
+            Some(out) => functions::build_body_component(
+                &template, out, &name, &locale, viewer, server, config,
+            ),
+            None => TextComponent::from_legacy_string_with_code(&template, '&'),
+        };
+        let component = apply_prefix_events(
+            component,
+            channel,
+            &name,
+            &world,
+            server_name,
+            viewer,
+            server,
+            config,
+        );
+        apply_msg_hover(component, channel, viewer, server, config)
+    };
+
+    // §1.3 step 6 — a shadow-muted sender sees their own message and nothing
+    // else: it is echoed back to them, written to the log, and never broadcast
+    // (nor relayed to other servers).
+    if shadow_muted {
+        player.send_system_message(build_component(player), false);
+        log_to_console(config, &name, channel, &body);
+        return ChatOutcome::Accepted;
+    }
+
     // 9. Broadcast — every online player, subject to the four §2.3 receiver
     //    checks: ignore list, channel membership, listen permission, and the
     //    `Target` reach (SELF / WORLD / DISTANCE, squared comparison).
@@ -581,33 +619,7 @@ fn chat_pipeline(
             }
         }
 
-        let component = match &outcome {
-            Some(out) => functions::build_body_component(
-                &template,
-                out,
-                &name,
-                &locale,
-                player,
-                server,
-                config,
-            ),
-            None => TextComponent::from_legacy_string_with_code(&template, '&'),
-        };
-        // §4.4/§4.5 — the flattened template cannot carry per-part hover/click
-        // events, so re-attach the selected tier's component parts here.
-        let component = apply_prefix_events(
-            component,
-            channel,
-            &name,
-            &world,
-            server_name,
-            player,
-            server,
-            config,
-        );
-        // §3 step 4 — `msg.hover` hovers the message body itself.
-        let component = apply_msg_hover(component, channel, player, server, config);
-        let _ = player.send_system_message(component, false);
+        player.send_system_message(build_component(player), false);
         receivers.push(player);
     }
 
@@ -627,6 +639,10 @@ fn chat_pipeline(
         }
     }
 
+    // §1.3 step 10 — `logToConsole`. Uses the `Console` tier when the channel
+    //    declares one, otherwise the same template the chat audience saw.
+    log_to_console(config, &name, channel, &body);
+
     // Accepted — update the cooldown timestamp.
     {
         let mut guard = states().lock().unwrap_or_else(|e| e.into_inner());
@@ -635,6 +651,110 @@ fn chat_pipeline(
         }
     }
     ChatOutcome::Accepted
+}
+
+/// `logging.normalMessageFormat` — the upstream default, used when the key is
+/// omitted from `settings.yml`.
+const DEFAULT_NORMAL_MESSAGE_FORMAT: &str = "[{0}] {1}: {2}";
+
+/// `logging.privateMessageFormat` — the upstream default (see
+/// [`DEFAULT_NORMAL_MESSAGE_FORMAT`]).
+const DEFAULT_PRIVATE_MESSAGE_FORMAT: &str = "[{0}] {1} -> {2}: {3}";
+
+/// §1.6 `logToConsole` — writes one line to the server console.
+///
+/// The line is built by [`chat_log_line`] from `logging.normalMessageFormat` /
+/// `logging.privateMessageFormat` and emitted at INFO through the host logger.
+///
+/// Two upstream behaviours are deliberately not reproduced: the daily plain-text
+/// files under `logs/` (and with them `logging.retentionDays`) need filesystem
+/// access the WASM sandbox does not grant, and `{0}` is rendered from the host
+/// clock in **UTC** because the sandbox carries no timezone database for the
+/// Mod's system-local timestamp.
+fn log_to_console(
+    config: &TrChatConfig,
+    sender: &str,
+    channel: Option<&ChannelConfig>,
+    message: &str,
+) {
+    // `Private: true` marks a channel whose sends are private messages; the
+    // public path never reaches here with one (routing drops it at §1.2 step 5),
+    // so the target is only known on the `/msg` path.
+    let target = channel.filter(|c| c.options.private).map(|_| "");
+    let line = chat_log_line(config, sender, target, message);
+    log_line(&line);
+}
+
+/// §1.6 — records a private message (`logPrivate`) through the same formatter
+/// used by [`log_to_console`], with the real target filled into `{2}`.
+pub fn log_private_message(config: &TrChatConfig, sender: &str, target: &str, message: &str) {
+    log_line(&chat_log_line(config, sender, Some(target), message));
+}
+
+/// Emits one formatted line at INFO through the host logger.
+fn log_line(line: &str) {
+    pumpkin_plugin_api::logging::log(pumpkin_plugin_api::logging::LogLevel::Info, line);
+}
+
+/// Builds a console log line: `logging.normalMessageFormat` for public chat and
+/// `logging.privateMessageFormat` when a `target` is given. `{0}` is the current
+/// `HH:mm:ss`, and every field is flattened to a single line because the
+/// upstream `ChatLogService.safe()` replaces `\r` / `\n` with spaces.
+pub fn chat_log_line(
+    config: &TrChatConfig,
+    sender: &str,
+    target: Option<&str>,
+    message: &str,
+) -> String {
+    let logging = &config.settings.logging;
+    let (configured, mut args) = match target {
+        Some(target) => (
+            logging.private_message_format.as_str(),
+            vec![
+                clock_hhmmss(),
+                sender.to_string(),
+                target.to_string(),
+                message.to_string(),
+            ],
+        ),
+        None => (
+            logging.normal_message_format.as_str(),
+            vec![clock_hhmmss(), sender.to_string(), message.to_string()],
+        ),
+    };
+    // An omitted `logging.*MessageFormat` deserializes to an empty string;
+    // fall back to the upstream default instead of logging a blank line.
+    let format = if configured.is_empty() {
+        if target.is_some() {
+            DEFAULT_PRIVATE_MESSAGE_FORMAT
+        } else {
+            DEFAULT_NORMAL_MESSAGE_FORMAT
+        }
+    } else {
+        configured
+    };
+    let mut out = format.to_string();
+    for (index, value) in args.drain(..).enumerate() {
+        out = out.replace(&format!("{{{index}}}"), &sanitise_log_field(&value));
+    }
+    sanitise_log_field(&out)
+}
+
+/// The `HH:mm:ss` timestamp of §1.6, from the host clock (UTC — see
+/// [`log_to_console`] for why the sandbox cannot use the system timezone).
+fn clock_hhmmss() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let day = secs % 86_400;
+    format!("{:02}:{:02}:{:02}", day / 3600, (day % 3600) / 60, day % 60)
+}
+
+/// `ChatLogService.safe()` — one line per record, so `\r` and `\n` become
+/// spaces.
+fn sanitise_log_field(value: &str) -> String {
+    value.replace(['\r', '\n'], " ")
 }
 
 /// Renders a format template with the built-in placeholders (`{player}`,
@@ -805,7 +925,7 @@ fn reject_with(player: &Player, locale: &str, key: &str, args: &[&str]) -> ChatO
         .read()
         .unwrap_or_else(|e| e.into_inner())
         .format(key, locale, args);
-    let _ = player.send_system_message(
+    player.send_system_message(
         TextComponent::from_legacy_string_with_code(&text, '&'),
         false,
     );
@@ -943,9 +1063,52 @@ fn levenshtein(a: &[char], b: &[char]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_whitelisted_unit, levenshtein, max_consecutive_repeat, normalize_for_similarity,
-        period_or_default, similarity_score,
+        chat_log_line, is_whitelisted_unit, levenshtein, max_consecutive_repeat,
+        normalize_for_similarity, period_or_default, similarity_score,
     };
+    use crate::config::TrChatConfig;
+
+    /// §1.6 — `{0}` is the clock, `{1}` the sender, `{2}` the message; the
+    /// private form pushes the target into `{2}` and the message into `{3}`.
+    #[test]
+    fn console_log_lines_follow_the_configured_formats() {
+        let mut config = TrChatConfig::default();
+        config.settings.logging.normal_message_format = "[{0}] {1}: {2}".to_string();
+        config.settings.logging.private_message_format = "[{0}] {1} -> {2}: {3}".to_string();
+
+        let normal = chat_log_line(&config, "Alice", None, "hello");
+        assert!(normal.ends_with("] Alice: hello"), "{normal}");
+        // `{0}` is `HH:mm:ss` — `[HH:mm:ss] Alice: hello`.
+        assert!(normal.starts_with('['), "{normal}");
+        assert_eq!(&normal[3..4], ":", "{normal}");
+        assert_eq!(&normal[6..7], ":", "{normal}");
+        assert_eq!(&normal[9..10], "]", "{normal}");
+
+        let private = chat_log_line(&config, "Alice", Some("Bob"), "psst");
+        assert!(private.ends_with("] Alice -> Bob: psst"), "{private}");
+    }
+
+    /// `ChatLogService.safe()` — one line per record, so newlines never leak.
+    #[test]
+    fn console_log_lines_flatten_newlines() {
+        let config = TrChatConfig::default();
+        let line = chat_log_line(&config, "Alice", None, "a\nb\rc");
+        assert!(!line.contains('\n') && !line.contains('\r'), "{line}");
+        assert!(line.contains("a b c"), "{line}");
+    }
+
+    /// An omitted `logging.*MessageFormat` must not log a blank line.
+    #[test]
+    fn empty_log_formats_fall_back_to_the_upstream_defaults() {
+        let config = TrChatConfig::default();
+        assert!(config.settings.logging.normal_message_format.is_empty());
+
+        let normal = chat_log_line(&config, "Alice", None, "hello");
+        assert!(normal.ends_with("] Alice: hello"), "{normal}");
+
+        let private = chat_log_line(&config, "Alice", Some("Bob"), "psst");
+        assert!(private.ends_with("] Alice -> Bob: psst"), "{private}");
+    }
 
     /// Normalisation is `toLowerCase(ROOT)` plus removal of *all* whitespace.
     #[test]

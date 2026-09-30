@@ -91,6 +91,13 @@ pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str)
 
     remember_correspondent(&target_name, &sender_name);
     notify_spies(server, sender, target, message);
+    // §1.6 — the console records private messages through
+    // `logging.privateMessageFormat` (`logPrivate`).
+    {
+        let config = crate::config::global_config();
+        let config = config.read();
+        crate::chat::log_private_message(&config, &sender_name, &target_name, message);
+    }
     true
 }
 
