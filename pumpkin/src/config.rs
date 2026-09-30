@@ -404,6 +404,13 @@ impl ChannelConfig {
         &self.options.join_permission
     }
 
+    /// §3 `Speak-Condition` — when non-empty it *replaces* the `Join-Permission`
+    /// check for speaking (`ChatService.java:780-785`); an empty value falls
+    /// back to that permission (config.md §5 note 5).
+    pub fn speak_condition(&self) -> &str {
+        &self.options.speak_condition
+    }
+
     /// Whether this is the default (auto-join) channel.
     #[allow(dead_code)] // used by channel-management commands follow-up
     pub fn is_default(&self) -> bool {
@@ -2111,6 +2118,12 @@ font: "minecraft:default"
         assert_eq!(global.bindings.prefix, vec!["!all".to_string()]);
         assert!(global.options.proxy);
         assert!(global.template.contains("{server}"));
+        // §3 — the bundled Global channel gates speaking with a condition, and
+        // `canSpeak` must therefore consult it instead of `Join-Permission`.
+        assert_eq!(global.speak_condition(), "perm \"trchat.global\"");
+        // Normal has neither, so it stays open to everyone.
+        assert_eq!(normal.speak_condition(), "");
+        assert_eq!(normal.permission(), "");
 
         // Private carries the /msg templates
         let private = config.channel_by_id("Private").expect("Private exists");

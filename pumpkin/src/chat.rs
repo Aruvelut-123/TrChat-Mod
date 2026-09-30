@@ -29,6 +29,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+use crate::condition;
 use crate::config::{
     color_code, ChannelConfig, ChannelTarget, Route, SharedConfig, TrChatConfig,
 };
@@ -329,7 +330,8 @@ fn chat_pipeline(
         MessageGuard::new(config.blocked_words(), config.filter_replacement()).filter(&text)
     };
 
-    // 7. Channel routing (longest prefix wins) + speak permission check.
+    // 7. Channel routing (longest prefix wins) + speak check (`Speak-Condition`
+    //    when set, otherwise `Join-Permission`).
     let route = config.route(&message);
     let (channel, body) = match route {
         Route::Channel(channel, body) => (Some(channel), body),
@@ -337,7 +339,9 @@ fn chat_pipeline(
     };
 
     if let Some(channel) = channel {
-        if !channel.permission().is_empty() && !player.has_permission(channel.permission()) {
+        // §3 `canSpeak`: a non-empty `Speak-Condition` replaces the
+        // `Join-Permission` check (config.md §5 note 5).
+        if !condition::can_speak(channel.speak_condition(), channel.permission(), player) {
             let text = lang::lang()
                 .read()
                 .unwrap_or_else(|e| e.into_inner())

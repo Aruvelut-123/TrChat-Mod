@@ -39,6 +39,42 @@ pub fn test(condition: &str, player: &Player) -> bool {
     false
 }
 
+/// §3 `canSpeak` (`ChatService.java:780-785`): a non-empty `Speak-Condition`
+/// *replaces* the permission check; when it is empty the channel's
+/// `Join-Permission` gates speaking, and an empty permission (e.g. `Normal`)
+/// lets everyone speak.
+pub fn can_speak(speak_condition: &str, join_permission: &str, player: &Player) -> bool {
+    match speak_rule(speak_condition, join_permission) {
+        SpeakRule::Condition(condition) => test(condition, player),
+        SpeakRule::Permission(node) => player.has_permission(node),
+        SpeakRule::Open => true,
+    }
+}
+
+/// Which gate decides whether a player may speak in a channel (§3 `canSpeak`).
+#[derive(Debug, PartialEq)]
+enum SpeakRule<'a> {
+    /// Non-empty `Speak-Condition` — evaluated by [`test`].
+    Condition(&'a str),
+    /// Empty `Speak-Condition` but a non-empty `Join-Permission`.
+    Permission(&'a str),
+    /// Neither is set (e.g. `Normal`) — everyone may speak.
+    Open,
+}
+
+/// The selection half of [`can_speak`], split out so the *fallback* rule
+/// (config.md §5 note 5) is testable without a `Player`.
+fn speak_rule<'a>(speak_condition: &'a str, join_permission: &'a str) -> SpeakRule<'a> {
+    let condition = speak_condition.trim();
+    if !condition.is_empty() {
+        SpeakRule::Condition(condition)
+    } else if join_permission.is_empty() {
+        SpeakRule::Open
+    } else {
+        SpeakRule::Permission(join_permission)
+    }
+}
+
 /// `permission-level >= 2` is the Mod's `player.isOp()`.
 fn is_op(player: &Player) -> bool {
     matches!(
@@ -84,5 +120,39 @@ mod tests {
     fn unknown_conditions_are_not_permissions() {
         assert_eq!(permission_node("player op"), None);
         assert_eq!(permission_node("something else"), None);
+    }
+
+    /// config.md §5 note 5: a non-empty `Speak-Condition` replaces the
+    /// permission check, and an empty condition falls back to `Join-Permission`
+    /// (which in turn means "everyone" when it is empty too).
+    #[test]
+    fn speak_condition_replaces_the_permission_gate() {
+        // Speak-Condition wins whenever it is set, whatever the permission is.
+        assert_eq!(
+            speak_rule("perm \"trchat.global\"", "trchat.admin"),
+            SpeakRule::Condition("perm \"trchat.global\"")
+        );
+        assert_eq!(
+            speak_rule("perm \"trchat.global\"", ""),
+            SpeakRule::Condition("perm \"trchat.global\"")
+        );
+        // `~` is the "always true" condition, not a blank value, so it is still
+        // a condition and not a fallback to the permission.
+        assert_eq!(speak_rule("~", "trchat.admin"), SpeakRule::Condition("~"));
+
+        // Empty condition → the join permission gates speaking.
+        assert_eq!(
+            speak_rule("", "trchat.admin"),
+            SpeakRule::Permission("trchat.admin")
+        );
+        // Whitespace-only behaves like empty (the Mod trims).
+        assert_eq!(
+            speak_rule("   ", "trchat.admin"),
+            SpeakRule::Permission("trchat.admin")
+        );
+
+        // Neither set → open (e.g. the Normal channel).
+        assert_eq!(speak_rule("", ""), SpeakRule::Open);
+        assert_eq!(speak_rule("  ", ""), SpeakRule::Open);
     }
 }
