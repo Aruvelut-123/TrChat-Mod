@@ -70,10 +70,14 @@ pub fn resolve_with_local(
         let token = raw.trim().to_ascii_lowercase();
         out.push_str(&input[last..i]);
         // Step 4: the local table is consulted first and wins outright.
-        match local.iter().find(|(k, _)| *k == token) {
-            Some((_, v)) => out.push_str(v),
-            None => out.push_str(&resolve_token(&token, player, server, config)),
-        }
+        let resolved = match local.iter().find(|(k, _)| *k == token) {
+            Some((_, v)) => (*v).to_string(),
+            None => resolve_token(&token, player, server, config),
+        };
+        // §1.8 — the resolver passes every resolved value through
+        // `translatePlaceholder`, so an English result (`SURVIVAL`,
+        // `The End`, …) becomes the default language's wording.
+        out.push_str(&crate::lang::translate_placeholder(&token, &resolved));
         last = close + 1;
     }
     out.push_str(&input[last..]);
