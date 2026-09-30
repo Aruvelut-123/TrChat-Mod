@@ -72,6 +72,16 @@ pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str)
         }
     }
 
+    // §2.5 — a shadow-muted sender is not blocked by a guard: the message is
+    // instead split here, exactly as `sendPublic` splits it at step 6. Only the
+    // sender sees it and only the log records it, so the receiver and the spies
+    // are skipped (`ChatService.java:186-196`).
+    let shadow_muted = {
+        let session = SessionPlayers::global();
+        let session = session.read().unwrap_or_else(|e| e.into_inner());
+        session.is_shadow_muted(&sender_name)
+    };
+
     let (sender_tpl, receiver_tpl) = {
         let config = crate::config::global_config();
         let config = config.read();
@@ -83,6 +93,16 @@ pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str)
         let component = TextComponent::from_legacy_string_with_code(&text, '&');
         sender.send_system_message(component, false);
     }
+
+    if shadow_muted {
+        // No correspondent is remembered either: from the receiver's point of
+        // view the conversation never happened, so `/reply` must not find it.
+        let config = crate::config::global_config();
+        let config = config.read();
+        crate::chat::log_private_message(&config, &sender_name, &target_name, message);
+        return true;
+    }
+
     if !receiver_tpl.is_empty() {
         let text = render_msg(&receiver_tpl, &target_name, &sender_name, message);
         let component = TextComponent::from_legacy_string_with_code(&text, '&');
