@@ -2358,6 +2358,13 @@ impl CommandHandler for ShadowMuteCommand {
 
 /// Bare-command feedback: prints a one-line usage instead of letting Pumpkin
 /// answer with its generic "Unknown command" error.
+///
+/// The list must only name sub-commands that the registration actually mounts:
+/// the Mod has no `/trchat muteall` (the bare `/trchat mute` is the toggle,
+/// `TRC:106-134`), so advertising one would send players to a command Pumpkin
+/// then rejects.
+const USAGE: &str = "&8[&3Tr&bChat&8] &7/trchat &fstatus&7, &freload&7, &fredis&7, &fversion&7, &fmute&7, &funmute&7, &fshadowmute&7, &fspy&7, &fchannel&7, &fcolor&7, &fclear&7, &fignore&7, &fview";
+
 struct UsageCommand;
 
 impl CommandHandler for UsageCommand {
@@ -2367,17 +2374,14 @@ impl CommandHandler for UsageCommand {
         _server: Server,
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        send(
-            &sender,
-            "&8[&3Tr&bChat&8] &7/trchat &fstatus&7, &freload&7, &fmute&7, &fmuteall&7, &funmute&7, &fshadowmute&7, &fspy&7, &fchannel&7, &fcolor&7, &fclear&7, &fview",
-        );
+        send(&sender, USAGE);
         Ok(0)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_channel_toggle, parse_duration, suggest_matching, ChannelToggle};
+    use super::{apply_channel_toggle, parse_duration, suggest_matching, ChannelToggle, USAGE};
     use crate::playerdata::PlayerState;
     use pumpkin_plugin_api::command::SuggestionRequest;
 
@@ -2641,5 +2645,33 @@ mod tests {
         let outcome = apply_channel_toggle(&mut state, "global", false);
         assert!(matches!(outcome, ChannelToggle::Quit { .. }));
         assert!(state.joined_channels.is_empty());
+    }
+
+    /// The bare-`/trchat` help line must only advertise sub-commands that the
+    /// registration actually mounts. It used to name a non-existent `muteall`
+    /// while omitting `redis`, `version` and `ignore`.
+    #[test]
+    fn usage_line_lists_only_registered_subcommands() {
+        for name in [
+            "status",
+            "reload",
+            "redis",
+            "version",
+            "mute",
+            "unmute",
+            "shadowmute",
+            "spy",
+            "channel",
+            "color",
+            "clear",
+            "ignore",
+            "view",
+        ] {
+            assert!(USAGE.contains(name), "the usage line must list `{name}`");
+        }
+        assert!(
+            !USAGE.contains("muteall"),
+            "`/trchat muteall` does not exist — the bare `mute` is the toggle"
+        );
     }
 }
