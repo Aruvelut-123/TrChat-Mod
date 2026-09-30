@@ -17,7 +17,7 @@
 use pumpkin_plugin_api::player::Player;
 use pumpkin_plugin_api::Server;
 
-use pumpkin_plugin_api::wit::pumpkin::plugin::common::Hand;
+use pumpkin_plugin_api::wit::pumpkin::plugin::common::{EntityPose, GameMode, Hand};
 use pumpkin_plugin_api::wit::pumpkin::plugin::enchantments::Enchantment;
 use pumpkin_plugin_api::wit::pumpkin::plugin::status_effect::StatusEffectType;
 use pumpkin_plugin_api::wit::pumpkin::plugin::world::BlockPos;
@@ -487,6 +487,8 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         "exp_to_level" => exp_to_level(player).to_string(),
         "total_exp" => player.get_experience_points().to_string(),
         "current_exp" => player.get_experience_level().to_string(),
+        // §1.6 `player_level` — the experience level (spec line 327).
+        "level" => player.get_experience_level().to_string(),
         // §1.6 — `player_time_offset` and `player_max_no_damage_ticks` are
         // documented constants (spec line 692).
         "time_offset" => "0".to_string(),
@@ -516,8 +518,9 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         "is_sprinting" => yes_no(player.as_entity().is_sprinting()),
         "is_swimming" => yes_no(player.as_entity().is_swimming()),
         "is_inside_vehicle" => yes_no(player.as_entity().get_vehicle().is_some()),
-        // `player_is_sleeping` has no accessor on the entity surface.
-        "is_sleeping" => String::new(),
+        // §1.6 `player_is_sleeping` — the entity pose carries the sleeping flag
+        // (Bukkit `Player#isSleeping` ↔ pose `Sleeping`).
+        "is_sleeping" => yes_no(player.as_entity().get_pose() == EntityPose::Sleeping),
         // `allow_flight` / `is_flying` are handled with the other abilities above.
         "fly_speed" => format_number(player.get_abilities().fly_speed as f64),
         "walk_speed" => format_number(player.get_abilities().walk_speed as f64),
@@ -529,11 +532,26 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
                 .is_whitelisted(player.get_id()),
         ),
         "is_banned" => yes_no(server.get_ban_manager().is_player_banned(player.get_id())),
-        // `player_can_pickup_items` / `player_has_played_before` read Bukkit
-        // state (`canPickupItems`, a `playerdata` scan) that the WIT surface
-        // does not expose. Rather than guess a proxy, they stay unsupported and
+        // §1.6 `player_can_pickup_items` — Bukkit `!isSpectator()`, read from
+        // the game mode. `player_has_played_before` scans `playerdata` for a
+        // non-zero first-played timestamp, which the WIT surface does not
+        // expose; rather than guess a proxy, it stays unsupported and
+        // therefore resolves to the empty string (§1.1).
+        "can_pickup_items" => yes_no(player.get_gamemode() != GameMode::Spectator),
+        // `player_has_played_before` and the `first_played`/`last_played`
+        // family (spec lines 219–220, 275–276, 281, 325–326) read the
+        // `playerdata` directory timestamps, which the WIT surface does not
+        // expose; rather than guess a proxy, they stay unsupported and
         // therefore resolve to the empty string (§1.1).
-        "can_pickup_items" | "has_played_before" => String::new(),
+        "has_played_before"
+        | "first_played"
+        | "first_join"
+        | "first_played_formatted"
+        | "first_join_date"
+        | "last_played"
+        | "last_join"
+        | "last_played_formatted"
+        | "last_join_date" => String::new(),
 
         // Air / lifetime.
         "remaining_air" => player.as_entity().get_remaining_air().to_string(),
@@ -544,10 +562,13 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         // Damage statistics and sleep timers have no WIT accessor; an empty
         // result is the documented unknown-token behaviour (§1.1).
         "sleep_ticks" | "no_damage_ticks" | "last_damage" => String::new(),
-        // §1.6 health attributes (spec line 142). `HEALTH_BOOST` / `HEALTH_SCALE`
-        // are legacy Bukkit attribute names with no entry in the WIT attribute
-        // enum (1.21 also removed the scale attribute), so they resolve empty.
-        "health_boost" | "health_scale" | "has_health_boost" => String::new(),
+        // §1.6 health attributes (spec lines 142, 285–287). `health_boost` is the
+        // extra hearts from the (removed-in-1.21) HEALTH_BOOST attribute:
+        // Bukkit `maxHealth - 20`, floored at 0. `health_scale` is the max
+        // health itself, and `has_health_boost` the HEALTH_BOOST effect check.
+        "health_boost" => format_number(health_boost_from(player.get_max_health())),
+        "health_scale" => format_number(player.get_max_health() as f64),
+        "has_health_boost" => yes_no(player.get_effect(StatusEffectType::HealthBoost).is_some()),
 
         // §1.6 bed / compass spawn points.
         "bed_world" | "bed_x" | "bed_y" | "bed_z" => respawn_component(player, key),
@@ -566,6 +587,20 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
         // sandbox hands back the dimension's namespaced id
         // (`minecraft:the_nether`), so it is mapped here.
         "world_type" => world_type_name(&player.get_world().get_dimension()),
+        // §1.6 `player_block_underneath` — the block type below the player's
+        // feet, rendered like `registryName` (spec line 246): the registry path
+        // without the namespace, upper cased (`minecraft:stone` → `STONE`).
+        "block_underneath" => {
+            let under = {
+                let pos = player_block_pos(player);
+                BlockPos {
+                    x: pos.x,
+                    y: pos.y - 1,
+                    z: pos.z,
+                }
+            };
+            registry_name_of(&player.get_world().get_block_state(under).block_name)
+        }
         // `player_thunder_duration` / `player_weather_duration` need the world
         // weather timers, which the WIT surface does not expose.
         "thunder_duration" | "weather_duration" => String::new(),
@@ -725,6 +760,13 @@ fn is_op(player: &Player) -> bool {
 
 fn yes_no(value: bool) -> String {
     if value { "yes" } else { "no" }.to_string()
+}
+
+/// §1.6 `player_health_boost` — the extra hearts from the (removed-in-1.21)
+/// HEALTH_BOOST attribute: Bukkit `maxHealth - 20.0F`, floored at 0 (spec
+/// line 285). Split out so the floor behaviour is unit-testable.
+fn health_boost_from(max_health: f32) -> f64 {
+    f64::from((max_health - 20.0).max(0.0))
 }
 
 fn game_mode_name(mode: pumpkin_plugin_api::wit::pumpkin::plugin::common::GameMode) -> String {
@@ -1195,6 +1237,17 @@ mod tests {
     fn yes_no_shape() {
         assert_eq!(yes_no(true), "yes");
         assert_eq!(yes_no(false), "no");
+    }
+
+    /// §1.6 `player_health_boost` — Bukkit `maxHealth - 20`, floored at 0;
+    /// a player with the vanilla max health reports `"0"`.
+    #[test]
+    fn health_boost_floors_at_zero() {
+        assert_eq!(format_number(health_boost_from(20.0)), "0");
+        assert_eq!(format_number(health_boost_from(16.0)), "0");
+        assert_eq!(format_number(health_boost_from(40.0)), "20");
+        assert_eq!(format_number(health_boost_from(21.0)), "1");
+        assert_eq!(format_number(health_boost_from(25.5)), "5.5");
     }
 
     /// §1.7 — the host reports the dimension id, the Mod reports three English
