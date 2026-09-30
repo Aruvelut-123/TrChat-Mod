@@ -2,16 +2,23 @@
 //!
 //! Registered command tree (permissions mirror the upstream plugin):
 //!
-//! * `/trchat reload`        — re-read `config.json` from disk (`trchat.admin`)
-//! * `/trchat version`       — print the plugin version (`trchat.use`)
+//! * `/trchat reload`        — re-read the config from disk (`trchat.admin`)
+//! * `/trchat version`       — print the plugin version (open to everyone)
 //! * `/trchat muteall`       — toggle the global chat mute (`trchat.admin`)
 //! * `/trchat mute <player>` — mute a player (`trchat.admin`)
 //! * `/trchat unmute <player>` — unmute a player (`trchat.admin`)
-//! * `/trchat ignore <player>` — toggle ignoring a player (`trchat.use`)
-//! * `/trchat channel <id>`  — switch the active channel (`trchat.use`)
+//! * `/trchat ignore <player>` — toggle ignoring a player (open to everyone)
+//! * `/trchat channel join|quit …` — channel membership (open to everyone)
+//! * `/trchat shadowmute <player> [on|off]` — shadow mute (§2.2)
 //! * `/trchat view <snapshot>` — open a read-only inventory snapshot (§2.11)
-//! * `/channel <id>`         — alias of `trchat channel`
-//! * `/msg <target> <msg>`   — private message (`tell` alias, `trchat.use`)
+//! * `/channel join|quit …`  — alias of `trchat channel …`
+//! * `/trshadowmute`, `/shadowmute` — alias of `trchat shadowmute`
+//! * `/msg <target> <msg>`   — private message (`tell` alias)
+//!
+//! Registration permissions are declared in [`register_permissions`]: Pumpkin
+//! resolves the requirement attached by `Context::register_command` against the
+//! *permission registry*, so a node that is never registered denies everyone but
+//! * the console.
 //!
 //! All handlers share the session state from [`crate::playerdata`] and the
 //! process-wide config handle from [`crate::config`]; they never build the
@@ -33,11 +40,97 @@ use crate::lang;
 use crate::playerdata::SessionPlayers;
 
 /// Permission of ordinary chat users (channel switching, ignore, /msg).
-const PERM_USE: &str = "trchat.use";
+///
+/// The node is always qualified with this plugin's name, because
+/// `Context::register_command` prepends the plugin name to a bare node.
+const PERM_USE: &str = "trchat:trchat.use";
 /// Permission of administrators (reload, mute, muteall).
-const PERM_ADMIN: &str = "trchat.admin";
+const PERM_ADMIN: &str = "trchat:trchat.admin";
 /// Permission for private-message spy (also granted to OPs, spec §2.6).
-const PERM_SPY: &str = "trchat.spy";
+const PERM_SPY: &str = "trchat:trchat.spy";
+/// Permission to switch channels on behalf of another player (`TRC:190-204`).
+const PERM_CHANNEL_OTHER: &str = "trchat:trchat.command.channel.other";
+/// Permission to shadow-mute a player (spec §2.2, `TRC:886-904`).
+const PERM_SHADOWMUTE: &str = "trchat:trchat.shadowmute";
+
+/// Registers the permission nodes backing the commands above.
+///
+/// This is not optional book-keeping: Pumpkin resolves a *registration-time*
+/// requirement through [`pumpkin_util::permission::PermissionRegistry::get_permission`],
+/// and an unregistered node defaults to **deny**. Without these nodes every
+/// command below would be invisible to ordinary players — only the console
+/// (which is granted everything) could run them.
+fn register_permissions(context: &Context) {
+    use pumpkin_plugin_api::permission::{Permission, PermissionDefault, PermissionLevel};
+
+    // Nodes mirror the upstream plugin: `/trchat status`, `/channel`, `/msg`,
+    // `/ignore` and the alias commands are open to everyone; the moderation and
+    // spy commands require operator level 2, matching `hasPermission(2)`
+    // (`TRC:93-96`) and the `trchat.*` nodes of `PERM:44`.
+    let nodes = [
+        (
+            PERM_USE,
+            "Use TrChat chat commands",
+            PermissionDefault::Allow,
+        ),
+        (
+            PERM_ADMIN,
+            "Manage TrChat (reload, mute, muteall)",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        (
+            PERM_SPY,
+            "Spy on private messages",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        (
+            PERM_CHANNEL_OTHER,
+            "Switch channels on behalf of other players",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+        (
+            PERM_SHADOWMUTE,
+            "Shadow-mute players",
+            PermissionDefault::Op(PermissionLevel::Two),
+        ),
+    ];
+
+    for (node, description, default) in nodes {
+        let node = Permission {
+            node: node.to_string(),
+            description: description.to_string(),
+            default,
+            children: Vec::new(),
+        };
+        if let Err(error) = context.register_permission(&node) {
+            eprintln!("[TrChat] could not register permission: {error}");
+        }
+    }
+}
+
+/// The `join` / `quit` subtree shared by `/trchat channel` and `/channel`.
+///
+/// Built by a function because a `CommandNode` is created imperatively and both
+/// entry points need their own copy.
+fn channel_subtree() -> CommandNode {
+    CommandNode::literal("join")
+        .then(
+            CommandNode::argument("channel", &ArgumentType::String(StringType::SingleWord))
+                .then(
+                    CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                        .execute(ChannelJoinCommand),
+                )
+                .execute(ChannelJoinCommand),
+        )
+        .then(
+            CommandNode::literal("quit")
+                .then(
+                    CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                        .execute(ChannelQuitCommand),
+                )
+                .execute(ChannelQuitCommand),
+        )
+}
 
 /// Registers every TrChat command with the given context.
 ///
@@ -45,6 +138,8 @@ const PERM_SPY: &str = "trchat.spy";
 /// initialized, so the borrow of `context` does not outlive the event handler
 /// registration done by [`crate::chat::ChatManager::init`].
 pub fn register_commands(context: &Context) {
+    register_permissions(context);
+
     // ---- /trchat ----
     let trchat = Command::new(
         &[String::from("trchat")],
@@ -72,10 +167,9 @@ pub fn register_commands(context: &Context) {
         ),
     )
     .then(
-        CommandNode::literal("channel").then(
-            CommandNode::argument("name", &ArgumentType::String(StringType::SingleWord))
-                .execute(ChannelCommand),
-        ),
+        CommandNode::literal("channel")
+            .then(channel_subtree())
+            .execute(ChannelListCommand),
     )
     // §2.11 — `/trchat view <snapshot>` opens the read-only container view.
     .then(
@@ -94,18 +188,48 @@ pub fn register_commands(context: &Context) {
             )
             .execute(SpyCommand),
     );
+    // §2.2 — `/trchat shadowmute <player> [on|off]`.
+    let trchat = trchat.then(
+        CommandNode::literal("shadowmute")
+            .then(
+                CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+                    .then(
+                        CommandNode::argument(
+                            "state",
+                            &ArgumentType::String(StringType::SingleWord),
+                        )
+                        .execute(ShadowMuteCommand),
+                    )
+                    .execute(ShadowMuteCommand),
+            )
+            .execute(UsageCommand),
+    );
+    // A root executor keeps a bare `/trchat` from answering with Pumpkin's
+    // "Unknown command" error.
+    let trchat = trchat.execute(UsageCommand);
     context.register_command(trchat, PERM_USE);
 
-    // ---- /channel <name> ----
-    let channel = Command::new(
-        &[String::from("channel")],
-        "Switch your active chat channel",
+    // ---- /channel join|quit … ----
+    let channel = Command::new(&[String::from("channel")], "Join or leave a chat channel")
+        .then(channel_subtree())
+        .execute(ChannelListCommand);
+    context.register_command(channel, PERM_USE);
+
+    // ---- /trshadowmute <player> [on|off] (aliases /shadowmute) ----
+    // §1.3 — a standalone alias of `/trchat shadowmute`.
+    let shadowmute = Command::new(
+        &[String::from("trshadowmute"), String::from("shadowmute")],
+        "Toggle a player's shadow mute",
     )
     .then(
-        CommandNode::argument("name", &ArgumentType::String(StringType::SingleWord))
-            .execute(ChannelCommand),
+        CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
+            .then(
+                CommandNode::argument("state", &ArgumentType::String(StringType::SingleWord))
+                    .execute(ShadowMuteCommand),
+            )
+            .execute(ShadowMuteCommand),
     );
-    context.register_command(channel, PERM_USE);
+    context.register_command(shadowmute, PERM_SHADOWMUTE);
 
     // ---- /msg <target> <message> ----
     let msg = Command::new(
@@ -390,51 +514,95 @@ impl CommandHandler for IgnoreCommand {
     }
 }
 
-/// `/trchat channel <name>` / `/channel <name>` — switch the active channel.
-struct ChannelCommand;
+/// `/trchat channel` (bare) — lists the configured channels.
+struct ChannelListCommand;
 
-impl CommandHandler for ChannelCommand {
+impl CommandHandler for ChannelListCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let config = config::global_config();
+        let ids: Vec<String> = config
+            .read()
+            .channels()
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        send(
+            &sender,
+            &format!(
+                "&a[TrChat] Usage: /channel join|quit [channel|player]\n&aAvailable channels: {}",
+                ids.join(", ")
+            ),
+        );
+        Ok(0)
+    }
+}
+
+/// `/trchat channel join <channel> [player]` / `/channel join …` — join (and
+/// switch to) a channel, optionally on behalf of another player.
+struct ChannelJoinCommand;
+
+impl CommandHandler for ChannelJoinCommand {
     fn handle(
         &self,
         sender: CommandSender,
         server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        let me = sender.get_name();
+        // §2.4 — switching channels is a Command-Controller-managed action; with
+        // the controller off (or ruleless) the sub-command is unavailable.
         let config = config::global_config();
-        // §2.4 — switching channels is a Command-Controller-managed action;
-        // with the controller off (or ruleless) the sub-command is unavailable.
-        if !crate::command_controller::is_command_managed(&config) {
+        if !crate::command_controller::is_command_managed(config) {
             send(
                 &sender,
                 &message("Command-Controller-Disabled", &sender, &["channel"]),
             );
             return Ok(0);
         }
-        let Some(name) = arg_string(&args, "name") else {
-            // List the available channels when no argument is consumed.
-            let ids: Vec<String> = config
-                .read()
-                .channels()
-                .iter()
-                .map(|c| c.id.clone())
-                .collect();
-            send(
-                &sender,
-                &format!("&a[TrChat] Available channels: {}", ids.join(", ")),
-            );
+
+        let Some(name) = arg_string(&args, "channel") else {
+            send(&sender, "&cUsage: /channel join <channel> [player]");
             return Ok(0);
         };
+        // §1.2 — the optional target needs `trchat.command.channel.other`.
+        let other = arg_string(&args, "player");
+        let target = match &other {
+            Some(target) => {
+                if !sender.is_console() && !sender.has_permission(&server, PERM_CHANNEL_OTHER) {
+                    send(&sender, &message("General-No-Permission", &sender, &[]));
+                    return Ok(0);
+                }
+                match server
+                    .get_all_players()
+                    .iter()
+                    .find(|p| p.get_name().eq_ignore_ascii_case(target))
+                {
+                    Some(player) => player.get_name(),
+                    None => {
+                        send(
+                            &sender,
+                            &message("General-Player-Not-Found", &sender, &[target]),
+                        );
+                        return Ok(0);
+                    }
+                }
+            }
+            None => {
+                let Some(player) = sender.as_player() else {
+                    send(&sender, &message("General-Player-Only", &sender, &[]));
+                    return Ok(0);
+                };
+                player.get_name()
+            }
+        };
+
         let guard = config.read();
         let Some(channel) = guard.channel_by_id(&name) else {
-            let ids: Vec<&str> = guard.channels().iter().map(|c| c.id.as_str()).collect();
-            send(
-                &sender,
-                &format!(
-                    "&c[TrChat] Unknown channel '{name}'. Available: {}",
-                    ids.join(", ")
-                ),
-            );
+            send(&sender, &message("Channel-Unknown", &sender, &[&name]));
             return Ok(0);
         };
         // Join permission: empty permission opens the channel to everyone.
@@ -454,12 +622,105 @@ impl CommandHandler for ChannelCommand {
         let mut players = SessionPlayers::global()
             .write()
             .unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = players.state_mut(&me) {
+        if let Some(state) = players.state_mut(&target) {
             state.active_channel = new_id.clone();
             state.joined_channels.insert(new_id.to_ascii_lowercase());
         }
         drop(players);
-        send(&sender, &message("Channel-Join", &sender, &[&new_id]));
+
+        // §1.2 — a target other than the sender reports the "other" wording.
+        match other {
+            Some(_) => send(
+                &sender,
+                &message("Channel-Join-Other", &sender, &[&target, &new_id]),
+            ),
+            None => send(&sender, &message("Channel-Join", &sender, &[&new_id])),
+        }
+        Ok(0)
+    }
+}
+
+/// `/trchat channel quit [player]` / `/channel quit …` — leave the current
+/// channel, falling back to the default (auto-join) channel.
+struct ChannelQuitCommand;
+
+impl CommandHandler for ChannelQuitCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let other = arg_string(&args, "player");
+        let target = match &other {
+            Some(target) => {
+                if !sender.is_console() && !sender.has_permission(&server, PERM_CHANNEL_OTHER) {
+                    send(&sender, &message("General-No-Permission", &sender, &[]));
+                    return Ok(0);
+                }
+                match server
+                    .get_all_players()
+                    .iter()
+                    .find(|p| p.get_name().eq_ignore_ascii_case(target))
+                {
+                    Some(player) => player.get_name(),
+                    None => {
+                        send(
+                            &sender,
+                            &message("General-Player-Not-Found", &sender, &[target]),
+                        );
+                        return Ok(0);
+                    }
+                }
+            }
+            None => {
+                let Some(player) = sender.as_player() else {
+                    send(&sender, &message("General-Player-Only", &sender, &[]));
+                    return Ok(0);
+                };
+                player.get_name()
+            }
+        };
+
+        let config = config::global_config();
+        // The channel being left, the channel to fall back to (the `Auto-Join`
+        // one, §2.4), and whether the left channel keeps its membership record
+        // (`Always-Listen`, same rule as `apply_channel_toggle`).
+        let (left, fallback, always_listen) = {
+            let players = SessionPlayers::global()
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
+            let left = players
+                .state(&target)
+                .map(|state| state.active_channel.clone())
+                .unwrap_or_default();
+            let guard = config.read();
+            let fallback = guard
+                .default_channel()
+                .map(|c| c.id.clone())
+                .unwrap_or_else(|| "Normal".to_string());
+            let always_listen = guard
+                .channel_by_id(&left)
+                .is_some_and(|c| c.always_listen());
+            (left, fallback, always_listen)
+        };
+
+        let mut players = SessionPlayers::global()
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = players.state_mut(&target) {
+            if !always_listen {
+                state.joined_channels.remove(&left.to_ascii_lowercase());
+            }
+            state.active_channel = fallback.clone();
+            state.joined_channels.insert(fallback.to_ascii_lowercase());
+        }
+        drop(players);
+
+        match other {
+            Some(_) => send(&sender, &message("Channel-Quit-Other", &sender, &[&target])),
+            None => send(&sender, &message("Channel-Quit", &sender, &[&left])),
+        }
         Ok(0)
     }
 }
@@ -836,6 +1097,82 @@ impl CommandHandler for ViewCommand {
             }
         }
         player.open_gui(gui);
+        Ok(0)
+    }
+}
+
+/// §2.2 — `/trchat shadowmute <player> [on|off]` (aliases `/trshadowmute`,
+/// `/shadowmute`).
+///
+/// The Mod treats an omitted `on|off` as "toggle" (`TRC:886-904`); unlike
+/// `/trchat mute` this state is per-player and only affects what the *muted*
+/// player sees of their own messages (§1.3 step 6).
+struct ShadowMuteCommand;
+
+impl CommandHandler for ShadowMuteCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        // Spec: `trchat.shadowmute` (OP level 2). Registered with that node, but
+        // the check is repeated here so console and OP behave identically.
+        if !sender.is_console() && !sender.has_permission(&server, PERM_SHADOWMUTE) {
+            send(&sender, &message("General-No-Permission", &sender, &[]));
+            return Ok(0);
+        }
+        let Some(name) = arg_string(&args, "player") else {
+            send(&sender, "&cUsage: /trchat shadowmute <player> [on|off]");
+            return Ok(0);
+        };
+        let state = arg_string(&args, "state");
+
+        // An unknown player has no session; report it like the other commands.
+        let outcome = {
+            let mut players = SessionPlayers::global()
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            match state.as_deref() {
+                Some(raw) if raw.eq_ignore_ascii_case("on") => {
+                    players.set_shadow_muted(&name, true)
+                }
+                Some(raw) if raw.eq_ignore_ascii_case("off") => {
+                    players.set_shadow_muted(&name, false)
+                }
+                _ => players.toggle_shadow_muted(&name),
+            }
+        };
+
+        match outcome {
+            Some(true) => send(&sender, &message("Mute-Shadow-On", &sender, &[&name])),
+            Some(false) => send(&sender, &message("Mute-Shadow-Off", &sender, &[&name])),
+            None => {
+                send(
+                    &sender,
+                    &message("General-Player-Not-Found", &sender, &[&name]),
+                );
+            }
+        }
+        Ok(0)
+    }
+}
+
+/// Bare-command feedback: prints a one-line usage instead of letting Pumpkin
+/// answer with its generic "Unknown command" error.
+struct UsageCommand;
+
+impl CommandHandler for UsageCommand {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        send(
+            &sender,
+            "&8[&3Tr&bChat&8] &7/trchat &fstatus&7, &freload&7, &fmute&7, &fmuteall&7, &funmute&7, &fshadowmute&7, &fspy&7, &fchannel&7, &fcolor&7, &fclear&7, &fview",
+        );
         Ok(0)
     }
 }
