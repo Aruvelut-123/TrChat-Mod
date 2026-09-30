@@ -63,6 +63,9 @@ impl Plugin for TrChatPlugin {
     }
 
     fn on_load(&self, context: Context) -> Result<(), String> {
+        // `%server_uptime%` counts from the plugin load (≈ server start), the
+        // closest the sandbox gets to the JVM uptime the Mod reports.
+        crate::clock::mark_start();
         // Commands are registered before the chat pipeline so both borrow
         // the context without conflict.
         crate::commands::register_commands(&context);

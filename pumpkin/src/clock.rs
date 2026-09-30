@@ -29,6 +29,30 @@ pub fn now_hhmmss() -> String {
         .to_string()
 }
 
+/// The instant the plugin was loaded, for [`uptime_seconds`].
+///
+/// WASI only exposes a monotonic clock, so an uptime needs a reference instant;
+/// [`mark_start`] records it while the host loads the plugin, which happens
+/// during server startup.
+static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Records the plugin-load instant (idempotent). Called from `on_load`.
+pub fn mark_start() {
+    let _ = START.set(std::time::Instant::now());
+}
+
+/// Seconds since [`mark_start`] — the port's stand-in for the JVM uptime the Mod
+/// reports for `%server_uptime%` (`PlaceholderResolver.java:128`).
+///
+/// The Mod measures the whole JVM; the sandbox can only measure the plugin, and
+/// a plugin that was never marked (unit tests) counts from zero.
+pub fn uptime_seconds() -> i64 {
+    START
+        .get()
+        .map(|start| start.elapsed().as_secs() as i64)
+        .unwrap_or(0)
+}
+
 /// Formats epoch milliseconds as `yyyy-MM-dd HH:mm:ss` in UTC.
 ///
 /// Used for `muteExpiry` (`ModerationService.java:64-67`).
@@ -68,6 +92,27 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
         march_month - 9
     } as u32;
     (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// `(year, month, day)` → days since 1970-01-01, the inverse of
+/// [`civil_from_days`] (Howard Hinnant's `days_from_civil`).
+///
+/// The caller validates the ranges; a nonsense month (0 or 13) still maps to a
+/// definite day count rather than panicking, because the countdown parser rejects
+/// such values before calling this.
+pub fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    // January/February belong to the previous, March-based year.
+    let shifted_year = year - i64::from(month <= 2);
+    let era = if shifted_year >= 0 {
+        shifted_year
+    } else {
+        shifted_year - 399
+    } / 400;
+    let year_of_era = (shifted_year - era * 400) as u64; // [0, 399]
+    let march_month = if month > 2 { month - 3 } else { month + 9 } as u64; // [0, 11]
+    let day_of_year = (153 * march_month + 2) / 5 + u64::from(day) - 1; // [0, 365]
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era as i64 - 719_468
 }
 
 /// Renders an instant with the subset of `java.time.format.DateTimeFormatter`

@@ -113,6 +113,10 @@ fn server_token(key: &str, player: &Player, server: &Server, config: &TrChatConf
         }
         "motd" => server.get_motd(),
         "version" => server.get_sys_info().pumpkin_version,
+        // §1.3 `%server_uptime%` — the Mod reports the JVM's uptime in seconds,
+        // rendered through `duration()`. WASI has no JVM, so the plugin's own
+        // load time stands in (≈ server start, the plugin loads during startup).
+        "uptime" => format_duration(crate::clock::uptime_seconds()),
         // §1.3 RAM. The Mod reads the JVM heap (`Runtime.totalMemory()`); the
         // sandbox has no JVM, so the host's own memory counters stand in. Every
         // value is MiB, matching the `(bytes)/1048576` shape upstream.
@@ -148,8 +152,10 @@ fn server_token(key: &str, player: &Player, server: &Server, config: &TrChatConf
             if let Some(pattern) = key.strip_prefix("time_") {
                 return crate::clock::format_pattern(pattern, crate::clock::now_millis());
             }
-            // `countdown_*` needs `LocalDateTime`/`LocalDate` parsing, which the
-            // sandbox has no equivalent for; it stays unsupported → empty.
+            // §1.4 `%server_countdown_<pattern>_<target>%` (`:174-176, 467-488`).
+            if let Some(arguments) = key.strip_prefix("countdown_") {
+                return countdown(arguments, crate::clock::now_millis() / 1000);
+            }
             let _ = player;
             String::new()
         }
@@ -190,6 +196,232 @@ fn server_online_in_dimension(dim: &str, server: &Server) -> String {
         }
     }
     "-1".to_string()
+}
+
+/// §1.7 `duration(totalSeconds)` — `w d h m s`, only the non-zero units, joined
+/// with spaces; a total that is not positive renders as `"0s"`
+/// (`PlaceholderResolver.java:490-506`). The weeks are the largest unit and the
+/// smaller ones wrap into the next, e.g. `86_400 * 8` s → `1w 1d`.
+pub(crate) fn format_duration(total_seconds: i64) -> String {
+    if total_seconds <= 0 {
+        return "0s".to_string();
+    }
+    let weeks = total_seconds / 604_800;
+    let days = total_seconds / 86_400 % 7;
+    let hours = total_seconds / 3_600 % 24;
+    let minutes = total_seconds / 60 % 60;
+    let seconds = total_seconds % 60;
+    let mut parts: Vec<String> = Vec::new();
+    if weeks > 0 {
+        parts.push(format!("{weeks}w"));
+    }
+    if days > 0 {
+        parts.push(format!("{days}d"));
+    }
+    if hours > 0 {
+        parts.push(format!("{hours}h"));
+    }
+    if minutes > 0 {
+        parts.push(format!("{minutes}m"));
+    }
+    if seconds > 0 {
+        parts.push(format!("{seconds}s"));
+    }
+    parts.join(" ")
+}
+
+/// §1.4 `%server_countdown_<pattern>_<target>%` (`:174-176, 467-488`): the
+/// argument is split at the **first** `_` into a `DateTimeFormatter` pattern and
+/// a target value; the target is parsed in UTC (WASI has no zone database — the
+/// Mod uses the server's system zone) and rendered as the `duration()` until it.
+///
+/// The three literals mirror upstream exactly: `invalid format and time` when the
+/// `_` is missing or sits at either end, `invalid date` when the pattern or the
+/// value cannot be parsed, and `"0"` once the target is reached or past.
+pub(crate) fn countdown(arguments: &str, now_seconds: i64) -> String {
+    let Some(separator) = arguments.find('_') else {
+        return "invalid format and time".to_string();
+    };
+    if separator == 0 || separator == arguments.len() - 1 {
+        return "invalid format and time".to_string();
+    }
+    let pattern = &arguments[..separator];
+    let target = &arguments[separator + 1..];
+    match parse_pattern(pattern, target) {
+        Some(target_seconds) => {
+            let remaining = target_seconds - now_seconds;
+            if remaining <= 0 {
+                "0".to_string()
+            } else {
+                format_duration(remaining)
+            }
+        }
+        None => "invalid date".to_string(),
+    }
+}
+
+/// Parses `value` with a subset of Java `DateTimeFormatter` patterns into Unix
+/// seconds (UTC), or `None` when the pattern or the value is unusable.
+///
+/// The resolver lowercases the token before dispatch (§1.1 step 3), so the
+/// pattern arrives **lowercased**: `M` (month) is then indistinguishable from
+/// `m` (minute). The port reads the **first** `m` run as the month and any later
+/// one as minutes — which is exactly how the shipped examples were meant
+/// (`yyyy-MM-dd HH:mm:ss`, `dd.MM.yyyy`) — and every `h` run as a 24-hour hour.
+/// Supported: `y`/`yy` (2-digit years are offset by 2000, like Java's `yy`),
+/// `yyyy`, `m`/`mm`, `d`/`dd`, `h`/`hh`, `s`/`ss`, `'`-quoted literals and any
+/// non-letter separator; another ASCII letter is an illegal pattern → `None`.
+fn parse_pattern(pattern: &str, value: &str) -> Option<i64> {
+    let (mut year, mut month, mut day, mut hour, mut minute, mut second) =
+        (None, None, None, 0i64, 0i64, 0i64);
+    let mut it = value.chars().peekable();
+    for part in scan_pattern(pattern)? {
+        match part {
+            Part::Literal(c) => {
+                if it.next() != Some(c) {
+                    return None;
+                }
+            }
+            Part::Year(2) => {
+                let two = take_digits(&mut it, 2)?;
+                year = Some(2000 + two);
+            }
+            Part::Year(_) => {
+                year = Some(take_digits(&mut it, 4)?);
+            }
+            Part::Month => {
+                let m = take_digits(&mut it, 2)?;
+                if !(1..=12).contains(&m) {
+                    return None;
+                }
+                month = Some(m);
+            }
+            Part::Day => {
+                let d = take_digits(&mut it, 2)?;
+                day = Some(d);
+            }
+            Part::Hour => {
+                hour = take_digits(&mut it, 2)?;
+            }
+            Part::Minute => {
+                minute = take_digits(&mut it, 2)?;
+            }
+            Part::Second => {
+                second = take_digits(&mut it, 2)?;
+            }
+        }
+    }
+    if it.next().is_some() {
+        return None;
+    }
+    let (Some(year), Some(month), Some(day)) = (year, month, day) else {
+        return None;
+    };
+    if day > i64::from(days_in_month(year, month as u32)) || hour > 23 || minute > 59 || second > 59
+    {
+        return None;
+    }
+    let days = crate::clock::days_from_civil(year, month as u32, day as u32);
+    Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
+}
+
+/// One element of a scanned `DateTimeFormatter` pattern.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Part {
+    /// A literal character the value must contain verbatim.
+    Literal(char),
+    /// A year run; the count is 2 (`yy`) or more (`yyyy`).
+    Year(usize),
+    Month,
+    Day,
+    Hour,
+    Minute,
+    Second,
+}
+
+/// Splits a pattern into [`Part`]s, or `None` for an unsupported/illegal one.
+fn scan_pattern(pattern: &str) -> Option<Vec<Part>> {
+    let mut parts: Vec<Part> = Vec::new();
+    let mut seen_month = false;
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            // Quoted literal; `''` is a single quote, as in Java.
+            let mut closed = false;
+            while let Some(q) = chars.next() {
+                if q == '\'' {
+                    if chars.peek() == Some(&'\'') {
+                        chars.next();
+                        parts.push(Part::Literal('\''));
+                        continue;
+                    }
+                    closed = true;
+                    break;
+                }
+                parts.push(Part::Literal(q));
+            }
+            if !closed {
+                return None;
+            }
+            continue;
+        }
+        if !c.is_ascii_alphabetic() {
+            parts.push(Part::Literal(c));
+            continue;
+        }
+        let mut count = 1usize;
+        while chars.peek() == Some(&c) {
+            chars.next();
+            count += 1;
+        }
+        let part = match c.to_ascii_lowercase() {
+            'y' => Part::Year(count),
+            'm' if !seen_month => {
+                seen_month = true;
+                Part::Month
+            }
+            'm' => Part::Minute,
+            'd' => Part::Day,
+            'h' => Part::Hour,
+            's' => Part::Second,
+            // `w`, `E`, `a`, `z`, … are not supported → illegal pattern.
+            _ => return None,
+        };
+        parts.push(part);
+    }
+    Some(parts)
+}
+
+/// Reads up to `max` ASCII digits from the value (at least one must exist).
+fn take_digits(it: &mut std::iter::Peekable<std::str::Chars<'_>>, max: usize) -> Option<i64> {
+    let mut value = 0i64;
+    let mut count = 0usize;
+    while count < max {
+        match it.peek() {
+            Some(c) if c.is_ascii_digit() => {
+                value = value * 10 + i64::from(*c as u8 - b'0');
+                it.next();
+                count += 1;
+            }
+            _ => break,
+        }
+    }
+    if count == 0 {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+/// Days in `month` of `year` (Gregorian leap rule); `0` for a bad month.
+fn days_in_month(year: i64, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
+        2 => 28,
+        _ => 0,
+    }
 }
 
 /// `player(token, player)` (§1.5/§1.6) — only the subset backed by WIT data.
@@ -817,6 +1049,53 @@ fn uuid_to_string(id: &pumpkin_plugin_api::wit::pumpkin::plugin::uuid::Uuid) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §1.7 `duration` — non-zero units in `w d h m s`, joined by spaces.
+    #[test]
+    fn duration_renders_non_zero_units() {
+        assert_eq!(format_duration(0), "0s");
+        assert_eq!(format_duration(-5), "0s");
+        assert_eq!(format_duration(59), "59s");
+        assert_eq!(format_duration(60), "1m");
+        assert_eq!(format_duration(3_600), "1h");
+        assert_eq!(format_duration(3_661), "1h 1m 1s");
+        assert_eq!(format_duration(86_400 * 8), "1w 1d");
+        assert_eq!(
+            format_duration(604_800 + 86_400 + 3_600 + 60 + 1),
+            "1w 1d 1h 1m 1s"
+        );
+    }
+
+    /// §1.4 countdown — the `_` split rules and the three upstream literals.
+    #[test]
+    fn countdown_matches_the_upstream_literals() {
+        let now = 1_893_456_000; // 2030-01-01T00:00:00Z
+                                 // `_` missing or at either end → the hint literal.
+        assert_eq!(countdown("dd.mm.yyyy", now), "invalid format and time");
+        assert_eq!(countdown("_01.01.2030", now), "invalid format and time");
+        assert_eq!(countdown("dd.mm.yyyy_", now), "invalid format and time");
+        // A reached/past target → "0"; a future one → `duration`.
+        assert_eq!(countdown("dd.mm.yyyy_01.01.2030", now), "0");
+        assert_eq!(countdown("dd.mm.yyyy_01.01.2030", now - 3_661), "1h 1m 1s");
+        // Unparseable pattern/value → the other literal.
+        assert_eq!(countdown("dd.mm.yyyy_32.13.2030", now), "invalid date");
+        assert_eq!(countdown("qq_01.01.2030", now), "invalid date");
+    }
+
+    /// §1.4 countdown — date-only and date-time targets. The first `m` run is the
+    /// month because the token arrives lowercased (§1.1 step 3).
+    #[test]
+    fn countdown_parses_date_and_date_time_targets() {
+        let now = 1_893_456_000; // 2030-01-01T00:00:00Z
+                                 // `yyyy-mm-dd hh:mm:ss` — first `mm` is the month, second the minute.
+        assert_eq!(
+            countdown("yyyy-mm-dd hh:mm:ss_2030-01-01 00:01:00", now),
+            "1m"
+        );
+        assert_eq!(countdown("yyyy-mm-dd_2030-01-02", now), "1d");
+        // Quoted literals and unpadded fields work too.
+        assert_eq!(countdown("yyyy'x'mm'x'dd_2030x1x2", now), "1d");
+    }
 
     #[test]
     fn format_number_drops_trailing_zero() {        assert_eq!(format_number(123.0), "123");
