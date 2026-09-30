@@ -13,9 +13,11 @@
 //! * `special-chars.yml` — special-character table
 //!
 //! Fully typed and wired into the runtime today: `settings.yml` plus
-//! `channels/*.yml` (+ `lang/*.yml` through [`crate::lang`]). The remaining
-//! files are written and YAML-validated but not consumed yet — the honest
-//! same status the previous JSON build had for Redis, a documented follow-up.
+//! `channels/*.yml` (+ `lang/*.yml` through [`crate::lang`]),
+//! `filter.yml` (`TextFilter`), `function.yml` (`functions`) and
+//! `special-chars.yml` (`special`). `datasource.yml` is written and
+//! YAML-validated but not consumed yet — the honest same status the
+//! previous JSON build had for Redis, a documented follow-up.
 //!
 //! Key naming matches the Mod (`camelCase` in `settings.yml`, `PascalCase`
 //! sections in channel files), so a single `config/trchat/` folder can be
