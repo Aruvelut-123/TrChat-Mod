@@ -277,6 +277,9 @@ pub struct FormatLayer {
     /// Each group renders at most one variant: the first whose `condition`
     /// passes, in YAML order (`ChannelRenderer.java:148-160`).
     pub prefix: Vec<PartGroup>,
+    /// Ordered suffix groups, rendered **after** the message body with the same
+    /// group/variant rules (`ChannelRenderer.java:144`). Usually empty.
+    pub suffix: Vec<PartGroup>,
     /// `msg.default-color` — message text color (`7`, `&f`, …).
     pub msg_default_color: String,
     /// `msg.special-char-color` — color applied to configured special
@@ -1542,6 +1545,7 @@ fn parse_layers(v: Option<&serde_yaml::Value>) -> Vec<FormatLayer> {
                 .to_string(),
             priority: tier.get("priority").and_then(|p| p.as_i64()).unwrap_or(0),
             prefix: parse_part_groups(tier.get("prefix")),
+            suffix: parse_part_groups(tier.get("suffix")),
             msg_default_color: msg
                 .and_then(|m| m.get("default-color"))
                 .and_then(|c| c.as_str())
@@ -1717,6 +1721,12 @@ pub fn layer_template_with_colour(layer: &FormatLayer, colour: &str) -> String {
         out.push_str(colour);
     }
     out.push_str("{message}");
+    // §3 step 5 — the suffix groups render after the body (`:144`).
+    for group in &layer.suffix {
+        if let Some(part) = group.unconditional() {
+            out.push_str(&part.text);
+        }
+    }
     normalize_placeholders(&out)
 }
 
@@ -2127,6 +2137,7 @@ mod tests {
                         ..Default::default()
                     }],
                 }],
+                suffix: Vec::new(),
                 msg_default_color: "f".into(),
                 special_char_color: String::new(),
                 msg_hover: String::new(),
@@ -2162,6 +2173,13 @@ mod tests {
                         ],
                     },
                 ],
+                suffix: vec![PartGroup {
+                    name: "server".into(),
+                    variants: vec![PrefixPart {
+                        text: " &8(%server_name%)".into(),
+                        ..Default::default()
+                    }],
+                }],
                 msg_default_color: "7".into(),
                 special_char_color: String::new(),
                 msg_hover: String::new(),
@@ -2177,6 +2195,7 @@ mod tests {
                         ..Default::default()
                     }],
                 }],
+                suffix: Vec::new(),
                 msg_default_color: "c".into(),
                 special_char_color: String::new(),
                 msg_hover: String::new(),
@@ -2193,11 +2212,13 @@ mod tests {
 
         // The flattened tier keeps one variant per group: the server group
         // stays, and the `player` group falls through to its catch-all rather
-        // than its OP badge (this path cannot evaluate conditions).
+        // than its OP badge (this path cannot evaluate conditions). The suffix
+        // group trails the `{message}` slot, as it renders after the body, and
+        // its `%server_name%` is normalised to the `{server}` slot.
         let template = layer_template(candidates[2]);
         assert!(template.starts_with("&8[&fSite&8] "));
         assert!(template.contains("&7[Player] "));
-        assert!(template.contains("&7{message}"));
+        assert!(template.contains("&7{message} &8({server})"));
         assert!(!template.contains("[OP]"));
 
         // A viewer-free pick prefers the highest-priority *unconditional* tier,
@@ -2565,6 +2586,14 @@ font: "minecraft:default"
         let full = "\
 Formats:
   - priority: 0
+    prefix:
+      server: {text: '&8[&fSite&8] '}
+    suffix:
+      server: {text: ' &8(&f1.20&8)'}
+      player:
+        - condition: 'player op'
+          text: ' &4[OP]'
+        - text: ' &7[User]'
     msg:
       default-color: '7'
 Sender:
@@ -2587,6 +2616,17 @@ Console:
             ch.audience_formats(Audience::Chat)[0].msg_default_color,
             "7"
         );
+        // §3 steps 3/5 — both slots keep their group boundaries, so a group may
+        // hold a list of condition variants and pick exactly one.
+        let chat = &ch.audience_formats(Audience::Chat)[0];
+        assert_eq!(chat.prefix.len(), 1);
+        assert_eq!(chat.prefix[0].name, "server");
+        assert_eq!(chat.prefix[0].variants[0].text, "&8[&fSite&8] ");
+        assert_eq!(chat.suffix.len(), 2);
+        assert_eq!(chat.suffix[0].variants[0].text, " &8(&f1.20&8)");
+        assert_eq!(chat.suffix[1].variants.len(), 2);
+        assert_eq!(chat.suffix[1].variants[0].condition, "player op");
+        assert_eq!(chat.suffix[1].unconditional().unwrap().text, " &7[User]");
         assert_eq!(
             ch.audience_formats(Audience::Sender)[0].msg_default_color,
             "a"

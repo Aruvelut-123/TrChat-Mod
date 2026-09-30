@@ -566,6 +566,16 @@ fn chat_pipeline(
             config,
             &[],
         );
+        // §3 step 5 — the tier's suffix groups trail the body (`:144`).
+        let component = apply_suffix_events(
+            component,
+            channel,
+            Audience::Chat,
+            player,
+            server,
+            config,
+            &[],
+        );
         apply_msg_hover(component, channel, Audience::Chat, player, server, config)
     };
 
@@ -766,9 +776,6 @@ fn console_audience_line(
     local: &[(&str, &str)],
 ) -> Option<String> {
     let ch = channel?;
-    let name = player.get_name();
-    let world = player.get_world().get_name();
-    let server_name = config.server_name();
     // §1.6 — an empty `Console` section renders with the chat audience.
     let audience = if ch.console.is_empty() {
         Audience::Chat
@@ -783,36 +790,54 @@ fn console_audience_line(
 
     // No tier passes → the bare resolved message is rendered (`:96-99`).
     let Some(layer) = select_audience_layer(ch, audience, player) else {
-        return Some(assemble_console_text(&[], &message));
+        return Some(assemble_console_text(&[], &message, &[]));
     };
 
-    // §3 step 3 — one variant per prefix group, in YAML order, keeping the first
-    // variant of the group whose `condition` passes (`ChannelRenderer.java:155-159`).
-    // The component path attaches these as children with their hover/click
-    // events; the console keeps the text only.
-    let mut prefix: Vec<String> = Vec::new();
-    for group in &layer.prefix {
-        let Some(part) = group.select(|condition| condition::test(condition, player)) else {
-            continue;
-        };
-        prefix.push(
-            placeholder::resolve_with_local(&part.text, player, server, config, local)
-                .replace("{player}", &name)
-                .replace("{channel}", &ch.id)
-                .replace("{server}", server_name)
-                .replace("{world}", &world),
-        );
-    }
-    Some(assemble_console_text(&prefix, &message))
+    // §3 steps 3/5 — one variant per prefix and suffix group, in YAML order,
+    // keeping the first variant whose `condition` passes
+    // (`ChannelRenderer.java:155-159`). The component path attaches these with
+    // their hover/click events; the console keeps the text only, because
+    // upstream prints the whole `component().getString()`.
+    let prefix = resolved_group_texts(&layer.prefix, player, server, config, &ch.id, local);
+    let suffix = resolved_group_texts(&layer.suffix, player, server, config, &ch.id, local);
+    Some(assemble_console_text(&prefix, &message, &suffix))
 }
 
-/// Joins a tier's resolved prefix groups with the resolved body and strips the
-/// legacy codes, which is how the port reproduces upstream's
-/// `component().getString()`. The body colour code is irrelevant here because
-/// `getString()` drops formatting, so no colour is emitted.
-fn assemble_console_text(prefix: &[String], message: &str) -> String {
+/// The resolved text of a tier's `prefix` / `suffix` groups for the console
+/// line: one variant per group, `{…}` names substituted like the component path.
+fn resolved_group_texts(
+    groups: &[crate::config::PartGroup],
+    player: &Player,
+    server: &Server,
+    config: &TrChatConfig,
+    channel_id: &str,
+    local: &[(&str, &str)],
+) -> Vec<String> {
+    let name = player.get_name();
+    let world = player.get_world().get_name();
+    let server_name = config.server_name();
+    groups
+        .iter()
+        .filter_map(|group| group.select(|condition| condition::test(condition, player)))
+        .map(|part| {
+            placeholder::resolve_with_local(&part.text, player, server, config, local)
+                .replace("{player}", &name)
+                .replace("{channel}", channel_id)
+                .replace("{server}", server_name)
+                .replace("{world}", &world)
+        })
+        .collect()
+}
+
+/// Joins a tier's resolved prefix groups, the resolved body and its resolved
+/// suffix groups, then strips the legacy codes — which is how the port
+/// reproduces upstream's `component().getString()`. The body colour code is
+/// irrelevant here because `getString()` drops formatting, so no colour is
+/// emitted.
+fn assemble_console_text(prefix: &[String], message: &str, suffix: &[String]) -> String {
     let mut text = prefix.concat();
     text.push_str(message);
+    text.push_str(&suffix.concat());
     functions::strip_legacy_codes(&text)
 }
 
@@ -967,33 +992,74 @@ fn apply_prefix_events(
     let Some(ch) = channel else {
         return body;
     };
-    // §3 step 3 — prefix groups keep YAML order; within the selected tier each
-    // part's own `condition` is evaluated for the sender, so a conditional part
-    // (e.g. the OP badge) now renders exactly when it applies — and a group
-    // renders **only its first passing variant**, so an operator sees the OP
+    // §3 step 3 — the tier's prefix groups keep YAML order; within each group
+    // only the **first passing variant** renders, so an operator sees the OP
     // badge *or* the default name, never both (`ChannelRenderer.java:155-159`).
     let Some(layer) = select_audience_layer(ch, audience, subject) else {
         return body;
     };
-    let parts: Vec<&crate::config::PrefixPart> = layer
-        .prefix
-        .iter()
-        .filter_map(|group| group.select(|condition| condition::test(condition, subject)))
-        .collect();
+    let parts = group_components(&layer.prefix, subject, server, config, &ch.id, local);
     if parts.is_empty() {
         return body;
     }
+    // The message text is already inside `body`; component children append
+    // *after* the parent text, so the parts are chained onto a fresh root that
+    // sits in front of it — upstream appends the prefix groups first
+    // (`ChannelRenderer.java:102`).
+    match parts.into_iter().reduce(|acc, part| acc.add_child(part)) {
+        Some(parts_c) => parts_c.add_child(body),
+        None => body,
+    }
+}
+
+/// §3 step 5 — the tier's `suffix` groups, appended **after** the message body
+/// with the same group/variant rules (`ChannelRenderer.java:144`).
+fn apply_suffix_events(
+    body: TextComponent,
+    channel: Option<&ChannelConfig>,
+    audience: Audience,
+    subject: &Player,
+    server: &Server,
+    config: &crate::config::TrChatConfig,
+    local: &[(&str, &str)],
+) -> TextComponent {
+    let Some(ch) = channel else {
+        return body;
+    };
+    let Some(layer) = select_audience_layer(ch, audience, subject) else {
+        return body;
+    };
+    let parts = group_components(&layer.suffix, subject, server, config, &ch.id, local);
+    // Children append after the message text, which is exactly where a suffix
+    // belongs.
+    parts
+        .into_iter()
+        .fold(body, |acc, part| acc.add_child(part))
+}
+
+/// §3 steps 3/5 — resolves the tier's `prefix` / `suffix` groups into component
+/// parts: **one variant per group** (the first whose `condition` passes, in YAML
+/// order — `ChannelRenderer.java:155-159`), each with its own hover, insertion,
+/// font and click event.
+fn group_components(
+    groups: &[crate::config::PartGroup],
+    subject: &Player,
+    server: &Server,
+    config: &TrChatConfig,
+    channel_id: &str,
+    local: &[(&str, &str)],
+) -> Vec<TextComponent> {
     let name = subject.get_name();
     let world = subject.get_world().get_name();
     let server_name = config.server_name();
-    // The message text itself is already inside `body`; component children
-    // append *after* the parent text, so the parts are rendered by prefixing
-    // them onto a fresh root whose styles match the flattened template.
-    let mut parts_component: Option<TextComponent> = None;
-    for part in &parts {
+    let mut out = Vec::new();
+    for part in groups
+        .iter()
+        .filter_map(|group| group.select(|condition| condition::test(condition, subject)))
+    {
         let raw = placeholder::resolve_with_local(&part.text, subject, server, config, local)
             .replace("{player}", &name)
-            .replace("{channel}", &ch.id)
+            .replace("{channel}", channel_id)
             .replace("{server}", server_name)
             .replace("{world}", &world);
         let mut c = TextComponent::from_legacy_string_with_code(&raw, '&');
@@ -1011,17 +1077,9 @@ fn apply_prefix_events(
         if let Some(action) = part.click_action() {
             c = action.apply(c);
         }
-        parts_component = Some(match parts_component {
-            Some(acc) => acc.add_child(c),
-            None => c,
-        });
+        out.push(c);
     }
-    match parts_component {
-        // `body` keeps the message text; the parts ride along as a sibling in
-        // front of it, which is how the upstream template renders.
-        Some(parts_c) => parts_c.add_child(body),
-        None => body,
-    }
+    out
 }
 
 /// §3 step 4 special-char wrapping (`SpecialChars.wrapSpecialChars` /
@@ -1144,6 +1202,9 @@ pub(crate) fn render_audience_view(
     let component = TextComponent::from_legacy_string_with_code(&text, '&');
     let component =
         apply_prefix_events(component, channel, audience, subject, server, config, local);
+    // §3 step 5 — suffix groups append after the body (`:144`).
+    let component =
+        apply_suffix_events(component, channel, audience, subject, server, config, local);
     Some(apply_msg_hover(
         component, channel, audience, subject, server, config,
     ))
@@ -1375,15 +1436,22 @@ mod tests {
     }
 
     /// §1.6 — `component().getString()` drops every legacy code, so the console
-    /// line is plain text: the tier's prefix groups followed by the body.
+    /// line is plain text: the tier's prefix groups, the body, then its suffix
+    /// groups (`ChannelRenderer.java:102-144`).
     #[test]
     fn console_text_is_plain_and_ordered() {
         let prefix = vec!["&8[&aServer&8] ".to_string(), "&7".to_string()];
-        let line = assemble_console_text(&prefix, "&fhello &cthere");
-        assert_eq!(line, "[Server] hello there");
+        let suffix = vec![" &8(&f1.20&8)".to_string()];
+        let line = assemble_console_text(&prefix, "&fhello &cthere", &suffix);
+        assert_eq!(line, "[Server] hello there (1.20)");
 
-        // No tier, no prefix: the bare resolved message survives.
-        assert_eq!(assemble_console_text(&[], "plain"), "plain");
+        // No tier, no prefix and no suffix: the bare resolved message survives.
+        assert_eq!(assemble_console_text(&[], "plain", &[]), "plain");
+        // A suffix without a prefix still trails the message.
+        assert_eq!(
+            assemble_console_text(&[], "hi", &[" &7- bye".to_string()]),
+            "hi - bye"
+        );
     }
 
     /// §1.6 — a private message's `{target}` comes from the `trchat_toplayer`
