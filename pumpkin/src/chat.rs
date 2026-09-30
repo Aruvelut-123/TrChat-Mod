@@ -31,7 +31,7 @@ use std::time::Instant;
 
 use crate::condition;
 use crate::config::{
-    color_code, ChannelConfig, ChannelTarget, Route, SharedConfig, TrChatConfig,
+    color_code, ChannelConfig, ChannelTarget, FormatLayer, Route, SharedConfig, TrChatConfig,
 };
 use crate::filter::{MessageGuard, TextFilter};
 use crate::functions;
@@ -443,12 +443,21 @@ fn chat_pipeline(
     // 8b. Render — one template string, then one component per receiver.
     let server_name = config.server_name();
     let world = player.get_world().get_name();
+    // §3 steps 1–2: the tier is chosen for this sender by `condition` with
+    // `priority` descending (stable). When a channel exists but no tier passes,
+    // the Mod renders the bare resolved message — no prefix, no suffix.
+    let layer = channel.and_then(|ch| select_format_layer(ch, player));
+    let template = match (layer, channel) {
+        (Some(layer), _) => crate::config::layer_template(layer),
+        (None, Some(_)) => "{message}".to_string(),
+        (None, None) => config.plain_template(),
+    };
     let template = match (&outcome, channel) {
         // A processed body carries its own styled component, so the body text
         // is *not* interpolated into the template; the caller passes the
         // component instead (§3.1: "若调用方传入了 messageComponent").
         (Some(_), Some(ch)) => render_template(
-            &ch.template,
+            &template,
             &name,
             "",
             &ch.id,
@@ -460,7 +469,7 @@ fn chat_pipeline(
             config,
         ),
         (Some(_), None) => render_template(
-            &config.plain_template(),
+            &template,
             &name,
             "",
             "",
@@ -472,9 +481,9 @@ fn chat_pipeline(
             config,
         ),
         (None, Some(ch)) => {
-            let body = wrap_special_characters(ch, &body);
+            let body = wrap_special_characters(ch, player, &body);
             render_template(
-                &ch.template,
+                &template,
                 &name,
                 &body,
                 &ch.id,
@@ -487,7 +496,7 @@ fn chat_pipeline(
             )
         }
         (None, None) => render_template(
-            &config.plain_template(),
+            &template,
             &name,
             &body,
             "",
@@ -689,7 +698,17 @@ fn apply_prefix_events(
     let Some(ch) = channel else {
         return body;
     };
-    let parts = crate::config::selected_prefix_parts(&ch.formats);
+    // §3 step 3 — prefix groups keep YAML order; within the selected tier each
+    // part's own `condition` is evaluated for the sender, so a conditional part
+    // (e.g. the OP badge) now renders exactly when it applies.
+    let Some(layer) = select_format_layer(ch, player) else {
+        return body;
+    };
+    let parts: Vec<&crate::config::PrefixPart> = layer
+        .prefix
+        .iter()
+        .filter(|part| condition::test(&part.condition, player))
+        .collect();
     if parts.is_empty() {
         return body;
     }
@@ -729,13 +748,15 @@ fn apply_prefix_events(
         None => body,
     }
 }
+
+/// §3 step 4 special-char wrapping (`SpecialChars.wrapSpecialChars` /
 /// `ChannelRenderer` behavior): configured resource-pack glyphs get the
 /// channel's `msg.special-char-color`, with the message default color
 /// restored after each glyph run. `special-chars.yml` is loaded process-wide
 /// by [`crate::special::reload`]; an empty table or an empty color leaves the
 /// body untouched.
-fn wrap_special_characters(ch: &ChannelConfig, body: &str) -> String {
-    let Some(layer) = ch.render_layer() else {
+fn wrap_special_characters(ch: &ChannelConfig, player: &Player, body: &str) -> String {
+    let Some(layer) = select_format_layer(ch, player) else {
         return body.to_string();
     };
     if layer.special_char_color.is_empty() || !special::has_special_chars(body) {
@@ -744,6 +765,16 @@ fn wrap_special_characters(ch: &ChannelConfig, body: &str) -> String {
     let color = color_code(&layer.special_char_color);
     let default = color_code(&layer.msg_default_color);
     special::wrap_special_chars(body, &color, &default)
+}
+
+/// §3 step 1 — the tier that applies to `player`: the candidates in selection
+/// order (`priority` descending, stable) with the first passing `condition`
+/// winning. Returns `None` when no tier matches, which the renderer treats as
+/// the Mod's plain fallback (§3 step 2).
+fn select_format_layer<'a>(ch: &'a ChannelConfig, player: &Player) -> Option<&'a FormatLayer> {
+    crate::config::format_candidates(&ch.formats)
+        .into_iter()
+        .find(|layer| condition::test(&layer.condition, player))
 }
 
 /// §3 step 4 — a non-empty `msg.hover` puts `HoverEvent.ShowText` on the message
@@ -756,7 +787,7 @@ fn apply_msg_hover(
     server: &Server,
     config: &TrChatConfig,
 ) -> TextComponent {
-    let Some(layer) = channel.and_then(|ch| ch.render_layer()) else {
+    let Some(layer) = channel.and_then(|ch| select_format_layer(ch, player)) else {
         return component;
     };
     if layer.msg_hover.trim().is_empty() {
@@ -843,7 +874,8 @@ fn is_whitelisted_unit(chars: &[char], start: usize, len: usize, whitelist: &[St
         if phrase.is_empty() || len % phrase.len() != 0 {
             return false;
         }
-        unit.chunks(phrase.len()).all(|chunk| chunk == phrase.as_slice())
+        unit.chunks(phrase.len())
+            .all(|chunk| chunk == phrase.as_slice())
     })
 }
 

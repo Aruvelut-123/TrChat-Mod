@@ -190,9 +190,6 @@ pub struct ChannelConfig {
     /// keeps the parsed data for that follow-up.
     #[allow(dead_code)] // consumed by the upcoming console renderer
     pub console: Vec<FormatLayer>,
-    /// Legacy flattened public template (see [`legacy_template`]) consumed by
-    /// the current string renderer in `chat.rs`.
-    pub template: String,
 }
 
 /// §2.3 `Options.Target` — who may receive a channel's broadcast.
@@ -458,16 +455,6 @@ impl ChannelConfig {
             "DISTANCE" => ChannelTarget::Distance(distance.unwrap_or(-1.0)),
             _ => ChannelTarget::All,
         }
-    }
-
-    /// The tier the legacy renderer actually uses: the first unconditional
-    /// tier, else the first tier as a fallback (same selection as
-    /// [`legacy_template`]).
-    pub fn render_layer(&self) -> Option<&FormatLayer> {
-        self.formats
-            .iter()
-            .find(|l| l.condition.is_empty() || l.condition == "~")
-            .or_else(|| self.formats.first())
     }
 }
 
@@ -1319,15 +1306,12 @@ fn parse_function(v: &serde_yaml::Value) -> FunctionConfig {
 fn validate_channels(channels: &[ChannelConfig]) -> Result<(), String> {
     // §2.5 line 159: `normal` is required, compared case-insensitively because
     // ids are lower-cased in the Mod's map.
-    let has_normal = channels
-        .iter()
-        .any(|c| c.id.eq_ignore_ascii_case("normal"));
+    let has_normal = channels.iter().any(|c| c.id.eq_ignore_ascii_case("normal"));
     if !has_normal {
         return Err("channels: no 'normal' channel found".to_string());
     }
 
-    let auto_join: Vec<&ChannelConfig> =
-        channels.iter().filter(|c| c.options.auto_join).collect();
+    let auto_join: Vec<&ChannelConfig> = channels.iter().filter(|c| c.options.auto_join).collect();
     if auto_join.len() > 1 {
         let ids: Vec<&str> = auto_join.iter().map(|c| c.id.as_str()).collect();
         return Err(format!(
@@ -1363,8 +1347,6 @@ fn parse_channels(files: &[(String, String)]) -> Vec<ChannelConfig> {
         let sender = parse_layers(doc.get("Sender"));
         let receiver = parse_layers(doc.get("Receiver"));
         let console = parse_layers(doc.get("Console"));
-        let template =
-            legacy_template(&formats).unwrap_or_else(|| "&f{player}: {message}".to_string());
         out.push(ChannelConfig {
             id: id.clone(),
             options,
@@ -1373,7 +1355,6 @@ fn parse_channels(files: &[(String, String)]) -> Vec<ChannelConfig> {
             sender,
             receiver,
             console,
-            template,
         });
     }
     out
@@ -1603,7 +1584,24 @@ fn map_str<'a>(m: &'a serde_yaml::Mapping, key: &str) -> &'a str {
 /// current string renderer understands. Hover / click / condition features
 /// are deliberately lost here and documented as a format-parser follow-up.
 fn legacy_template(layers: &[FormatLayer]) -> Option<String> {
-    let layer = select_layer(layers)?;
+    select_layer(layers).map(layer_template)
+}
+
+/// §3 step 1 — the tiers of a format list in *selection order*: `priority`
+/// descending, stable so equal priorities keep their YAML order. `chat.rs`
+/// walks this list once the viewer is known and takes the first tier whose
+/// `condition` passes.
+pub fn format_candidates(layers: &[FormatLayer]) -> Vec<&FormatLayer> {
+    let mut candidates: Vec<&FormatLayer> = layers.iter().collect();
+    // `sort_by_key` is stable, so equal priorities keep their YAML order.
+    candidates.sort_by_key(|layer| std::cmp::Reverse(layer.priority));
+    candidates
+}
+
+/// Flattens a *single* tier into one legacy template. Callers that know the
+/// viewer pick the tier with [`format_candidates`] first; the placeholder-free
+/// paths (private-message templates) fall back to [`select_layer`].
+pub fn layer_template(layer: &FormatLayer) -> String {
     let mut out = String::new();
     for part in &layer.prefix {
         if !part.condition.is_empty() && part.condition != "~" {
@@ -1613,25 +1611,19 @@ fn legacy_template(layers: &[FormatLayer]) -> Option<String> {
     }
     out.push_str(&color_code(&layer.msg_default_color));
     out.push_str("{message}");
-    Some(normalize_placeholders(&out))
+    normalize_placeholders(&out)
 }
 
-/// Picks the tier the legacy renderer uses: the first unconditional tier, or
-/// the first tier at all when none is unconditional.
+/// Picks the tier used when the viewer is unknown (private-message templates):
+/// the highest-priority unconditional tier, else the highest-priority tier at
+/// all.
 fn select_layer(layers: &[FormatLayer]) -> Option<&FormatLayer> {
-    layers
+    let candidates = format_candidates(layers);
+    candidates
         .iter()
         .find(|l| l.condition.is_empty() || l.condition == "~")
-        .or_else(|| layers.first())
-}
-
-/// The renderable prefix parts of the tier the legacy renderer picks, in YAML
-/// order. `chat.rs` walks these to attach each part's hover/click event, which
-/// the flattened [`legacy_template`] string cannot carry.
-pub fn selected_prefix_parts(layers: &[FormatLayer]) -> Vec<PrefixPart> {
-    select_layer(layers)
-        .map(|layer| layer.prefix.iter().filter(|p| p.is_rendered()).cloned().collect())
-        .unwrap_or_default()
+        .or_else(|| candidates.first())
+        .copied()
 }
 
 /// `7` / `f` / `&7` / `&f` → `&7` / `&f`; anything else (or empty) → `""`.
@@ -1991,17 +1983,18 @@ mod tests {
         assert_eq!(layer.msg_hover, "");
     }
 
-    /// §4.4/§4.5 — `selected_prefix_parts` feeds the click/hover wiring in
-    /// `chat.rs`, so it must pick the same tier and order as the flattened
-    /// template and skip conditional parts.
+    /// §3 step 1 — selection order is `priority` descending but *stable*, so
+    /// equal priorities keep their YAML order. `layer_template` flattens one
+    /// tier and skips its conditional prefix parts; `select_layer` is the
+    /// viewer-free pick used by the private-message templates.
     #[test]
-    fn selected_prefix_parts_matches_the_flattened_tier() {
+    fn format_candidates_order_by_priority_and_layer_template_flattens() {
         let layers = vec![
             FormatLayer {
                 condition: "perm \"trchat.staff\"".into(),
                 priority: 10,
                 prefix: vec![PrefixPart {
-                    text: "&c[Staff]".into(),
+                    text: "&c[Staff] ".into(),
                     ..Default::default()
                 }],
                 msg_default_color: "f".into(),
@@ -2019,10 +2012,10 @@ mod tests {
                         ..Default::default()
                     },
                     PrefixPart {
-                        // A conditional part cannot be evaluated, so it is
-                        // dropped from the renderable set.
+                        // Flattening cannot evaluate this, so it is dropped
+                        // here; `chat.rs` re-evaluates it per player instead.
                         condition: "player op".into(),
-                        text: "&7[OP]".into(),
+                        text: "&7[OP] ".into(),
                         ..Default::default()
                     },
                 ],
@@ -2030,20 +2023,39 @@ mod tests {
                 special_char_color: String::new(),
                 msg_hover: String::new(),
             },
+            FormatLayer {
+                // Same priority as the first tier → YAML order breaks the tie.
+                condition: "player op".into(),
+                priority: 10,
+                prefix: vec![PrefixPart {
+                    text: "&4[OP] ".into(),
+                    ..Default::default()
+                }],
+                msg_default_color: "c".into(),
+                special_char_color: String::new(),
+                msg_hover: String::new(),
+            },
         ];
 
-        let parts = selected_prefix_parts(&layers);
-        assert_eq!(parts.len(), 1, "only the unconditional, renderable part");
-        assert_eq!(parts[0].text, "&8[&fSite&8] ");
-        assert_eq!(parts[0].hover, "Click");
-        assert_eq!(
-            parts[0].click_action(),
-            Some(ClickAction::OpenUrl("https://example.com/".into())),
-            "the part keeps its click action for the renderer to attach"
-        );
+        let candidates = format_candidates(&layers);
+        assert_eq!(candidates.len(), 3);
+        assert_eq!(candidates[0].priority, 10);
+        assert_eq!(candidates[0].prefix[0].text, "&c[Staff] ");
+        assert_eq!(candidates[1].priority, 10, "the tie keeps YAML order");
+        assert_eq!(candidates[1].prefix[0].text, "&4[OP] ");
+        assert_eq!(candidates[2].priority, 0);
 
-        // An empty list renders no parts and no clickable prefix.
-        assert!(selected_prefix_parts(&[]).is_empty());
+        // The flattened tier keeps the catch-all part and drops the OP one.
+        let template = layer_template(candidates[2]);
+        assert!(template.starts_with("&8[&fSite&8] "));
+        assert!(template.contains("&7{message}"));
+        assert!(!template.contains("[OP]"));
+
+        // A viewer-free pick prefers the highest-priority *unconditional* tier,
+        // so a conditional higher tier never wins outright.
+        assert_eq!(select_layer(&layers).unwrap().condition, "~");
+        assert!(format_candidates(&[]).is_empty());
+        assert!(select_layer(&[]).is_none());
     }
 
     /// §4.4/§4.5 — the component-part fields survive parsing from YAML.
@@ -2217,14 +2229,16 @@ font: "minecraft:default"
         // Normal carries the default route and full legacy template
         let normal = config.channel_by_id("Normal").expect("Normal exists");
         assert!(normal.is_default());
-        assert!(normal.template.contains("{player}"));
-        assert!(normal.template.contains("{message}"));
+        let normal_template = layer_template(select_layer(&normal.formats).unwrap());
+        assert!(normal_template.contains("{player}"));
+        assert!(normal_template.contains("{message}"));
 
         // Global binds the !all prefix
         let global = config.channel_by_id("Global").expect("Global exists");
         assert_eq!(global.bindings.prefix, vec!["!all".to_string()]);
         assert!(global.options.proxy);
-        assert!(global.template.contains("{server}"));
+        let global_template = layer_template(select_layer(&global.formats).unwrap());
+        assert!(global_template.contains("{server}"));
         // §3 — the bundled Global channel gates speaking with a condition, and
         // `canSpeak` must therefore consult it instead of `Join-Permission`.
         assert_eq!(global.speak_condition(), "perm \"trchat.global\"");
@@ -2342,7 +2356,6 @@ font: "minecraft:default"
             sender: Vec::new(),
             receiver: Vec::new(),
             console: Vec::new(),
-            template: "&f{player}: {message}".to_string(),
         }
     }
 
