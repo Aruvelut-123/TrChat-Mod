@@ -466,8 +466,12 @@ fn chat_pipeline(
     // §1.3 step 4 / §3: a chat colour the sender picked overrides the channel's
     // `msg.default-color` for their body, but only when the sender may use it.
     let chat_colour = sender_chat_color(player);
+    // §3 step 3 — the prefix groups are *not* flattened into the body here:
+    // `apply_prefix_events` prepends them as component parts, which is what
+    // carries their per-player `condition` and their hover/click events. A body
+    // that already contained them would render every prefix twice.
     let template = match (layer, channel) {
-        (Some(layer), _) => crate::config::layer_template_with_colour(layer, &chat_colour),
+        (Some(layer), _) => crate::config::layer_body_template_with_colour(layer, &chat_colour),
         (None, Some(_)) => "{message}".to_string(),
         (None, None) => config.plain_template(),
     };
@@ -919,6 +923,11 @@ fn render_template(
 /// component carrying its own hover/click, so a clickable label such as
 /// `[Site]` still opens its URL — matching the upstream tree, where the
 /// component parts precede `msg`.
+///
+/// This is the **only** place the prefix text is produced for public chat: the
+/// body template is built by [`crate::config::layer_body_template_with_colour`]
+/// and therefore carries no prefix. Flattening the prefix into the body as well
+/// would render it twice.
 fn apply_prefix_events(
     body: TextComponent,
     channel: Option<&ChannelConfig>,

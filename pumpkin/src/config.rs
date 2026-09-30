@@ -1655,6 +1655,11 @@ pub fn layer_template(layer: &FormatLayer) -> String {
 /// This is the `trchat_message_color` local of the upstream renderer: a sender
 /// who picked a chat colour overrides the channel default for their own
 /// message body. An empty `colour` reproduces [`layer_template`].
+///
+/// The flattened prefix groups are meant for the **viewer-free** paths
+/// (private-message templates, fallbacks); public chat renders them from the
+/// tier's component parts instead and takes its body from
+/// [`layer_body_template_with_colour`].
 pub fn layer_template_with_colour(layer: &FormatLayer, colour: &str) -> String {
     let mut out = String::new();
     for part in &layer.prefix {
@@ -1663,6 +1668,27 @@ pub fn layer_template_with_colour(layer: &FormatLayer, colour: &str) -> String {
         }
         out.push_str(&part.text);
     }
+    if colour.is_empty() {
+        out.push_str(&color_code(&layer.msg_default_color));
+    } else {
+        // The stored code is already validated as one hex digit.
+        out.push('&');
+        out.push_str(colour);
+    }
+    out.push_str("{message}");
+    normalize_placeholders(&out)
+}
+
+/// The body-only template of a tier: the message colour plus `{message}`, with
+/// **no** prefix groups.
+///
+/// The public chat path renders the prefix from the tier's own component parts
+/// (`chat::apply_prefix_events`), which is what keeps each part's `condition`,
+/// hover, click and font alive. Flattening the prefix into the body *as well*
+/// would render it twice, so that path composes the body from here instead of
+/// from [`layer_template_with_colour`].
+pub fn layer_body_template_with_colour(layer: &FormatLayer, colour: &str) -> String {
+    let mut out = String::new();
     if colour.is_empty() {
         out.push_str(&color_code(&layer.msg_default_color));
     } else {
@@ -2116,6 +2142,17 @@ mod tests {
         assert_eq!(select_layer(&layers).unwrap().condition, "~");
         assert!(format_candidates(&[]).is_empty());
         assert!(select_layer(&[]).is_none());
+
+        // The public chat path takes the *body only*: the prefix arrives as
+        // component parts instead, so flattening it here would double it.
+        assert_eq!(
+            layer_body_template_with_colour(candidates[2], ""),
+            "&7{message}"
+        );
+        assert_eq!(
+            layer_body_template_with_colour(candidates[2], "c"),
+            "&c{message}"
+        );
     }
 
     /// §4.4/§4.5 — the component-part fields survive parsing from YAML.
