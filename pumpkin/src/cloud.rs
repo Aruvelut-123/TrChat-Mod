@@ -16,9 +16,10 @@
 //!   `{data_folder}/filters/<hex>.json`. A failed fetch falls back to that cache
 //!   — the "local fallback" of the sandbox — and reports
 //!   `Plugin-Failed-Load-Filter-Cloud` only when the accumulated set is empty.
-//! * The refresh runs on the host scheduler every 72 000 ticks (one hour):
+//! * The refresh runs on the host scheduler every 72 000 ticks (one hour) —
 //!   the Mod's `submitAsync(period = 60 * 60 * 20)` counts ticks, the same
-//!   cadence as the local port's `ticks >= 72_000`.
+//!   cadence as the local port's `ticks >= 72_000` — plus once on the tick after
+//!   `/trchat reload` (`DefaultFilterManager.loadFilter(updateCloud = true)`).
 //!
 //! Deviations, both recorded in `docs/spec/data-redis-update.md`: the Mod
 //! accumulates the cloud set across refreshes (so a word removed upstream stays

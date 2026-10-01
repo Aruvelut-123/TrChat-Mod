@@ -162,7 +162,8 @@ plugins/data/trchat/
 - [x] 告示牌与铁砧敏感词过滤（`Enable.Sign` / `Enable.Anvil` + `Filter-Anvil-Blocked`，
   经宿主事件回写 `lines` / `rename_text`）
 - [x] 云端词库（`Cloud-Thesaurus` 经 `wasi:http` 拉取、`lastUpdateDate` 去重、
-  `filters/<hash>.json` 缓存兜底，每小时刷新一次，加载与重载时在插件日志播报）
+  `filters/<hash>.json` 缓存兜底，每小时刷新一次、`/trchat reload` 后立即刷新，
+  加载与刷新时在插件日志播报）
 - [x] 配置对齐内置默认值（缺失键补全并写回文件，未知键删除，对齐 Mod `YamlConfigSynchronizer`）
 
 ## 说明

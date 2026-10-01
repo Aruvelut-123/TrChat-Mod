@@ -776,10 +776,15 @@ pub fn reload_global() -> Result<ReloadOutcome, String> {
     let outcome = global_config().reload(folder);
     if !outcome.is_total_failure() {
         // `Filters.reload` re-reports the local profile after every reload
-        // (`Filters.kt:30-45`); the cloud thesaurus keeps its own hourly
-        // schedule (`crate::cloud`), so a slow network never blocks the command.
+        // (`Filters.kt:30-45`) and refreshes the cloud with `updateCloud = true`
+        // (`DefaultFilterManager.loadFilter`), done on the next tick so a slow
+        // network never blocks the command.
         let config = global_config().read();
         crate::cloud::load(config.filter_config());
+        drop(config);
+        pumpkin_plugin_api::scheduler::schedule_delayed_task(1, |_server| {
+            crate::cloud::refresh_current()
+        });
     }
     Ok(outcome)
 }

@@ -698,7 +698,8 @@ Custom 的 `FunctionSettings` 是硬编码的（行 825–837）：`enabled=true
 - `Cloud-Thesaurus.*` 三个键全部接入（`config.rs` 的 `FilterConfig`，已去掉 `#[allow(dead_code)]`）。
 - 刷新跑在宿主调度器上：插件加载时排程 `delay = 1 tick`、`period = 72_000 ticks`（一小时）——与 Mod 的
   `submitAsync(period = 60 * 60 * 20)`（taboolib 以 **tick** 计）及本地重实现的 `ticks >= 72_000` 一致；
-  首次抓取因此不阻塞插件加载。
+  另外 `/trchat reload` 成功后的下一 tick 会立刻再刷新一次（对应 `loadFilter(updateCloud = true)`）。
+  首次抓取因此不阻塞插件加载，重载也不会被网络拖住。
 - 词表按 Mod 语义**跨刷新累加**（本地重实现是每次整体替换），排序按长度降序并去重；`words` 逐项减去
   `Ignored`（比较统一转小写）；`lastUpdateDate` 与上次**相同**的库视为已应用（`readDatabase` 行 137-141）。
 - 抓取失败回读 `{data_folder}/filters/<hex(url.hashCode())>.json` 缓存（本地重实现的缓存命名）；
