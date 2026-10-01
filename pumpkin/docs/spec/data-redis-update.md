@@ -294,9 +294,11 @@
 * **去重键**：Mod 的 `notified` 集合按玩家 **UUID**（`:86-89`）；WIT 的 `uuid` 类型没有字符串形式，故按**小写玩家名**去重（与 `chat.rs` 的 `PLAYER_STATES` 同一替代）。
 * **通知呈现**：WIT 反馈是「一行一个组件」且没有 click / hover 动作，所以 `Updater-Link-Prefix` + `Updater-Link` 以纯文本拼接后成一行，`Updater-Link-Hover` 被解析但**不参与渲染**；`Updater-Available` 本身是两行文本、Mod 又在其后追加换行与链接块，因此 Rust 侧把整个通知块拆成多个组件顺序发送。
 * **状态与日志**：`available` / `checking` / `reportedCurrent` 三个状态与 Mod 一一对应；「已是最新」与「比最新发布更新」两条 INFO 各只打印一次，文案前缀由 Mod 的 `TrChat Mod ...` 改为移植版统一的 `[TrChat] ...`。
-* **权限门**：`notifyPlayer` 的判定等价于 Mod 的 `TrChatPermissions.check(player, "trchat.admin")`——查 `trchat.admin` 与 `trchat:trchat.admin` 两个拼写（注册默认值 `Op(Two)`，故「OP2 或被显式授权」都通过）。
+* **权限门**：`notifyPlayer` 的判定等价于 Mod 的 `TrChatPermissions.check(player, "trchat.admin")`——查 `trchat.admin`（经 `perms::node` 补齐为 `trchat:trchat.admin`，注册默认值 `Op(Two)`，故「OP2 或被显式授权」都通过）。
 * **WASI 版本与权限**：宿主以 `wasmtime_wasi_http::p2::add_only_http_to_linker_async` 提供 `wasi:http@0.2.x`，插件必须声明 `permissions::HTTP_OUTBOUND`，否则宿主返回 `HttpRequestDenied`。guest 侧依赖 `wasip2` 被**精确锁定 `=1.0.2`（wasi 0.2.9）**：更新版本会把整份组件的 WASI 导入（含 std 自带的 `wasi:filesystem` 等）抬到 0.2.12，凭空抬高宿主门槛；锁到 0.2.9 后组件的导入版本与改动前完全一致。
-* **可测性边界**：非 `wasm32` 构建下 `fetch_latest` 直接返回错误（打印与 Mod 失败路径相同的 WARN），使 `cargo test` 完全离线；语义版本比较、更新日志解析/渲染、通知块顺序、GitHub 载荷解析都有单元测试，但**网络链路与宿主 `wasi:http` 的版本匹配只能在真实 Pumpkin 服务器上验证**（本次未验证）。
+* **依赖已装载的全局配置**：`start()` 读的是 `config::global_config()` 的 `updates.enabled` / `intervalMinutes`。而 `global_config()` 首次访问会用**默认快照**初始化 `OnceLock`，`init_global` 之后再也装不上——真机上表现为日志打印 `Update checker disabled (updates.enabled: false)`，尽管 `settings.yml` 写的是 `true`。`on_load` 因此固定为「先 `ChatManager::init`（内部 `init_global`）→ 再 `register_commands` → 最后 `start`」，`init_global` 失败时写 WARN。
+* **可测性边界**：非 `wasm32` 构建下 `fetch_latest` 直接返回错误（打印与 Mod 失败路径相同的 WARN），使 `cargo test` 完全离线；语义版本比较、更新日志解析/渲染、通知块顺序、GitHub 载荷解析都有单元测试。
+* **真机验证（已通过）**：Pumpkin `0.2.0+26.3-26.51` / Windows x64 上，插件加载后日志出现 `[plugin] [TrChat] Update checker started (every 15 minute(s)).`，首次检查经 `wasi:http` 成功拉取 `releases/latest` 并完成语义版本比较，打印 `[plugin] [TrChat] TrChat 2.5.4.1 is up to date.`——WASI 0.2.9 导入、`http.outbound` 权限与宿主链接器匹配全部确认。
 
 ---
 
