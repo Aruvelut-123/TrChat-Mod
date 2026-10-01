@@ -57,7 +57,7 @@ pub fn check_command(player: &Player, command: &str, config: &SharedConfig) -> V
 
     // 4. Cooldown — players with `trchat.bypass.cmdcooldown` are exempt and
     //    do not consume the window.
-    if rule.cooldown_millis > 0 && !player.has_permission("trchat.bypass.cmdcooldown") {
+    if rule.cooldown_millis > 0 && !player.has_permission(&crate::perms::node("trchat.bypass.cmdcooldown")) {
         if !check_cooldown(
             &player.get_name().to_ascii_lowercase(),
             &format!("command:{}", rule.source),

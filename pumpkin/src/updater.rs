@@ -64,10 +64,9 @@ pub const MAX_INTERVAL_MINUTES: u32 = 1440;
 const TICKS_PER_MINUTE: u64 = 20 * 60;
 /// Bytes read per `blocking-read` call while draining the response body.
 const READ_CHUNK_BYTES: u64 = 8192;
-/// The bare admin node (`TrChatPermissions.check(player, "trchat.admin")`).
+/// The bare admin node (`TrChatPermissions.check(player, "trchat.admin")`);
+/// lookups qualify it through [`crate::perms::node`].
 const ADMIN_NODE: &str = "trchat.admin";
-/// The same node as `Context::register_command` spells it.
-const ADMIN_NODE_NAMESPACED: &str = "trchat:trchat.admin";
 
 /// The TrChat version this port tracks.
 ///
@@ -298,10 +297,11 @@ fn notify_player(player: &Player) {
 
 /// `TrChatPermissions.check(player, "trchat.admin")` — OP level 2 or the node.
 ///
-/// The node is registered with `PermissionDefault::Op(Two)` under both
-/// spellings, so a positive answer is exactly "OP 2+, or explicitly granted".
+/// The node is registered with `PermissionDefault::Op(Two)`, so a positive
+/// answer is exactly "OP 2+, or explicitly granted". The YAML/Mod spelling is
+/// bare, hence [`crate::perms::node`].
 fn is_admin(player: &Player) -> bool {
-    player.has_permission(ADMIN_NODE) || player.has_permission(ADMIN_NODE_NAMESPACED)
+    player.has_permission(&crate::perms::node(ADMIN_NODE))
 }
 
 /// The message block of `notifyPlayer` (`:79-88`) plus the Mod's `header`

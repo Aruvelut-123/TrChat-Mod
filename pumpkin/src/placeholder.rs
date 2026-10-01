@@ -640,7 +640,7 @@ fn player_token(key: &str, player: &Player, server: &Server) -> String {
                 return player_ping(name, server);
             }
             if let Some(node) = key.strip_prefix("has_permission_") {
-                return yes_no(player.has_permission(node.trim_start_matches('*')));
+                return yes_no(player.has_permission(&crate::perms::node(node.trim_start_matches('*'))));
             }
             // §1.5 `player_has_potioneffect_<id>` — `<id>` is lowercased and its
             // `minecraft:` namespace (when present) is stripped.

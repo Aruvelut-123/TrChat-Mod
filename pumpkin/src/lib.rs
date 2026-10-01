@@ -16,9 +16,11 @@ mod command_controller;
 mod commands;
 mod condition;
 mod config;
+mod diag;
 mod filter;
 mod functions;
 mod lang;
+mod perms;
 mod placeholder;
 mod playerdata;
 mod private_msg;
@@ -47,7 +49,10 @@ impl Plugin for TrChatPlugin {
     fn metadata(&self) -> PluginMetadata {
         PluginMetadata {
             name: "trchat".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            // The version of the Mod this port tracks (`mod_version` in the
+            // repository `gradle.properties`, injected by `build.rs`), not the
+            // crate's own — the host lists this value in `/plugins`.
+            version: crate::updater::CURRENT_VERSION.to_string(),
             authors: vec!["TrChat Team".to_string()],
             description: "TrChat experimental support for PumpkinMC".to_string(),
             dependencies: vec![],
@@ -71,12 +76,22 @@ impl Plugin for TrChatPlugin {
         // `%server_uptime%` counts from the plugin load (≈ server start), the
         // closest the sandbox gets to the JVM uptime the Mod reports.
         crate::clock::mark_start();
-        // Commands are registered before the chat pipeline so both borrow
-        // the context without conflict.
-        crate::commands::register_commands(&context);
+        // The configuration must be installed *before* the command tree is
+        // built: registering commands reads the process-wide handle (the
+        // `/global`, `/all`, … aliases come from `Bindings.Command`), and
+        // `global_config()` initialises a **default** snapshot on first use.
+        // That used to consume the `OnceLock`, after which `init_global` could
+        // never install the loaded configuration — a real server showed the
+        // whole command surface (and the update checker) on defaults.
         ChatManager::init(&context)?;
+        crate::commands::register_commands(&context);
         // Last: the checker reads the global config `ChatManager::init` seeds.
-        crate::updater::start(&context)
+        crate::updater::start(&context)?;
+        crate::diag::info(format!(
+            "TrChat {} loaded (Pumpkin WASM port)",
+            crate::updater::CURRENT_VERSION
+        ));
+        Ok(())
     }
 }
 

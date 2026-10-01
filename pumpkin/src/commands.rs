@@ -22,7 +22,8 @@
 //! * `/trchat channel join|quit …` — channel membership (open to everyone)
 //! * `/trchat shadowmute <player> [on|off]` — shadow mute (§2.2)
 //! * `/trchat view <snapshot>` — open a read-only inventory snapshot (§2.11)
-//! * `/channel join|quit …`  — alias of `trchat channel …`
+//! * `/trchat channel join|quit …` — channel switching (the Mod has no
+//!   standalone `/channel` root command)
 //! * `/trshadowmute`, `/shadowmute` — alias of `trchat shadowmute`
 //! * `/msg <target> <msg>`   — private message (`tell`, `/trmsg` aliases)
 //!
@@ -85,22 +86,23 @@ const COLOR_CODES: &str = "0123456789abcdef";
 ///
 /// This is not optional book-keeping: Pumpkin resolves a *registration-time*
 /// requirement through [`pumpkin_util::permission::PermissionRegistry::get_permission`],
-/// and an unregistered node defaults to **deny**. Without these nodes every
-/// command below would be invisible to ordinary players — only the console
-/// (which is granted everything) could run them.
+/// an unregistered node defaults to **deny** (`pumpkin-util/src/permission.rs:330-388`),
+/// and without these nodes every command below would be invisible to ordinary
+/// players — only the console (which is granted everything) could run them.
 ///
-/// Every node is registered under **two** spellings, because Pumpkin's lookup
-/// keys on the exact string:
-///
-/// * the bare `trchat.mute` that user YAML writes in `perm "trchat.mute"`
-///   conditions and channel permissions, and
-/// * the `trchat:trchat.mute` that `Context::register_command` builds for the
-///   command requirements.
+/// Every node is registered under the **namespaced** spelling only:
+/// `Context::register_permission` rejects a node that does not start with
+/// `trchat:` (`plugin/api/context.rs:278-291`), so registering the bare
+/// spelling is not merely redundant — the host answers `Err`, and a smoke test
+/// on a real server showed that the failure path (which printed to stderr)
+/// aborted the whole plugin during `on_load`. Lookups that arrive bare (YAML
+/// conditions, channel permissions, the port's own literals) are qualified by
+/// [`crate::perms::node`] at the call site instead.
 fn register_permissions(context: &Context) {
     use pumpkin_plugin_api::permission::{PermissionDefault, PermissionLevel};
 
     // Nodes mirror the upstream plugin (`PERM:22-69`): `/trchat status`,
-    // `/channel`, `/msg`, `/ignore` and the alias commands are open to everyone;
+    // `/msg`, `/ignore` and the alias commands are open to everyone;
     // the moderation, spy and bypass nodes require operator level 2. The two
     // always-open channel nodes are listed first because the *default* channel
     // configs reference them by name — without them `perm "trchat.global"`
@@ -204,11 +206,11 @@ fn register_permissions(context: &Context) {
         ),
     ];
     for (node, description, default) in nodes {
-        register_permission_pair(context, node, description, default);
+        register_permission_node(context, node, description, default);
     }
     // §2.1 — the 16 `trchat.color.<code>` nodes, one per hex digit.
     for code in COLOR_CODES.chars() {
-        register_permission_pair(
+        register_permission_node(
             context,
             &format!("trchat.color.{code}"),
             &format!("Use &{code} as a chat colour"),
@@ -217,12 +219,12 @@ fn register_permissions(context: &Context) {
     }
 }
 
-/// Registers `node` both bare and under the plugin namespace.
+/// Registers `node` under the plugin namespace the host insists on.
 ///
-/// `Context::register_command` rewrites a permission without a `:` into
-/// `trchat:<permission>`, so the command tree resolves against the namespaced
-/// key while conditions and channel permissions from YAML use the bare one.
-fn register_permission_pair(
+/// See the note on [`register_permissions`]: the bare spelling must *not* be
+/// registered (the host rejects it), so [`crate::perms::node`] is applied here
+/// and at every lookup site.
+fn register_permission_node(
     context: &Context,
     node: &str,
     description: &str,
@@ -230,42 +232,23 @@ fn register_permission_pair(
 ) {
     use pumpkin_plugin_api::permission::Permission;
 
-    for key in permission_lookup_keys(node) {
-        let permission = Permission {
-            node: key.clone(),
-            description: description.to_string(),
-            default,
-            children: Vec::new(),
-        };
-        if let Err(error) = context.register_permission(&permission) {
-            eprintln!("[TrChat] could not register permission {key}: {error}");
-        }
+    let key = crate::perms::node(node);
+    let permission = Permission {
+        node: key.clone(),
+        description: description.to_string(),
+        default,
+        children: Vec::new(),
+    };
+    // A duplicate would mean two entries in the table above: report it through
+    // the host logger, never through stderr (see `crate::diag`).
+    if let Err(error) = context.register_permission(&permission) {
+        crate::diag::warn(format!(
+            "could not register permission {key}: {error}"
+        ));
     }
 }
 
-/// The two registry keys `node` is registered under.
-///
-/// Pumpkin's permission lookup keys on the **exact** string, and the same
-/// plugin node is reached two different ways:
-///
-/// * `trchat.mute` — written by hand in YAML (`perm "trchat.mute"` conditions,
-///   channel `Join-Permission`), so it is looked up bare, and
-/// * `trchat:trchat.mute` — what `Context::register_command` builds for a
-///   permission without a `:`, so the command tree resolves against it.
-///
-/// Registering both keeps a node from being open to one caller and denied to
-/// the other.
-fn permission_lookup_keys(node: &str) -> [String; 2] {
-    let bare = node.strip_prefix("trchat:").unwrap_or(node).to_string();
-    let namespaced = if node.contains(':') {
-        node.to_string()
-    } else {
-        format!("trchat:{node}")
-    };
-    [bare, namespaced]
-}
-
-/// The `join` / `quit` subtree shared by `/trchat channel` and `/channel`.
+/// The `join` / `quit` subtree of `/trchat channel`.
 ///
 /// Built by a function because a `CommandNode` is created imperatively and both
 /// entry points need their own copy.
@@ -372,7 +355,7 @@ impl CommandSuggestionHandler for Colors {
         let mut candidates: Vec<String> = Vec::new();
         if let Some(player) = sender.as_player() {
             for code in COLOR_CODES.chars() {
-                if player.has_permission(&format!("trchat.color.{code}")) {
+                if player.has_permission(&crate::perms::node(&format!("trchat.color.{code}"))) {
                     candidates.push(code.to_string());
                 }
             }
@@ -423,7 +406,9 @@ pub fn register_commands(context: &Context) {
         CommandNode::literal("redis")
             .then(CommandNode::literal("reconnect").execute(RedisReconnectCommand)),
     )
-    .then(CommandNode::literal("version").execute(VersionCommand))
+    // NOTE: the Mod has no `/trchat version` sub-command (`TRC:79-236`); the
+    // version is reported by `/trchat status` (`Status-Overview`) and the
+    // `/ver` controller command, so this port does not add one either.
     // §1.2 — `/trchat status` is open to everyone; `status <player>` needs
     // `trchat.admin`, checked at runtime because the guest API has no
     // per-subcommand requirement.
@@ -552,11 +537,9 @@ pub fn register_commands(context: &Context) {
     let trchat = trchat.execute(UsageCommand);
     context.register_command(trchat, PERM_USE);
 
-    // ---- /channel join|quit … ----
-    let channel = Command::new(&[String::from("channel")], "Join or leave a chat channel")
-        .then(channel_subtree())
-        .execute(ChannelListCommand);
-    context.register_command(channel, PERM_USE);
+    // NOTE: the Mod exposes channel switching only as `/trchat channel
+    // join|quit` plus whatever `Bindings.Command` binds (`TRC:175-207`), so no
+    // standalone `/channel` root command is registered here either.
 
     // ---- /trshadowmute <player> [on|off] (aliases /shadowmute) ----
     // §1.3 — a standalone alias of `/trchat shadowmute`.
@@ -755,7 +738,6 @@ fn is_reserved_alias(alias: &str) -> bool {
         "r",
         "reply",
         "trreply",
-        "channel",
         "trchat",
         "ignore",
         "trignore",
@@ -863,27 +845,6 @@ impl CommandHandler for ReloadCommand {
     }
 }
 
-/// `/trchat version`.
-struct VersionCommand;
-
-impl CommandHandler for VersionCommand {
-    fn handle(
-        &self,
-        sender: CommandSender,
-        _server: Server,
-        _args: ConsumedArgs,
-    ) -> Result<i32, CommandError> {
-        send(
-            &sender,
-            &format!(
-                "&a[TrChat] TrChat v{} (Pumpkin WASM port)",
-                crate::updater::CURRENT_VERSION
-            ),
-        );
-        Ok(0)
-    }
-}
-
 /// `/trchat status` — plugin overview, open to everyone (spec §1.2).
 struct StatusCommand;
 
@@ -909,7 +870,7 @@ impl CommandHandler for PlayerStatusCommand {
         server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_ADMIN) {
+        if !sender.has_permission(&server, &crate::perms::node(PERM_ADMIN)) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -947,7 +908,9 @@ fn state_text(sender: &CommandSender, enabled: bool) -> String {
 /// link/credit lines are appended as plain text instead of click actions
 /// because the WIT feedback channel carries a single component per line.
 fn status_overview(sender: &CommandSender, server: &Server) -> String {
-    let version = env!("CARGO_PKG_VERSION");
+    // The Mod's own version, not the crate's: Cargo cannot hold a four-segment
+    // version, so `CARGO_PKG_VERSION` (`2.5.4+1`) would disagree with `/plugins`.
+    let version = crate::updater::CURRENT_VERSION;
     let controller = {
         let config = config::global_config();
         let config = config.read();
@@ -1128,7 +1091,7 @@ impl CommandHandler for ColorCommand {
         server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_COLOR) {
+        if !sender.has_permission(&server, &crate::perms::node(PERM_COLOR)) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -1154,7 +1117,7 @@ impl CommandHandler for ColorCommand {
         };
         // Operators may use any colour; otherwise the matching
         // `trchat.color.<code>` node is required (`ChatService.java:315-322`).
-        if !condition::is_op(&player) && !player.has_permission(&format!("trchat.color.{code}")) {
+        if !condition::is_op(&player) && !player.has_permission(&crate::perms::node(&format!("trchat.color.{code}"))) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -1180,7 +1143,7 @@ impl CommandHandler for ClearCommand {
         server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_CLEAR) {
+        if !sender.has_permission(&server, &crate::perms::node(PERM_CLEAR)) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -1307,8 +1270,9 @@ impl CommandHandler for ControllerCommand {
         }
         match self.dispatch {
             ControllerDispatch::About => {
-                // `Command-About` shows the plugin version in `{0}`.
-                let version = env!("CARGO_PKG_VERSION");
+                // `Command-About` shows the plugin version in `{0}` — the Mod's
+                // `mod_version`, the same string the host lists in `/plugins`.
+                let version = crate::updater::CURRENT_VERSION;
                 send(&sender, &message("Command-About", &sender, &[version]));
             }
             ControllerDispatch::Status => {
@@ -1382,7 +1346,7 @@ impl CommandHandler for GlobalMuteToggleCommand {
         server: Server,
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_MUTE) {
+        if !sender.has_permission(&server, &crate::perms::node(PERM_MUTE)) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -1413,7 +1377,7 @@ impl CommandHandler for MuteStateCommand {
         server: Server,
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_MUTE) {
+        if !sender.has_permission(&server, &crate::perms::node(PERM_MUTE)) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -1456,7 +1420,7 @@ impl CommandHandler for MuteCommand {
         server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_MUTE) {
+        if !sender.has_permission(&server, &crate::perms::node(PERM_MUTE)) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -1545,7 +1509,7 @@ impl CommandHandler for UnmuteCommand {
         server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_MUTE) {
+        if !sender.has_permission(&server, &crate::perms::node(PERM_MUTE)) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -1590,7 +1554,7 @@ impl CommandHandler for IgnoreCommand {
         server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_IGNORE) {
+        if !sender.has_permission(&server, &crate::perms::node(PERM_IGNORE)) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -1659,7 +1623,7 @@ impl CommandHandler for IgnoreListCommand {
         server: Server,
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_IGNORE) {
+        if !sender.has_permission(&server, &crate::perms::node(PERM_IGNORE)) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -1703,7 +1667,9 @@ fn apply_ignore(
     now_ignored
 }
 
-/// `/trchat channel` (bare) — lists the configured channels.
+/// `/trchat channel` (bare) — the node has no executor upstream (`TRC:175-207`
+/// only mounts `join` / `quit`), so this prints the usage line plus the
+/// configured channels instead of Brigadier's syntax error.
 struct ChannelListCommand;
 
 impl CommandHandler for ChannelListCommand {
@@ -1732,7 +1698,7 @@ impl CommandHandler for ChannelListCommand {
     }
 }
 
-/// `/trchat channel join <channel> [player]` / `/channel join …` — join (and
+/// `/trchat channel join <channel> [player]` — join (and
 /// switch to) a channel, optionally on behalf of another player.
 struct ChannelJoinCommand;
 
@@ -1755,14 +1721,14 @@ impl CommandHandler for ChannelJoinCommand {
         }
 
         let Some(name) = arg_string(&args, "channel") else {
-            send(&sender, "&cUsage: /channel join <channel> [player]");
+            send(&sender, "&cUsage: /trchat channel join <channel> [player]");
             return Ok(0);
         };
         // §1.2 — the optional target needs `trchat.command.channel.other`.
         let other = arg_string(&args, "player");
         let target = match &other {
             Some(target) => {
-                if !sender.is_console() && !sender.has_permission(&server, PERM_CHANNEL_OTHER) {
+                if !sender.is_console() && !sender.has_permission(&server, &crate::perms::node(PERM_CHANNEL_OTHER)) {
                     send(&sender, &message("General-No-Permission", &sender, &[]));
                     return Ok(0);
                 }
@@ -1811,7 +1777,7 @@ impl CommandHandler for ChannelJoinCommand {
         // Join permission: empty permission opens the channel to everyone.
         if !channel.permission().is_empty()
             && !sender.is_console()
-            && !sender.has_permission(&server, channel.permission())
+            && !sender.has_permission(&server, &crate::perms::node(channel.permission()))
         {
             send(
                 &sender,
@@ -1843,7 +1809,7 @@ impl CommandHandler for ChannelJoinCommand {
     }
 }
 
-/// `/trchat channel quit [player]` / `/channel quit …` — leave the current
+/// `/trchat channel quit [player]` — leave the current
 /// channel, falling back to the default (auto-join) channel.
 struct ChannelQuitCommand;
 
@@ -1857,7 +1823,7 @@ impl CommandHandler for ChannelQuitCommand {
         let other = arg_string(&args, "player");
         let target = match &other {
             Some(target) => {
-                if !sender.is_console() && !sender.has_permission(&server, PERM_CHANNEL_OTHER) {
+                if !sender.is_console() && !sender.has_permission(&server, &crate::perms::node(PERM_CHANNEL_OTHER)) {
                     send(&sender, &message("General-No-Permission", &sender, &[]));
                     return Ok(0);
                 }
@@ -2237,7 +2203,7 @@ impl CommandHandler for SpyCommand {
             send(&sender, &message("General-Player-Only", &sender, &[]));
             return Ok(0);
         };
-        if !player.has_permission(PERM_SPY) {
+        if !player.has_permission(&crate::perms::node(PERM_SPY)) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -2342,7 +2308,7 @@ impl CommandHandler for ShadowMuteCommand {
     ) -> Result<i32, CommandError> {
         // Spec: `trchat.shadowmute` (OP level 2). Registered with that node, but
         // the check is repeated here so console and OP behave identically.
-        if !sender.is_console() && !sender.has_permission(&server, PERM_SHADOWMUTE) {
+        if !sender.is_console() && !sender.has_permission(&server, &crate::perms::node(PERM_SHADOWMUTE)) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -2389,7 +2355,7 @@ impl CommandHandler for ShadowMuteCommand {
 /// the Mod has no `/trchat muteall` (the bare `/trchat mute` is the toggle,
 /// `TRC:106-134`), so advertising one would send players to a command Pumpkin
 /// then rejects.
-const USAGE: &str = "&8[&3Tr&bChat&8] &7/trchat &fstatus&7, &freload&7, &fredis&7, &fversion&7, &fmute&7, &funmute&7, &fshadowmute&7, &fspy&7, &fmsg&7, &fchannel&7, &fcolor&7, &fclear&7, &fignore&7, &fview";
+const USAGE: &str = "&8[&3Tr&bChat&8] &7/trchat &fstatus&7, &freload&7, &fredis&7, &fmute&7, &funmute&7, &fshadowmute&7, &fspy&7, &fmsg&7, &fchannel&7, &fcolor&7, &fclear&7, &fignore&7, &fview";
 
 struct UsageCommand;
 
@@ -2482,30 +2448,25 @@ mod tests {
         }
     }
 
-    /// §2.1 — every node must answer under both spellings, or the command tree
-    /// and the YAML conditions disagree about who is allowed.
+    /// §2.1 — every node must be registered under the **namespaced** spelling
+    /// the host demands, and every lookup must agree with it: the Mod's YAML
+    /// and the port's own literals are bare, so they go through
+    /// [`crate::perms::node`].
     #[test]
-    fn permission_nodes_are_registered_under_both_spellings() {
-        assert_eq!(
-            super::permission_lookup_keys(super::PERM_MUTE),
-            ["trchat.mute".to_string(), "trchat:trchat.mute".to_string()]
-        );
-        // A node written in its bare (config) spelling gains the namespace…
-        assert_eq!(
-            super::permission_lookup_keys("trchat.global"),
-            [
-                "trchat.global".to_string(),
-                "trchat:trchat.global".to_string()
-            ]
-        );
-        // …and the always-open pair is never left unnamed.
-        assert_eq!(
-            super::permission_lookup_keys("trchat.private"),
-            [
-                "trchat.private".to_string(),
-                "trchat:trchat.private".to_string()
-            ]
-        );
+    fn permission_nodes_are_registered_and_looked_up_namespaced() {
+        // The `PERM_*` constants are already qualified and pass through…
+        assert_eq!(super::PERM_MUTE, "trchat:trchat.mute");
+        assert_eq!(crate::perms::node(super::PERM_MUTE), super::PERM_MUTE);
+        // …while a node written in its bare (config) spelling gains the
+        // namespace, including the always-open pair.
+        for (bare, expected) in [
+            ("trchat.global", "trchat:trchat.global"),
+            ("trchat.private", "trchat:trchat.private"),
+            ("trchat.mute", "trchat:trchat.mute"),
+            ("trchat.bypass.repeat", "trchat:trchat.bypass.repeat"),
+        ] {
+            assert_eq!(crate::perms::node(bare), expected);
+        }
     }
 
     /// §1.3 — `on` / `off` are explicit, an omitted state toggles, and names are
@@ -2675,14 +2636,14 @@ mod tests {
 
     /// The bare-`/trchat` help line must only advertise sub-commands that the
     /// registration actually mounts. It used to name a non-existent `muteall`
-    /// while omitting `redis`, `msg`, `ignore` and `view`.
+    /// and, later, a port-only `version`; it also omitted `redis`, `msg`,
+    /// `ignore` and `view`.
     #[test]
     fn usage_line_lists_only_registered_subcommands() {
         for name in [
             "status",
             "reload",
             "redis",
-            "version",
             "mute",
             "unmute",
             "shadowmute",
@@ -2699,6 +2660,10 @@ mod tests {
         assert!(
             !USAGE.contains("muteall"),
             "`/trchat muteall` does not exist — the bare `mute` is the toggle"
+        );
+        assert!(
+            !USAGE.contains("version"),
+            "`/trchat version` is not a Mod sub-command (`TRC:79-236`)"
         );
     }
 }

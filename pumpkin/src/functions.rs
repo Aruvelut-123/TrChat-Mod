@@ -522,7 +522,7 @@ fn can_use_function(
     cooldown_granted: &mut HashSet<String>,
 ) -> bool {
     let perm = gate.permission.trim();
-    if !perm.is_empty() && !perm.eq_ignore_ascii_case("none") && !sender.has_permission(perm) {
+    if !perm.is_empty() && !perm.eq_ignore_ascii_case("none") && !sender.has_permission(&crate::perms::node(perm)) {
         return false;
     }
     if gate.cooldown_millis <= 0 {
@@ -594,9 +594,9 @@ fn mention_pattern_shape(pattern: &str) -> Option<(bool, bool)> {
 /// sorted longest-first (substring safety).
 fn scan_mention(message: &str, names: &[String], pattern: &str) -> Vec<(usize, usize, String)> {
     let Some((optional_at, optional_space)) = mention_pattern_shape(pattern) else {
-        eprintln!(
-            "[trchat] function: unsupported Mention pattern '{pattern}' (only the '@? ?(names)' shape is supported) — mentions disabled"
-        );
+        crate::diag::warn(format!(
+            "function: unsupported Mention pattern '{pattern}' (only the '@? ?(names)' shape is supported) — mentions disabled"
+        ));
         return Vec::new();
     };
     let bytes = message.as_bytes();

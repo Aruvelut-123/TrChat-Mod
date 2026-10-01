@@ -341,7 +341,7 @@ fn chat_pipeline(
     // §1.4 step 5. Anti-repeat (algorithm §5). OP and `trchat.bypass.repeat`
     //    are exempt. `antiRepeatSimilarity: 0` *disables* the guard, whereas
     //    `antiRepeatMaxPerPeriod: 0` blocks the very first similar message.
-    if !is_op && !player.has_permission("trchat.bypass.repeat") {
+    if !is_op && !player.has_permission(&crate::perms::node("trchat.bypass.repeat")) {
         let similarity = config.anti_repeat_similarity().clamp(0.0, 1.0);
         if similarity > 0.0 {
             let max_per_period = config.anti_repeat_max_per_period() as usize;
@@ -394,7 +394,7 @@ fn chat_pipeline(
     //    OP does *not* bypass this one — only `trchat.bypass.duplicate` does —
     //    and a `maxRepeat` of 0 disables it.
     let max_repeat = config.anti_duplicate_phrase_max_repeat() as usize;
-    if max_repeat > 0 && !player.has_permission("trchat.bypass.duplicate") {
+    if max_repeat > 0 && !player.has_permission(&crate::perms::node("trchat.bypass.duplicate")) {
         let repeats = max_consecutive_repeat(&body, config.anti_duplicate_phrase_whitelist());
         if repeats > max_repeat {
             return reject_with(player, &locale, "General-Too-Duplicate", &[]);
@@ -421,7 +421,7 @@ fn chat_pipeline(
 
     // §1.4 step 8. Anti-high-frequency. OP and `trchat.bypass.highfrequency`
     //    are exempt; a `max` of 0 disables the guard.
-    if !is_op && !player.has_permission("trchat.bypass.highfrequency") {
+    if !is_op && !player.has_permission(&crate::perms::node("trchat.bypass.highfrequency")) {
         let max_per_period = config.anti_high_frequency_max_per_period() as usize;
         if max_per_period > 0 {
             let period = period_or_default(config.anti_high_frequency_period_millis());
@@ -668,7 +668,7 @@ fn chat_pipeline(
 
             // (3) Receive permission — empty means everyone.
             let listen = channel.listen_permission();
-            if !listen.is_empty() && !player.has_permission(listen) {
+            if !listen.is_empty() && !player.has_permission(&crate::perms::node(listen)) {
                 continue;
             }
 
@@ -1179,7 +1179,7 @@ pub(crate) fn sender_chat_color(player: &Player) -> String {
     if colour.is_empty() {
         return colour;
     }
-    if condition::is_op(player) || player.has_permission(&format!("trchat.color.{colour}")) {
+    if condition::is_op(player) || player.has_permission(&crate::perms::node(&format!("trchat.color.{colour}"))) {
         colour
     } else {
         String::new()

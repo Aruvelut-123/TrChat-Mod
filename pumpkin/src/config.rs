@@ -742,7 +742,16 @@ static DATA_FOLDER: OnceLock<String> = OnceLock::new();
 
 /// Seeds the process-wide handle used by the command surface.
 pub fn init_global(config: &SharedConfig, data_folder: String) {
-    let _ = GLOBAL_CONFIG.set(config.clone());
+    // `OnceLock::set` fails when the handle was already initialised, which
+    // happens if anything touches `global_config()` before the real
+    // configuration is loaded. Ignoring that used to leave the whole command
+    // surface on a default snapshot, so it is reported instead.
+    if GLOBAL_CONFIG.set(config.clone()).is_err() {
+        crate::diag::warn(
+            "config: the global handle is already initialised; the loaded settings are not in use",
+        );
+        return;
+    }
     let _ = DATA_FOLDER.set(data_folder);
 }
 
@@ -819,13 +828,13 @@ impl ReloadOutcome {
 pub fn reload_from_folder(folder: &str, previous: &TrChatConfig) -> (TrChatConfig, ReloadOutcome) {
     let root = Path::new(folder);
     if let Err(e) = seed_defaults(root) {
-        eprintln!("[trchat] reload: {e}");
+        crate::diag::warn(format!("reload: {e}"));
         return (previous.clone(), ReloadOutcome::failed("config"));
     }
     let settings = match read_settings(root) {
         Ok(settings) => settings,
         Err(e) => {
-            eprintln!("[trchat] reload: {e}");
+            crate::diag::warn(format!("reload: {e}"));
             return (previous.clone(), ReloadOutcome::failed("settings.yml"));
         }
     };
@@ -834,7 +843,7 @@ pub fn reload_from_folder(folder: &str, previous: &TrChatConfig) -> (TrChatConfi
         Err(e) => {
             // `ChatService.java:350-352` — a channel failure is fatal for the
             // whole reload and the command reports `channels`.
-            eprintln!("[trchat] reload: {e}");
+            crate::diag::warn(format!("reload: {e}"));
             return (previous.clone(), ReloadOutcome::failed("channels"));
         }
     };
@@ -843,7 +852,7 @@ pub fn reload_from_folder(folder: &str, previous: &TrChatConfig) -> (TrChatConfi
     let function = match parse_optional_strict(root, "function.yml", parse_function) {
         Ok(function) => function,
         Err(e) => {
-            eprintln!("[trchat] reload: {e}");
+            crate::diag::warn(format!("reload: {e}"));
             failed_sections.push("function.yml".to_string());
             previous.function.clone()
         }
@@ -851,7 +860,7 @@ pub fn reload_from_folder(folder: &str, previous: &TrChatConfig) -> (TrChatConfi
     let filter = match parse_optional_strict(root, "filter.yml", parse_filter) {
         Ok(filter) => filter,
         Err(e) => {
-            eprintln!("[trchat] reload: {e}");
+            crate::diag::warn(format!("reload: {e}"));
             failed_sections.push("filter.yml".to_string());
             previous.filter.clone()
         }
@@ -876,7 +885,7 @@ pub fn reload_from_folder(folder: &str, previous: &TrChatConfig) -> (TrChatConfi
     // `ModerationService.reloadLanguages` (`ModerationService.java:41-43`).
     let default_language = next.default_language().to_string();
     if let Err(e) = crate::lang::reload(folder, &default_language) {
-        eprintln!("[trchat] reload: lang: {e}");
+        crate::diag::warn(format!("reload: lang: {e}"));
         failed_sections.push("lang".to_string());
     }
     // `SpecialChars.reload()` — no failure tracking in the Mod either.
@@ -1585,7 +1594,7 @@ fn parse_channels(files: &[(String, String)]) -> Vec<ChannelConfig> {
         let doc: serde_yaml::Value = match serde_yaml::from_str(raw) {
             Ok(doc) => doc,
             Err(e) => {
-                eprintln!("[trchat] channels/{id}.yml skipped (parse error): {e}");
+                crate::diag::warn(format!("channels/{id}.yml skipped (parse error): {e}"));
                 continue;
             }
         };
@@ -3111,5 +3120,19 @@ Replacement: ''
         assert_eq!(f.local_words, vec!["HeLLo"]); // preserved verbatim
         assert_eq!(f.ignored_punctuations, vec!['a', '。']);
         assert_eq!(f.replacement, '*'); // blank → '*'
+    }
+
+    /// The bundled `settings.yml` (what first-run seeding writes) must keep the
+    /// Mod's `updates:` defaults. A real server showed the checker disabled
+    /// while the seeded file said `enabled: true`, which turned out to be the
+    /// global-config ordering bug in `init_global`; this pins the parse side.
+    #[test]
+    fn bundled_settings_enable_the_update_checker() {
+        let settings: Settings =
+            serde_yaml::from_str(include_str!("defaults/settings.yml")).expect("bundled settings");
+        assert!(settings.updates.enabled);
+        assert_eq!(settings.updates.interval_minutes, 15);
+        assert_eq!(settings.chat.server_id, 25565);
+        assert_eq!(settings.chat.default_language, "zh_CN");
     }
 }

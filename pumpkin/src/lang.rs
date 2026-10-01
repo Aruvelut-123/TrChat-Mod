@@ -55,7 +55,9 @@ impl Lang {
         if !locales.contains_key(&default) {
             // Unknown configured language: silently fall back to en_US, same
             // as the upstream `LangService` which also tolerates missing files.
-            eprintln!("[trchat] lang: unknown default language '{default}', using en_us");
+            crate::diag::warn(format!(
+                "lang: unknown default language '{default}', using en_us"
+            ));
         }
         Self { locales, default }
     }
@@ -224,7 +226,7 @@ fn validate_folder(data_folder: &str) -> Result<(), String> {
 /// value is skipped, mirroring the Mod loader which drops unknown keys on load.
 fn parse_table(raw: &str) -> HashMap<String, String> {
     let Ok(Value::Mapping(map)) = serde_yaml::from_str::<Value>(raw) else {
-        eprintln!("[trchat] lang: bundled file is not a mapping, ignored");
+        crate::diag::warn("lang: bundled file is not a mapping, ignored");
         return HashMap::new();
     };
     let mut out = HashMap::new();

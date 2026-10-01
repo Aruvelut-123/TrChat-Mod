@@ -33,7 +33,7 @@ pub fn test(condition: &str, player: &Player) -> bool {
 
     if let Some(node) = permission_node(condition) {
         let node = node.trim_start_matches('*');
-        return player.has_permission(node);
+        return player.has_permission(&crate::perms::node(node));
     }
 
     false
@@ -46,7 +46,7 @@ pub fn test(condition: &str, player: &Player) -> bool {
 pub fn can_speak(speak_condition: &str, join_permission: &str, player: &Player) -> bool {
     match speak_rule(speak_condition, join_permission) {
         SpeakRule::Condition(condition) => test(condition, player),
-        SpeakRule::Permission(node) => player.has_permission(node),
+        SpeakRule::Permission(node) => player.has_permission(&crate::perms::node(node)),
         SpeakRule::Open => true,
     }
 }
