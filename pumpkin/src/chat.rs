@@ -22,6 +22,7 @@ use pumpkin_plugin_api::{
         EventData, EventHandler, EventPriority,
     },
     player::Player,
+    scheduler::SchedulerExt,
     text::TextComponent,
     Context, Server,
 };
@@ -34,7 +35,7 @@ use crate::config::{
     color_code, Audience, ChannelConfig, ChannelTarget, FormatLayer, Route, SharedConfig,
     TrChatConfig,
 };
-use crate::filter::{MessageGuard, TextFilter};
+use crate::filter::MessageGuard;
 use crate::functions;
 use crate::lang;
 use crate::placeholder;
@@ -83,6 +84,16 @@ impl ChatManager {
         // Seed the process-wide config handle used by the command surface
         // (`commands::ChannelCommand`, `MsgCommand`) before any command runs.
         crate::config::init_global(&config, context.get_data_folder());
+        // `filter.yml`'s cloud thesaurus (`DefaultFilterManager.loadFilter`):
+        // report the local profile now and let the host scheduler do the
+        // network-bound refresh on the next tick, then hourly — the Mod's
+        // `submitAsync(period = 60 * 60 * 20)`.
+        crate::cloud::load(config.read().filter_config());
+        context.schedule_repeating_task(
+            crate::cloud::REFRESH_DELAY_TICKS,
+            crate::cloud::REFRESH_PERIOD_TICKS,
+            |_server| crate::cloud::refresh_current(),
+        );
         context
             .register_event_handler::<PlayerChatEvent, ChatHandler>(
                 ChatHandler {
@@ -452,12 +463,9 @@ fn chat_pipeline(
     //    the pre-filter text, as the Mod does.
     let body = {
         let f = config.filter_config();
-        let sensitive = TextFilter::new(
-            &f.local_words,
-            &f.ignored_punctuations,
-            &f.white_list,
-            f.replacement,
-        );
+        // The profile carries the local words plus the cloud thesaurus
+        // (`crate::cloud`), as the Mod's `FilterManager.loadFilter` does.
+        let sensitive = crate::filter::text_filter(f);
         let text = if f.chat_enabled && sensitive.is_active() {
             sensitive.filter(&body)
         } else {

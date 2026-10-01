@@ -60,14 +60,10 @@ pub fn register(context: &Context) -> Result<(), String> {
     Ok(())
 }
 
-/// Builds the `filter.yml` profile exactly as the chat pipeline does.
+/// Builds the `filter.yml` profile exactly as the chat pipeline does (local
+/// words plus the cloud thesaurus).
 fn text_filter(filter: &FilterConfig) -> TextFilter {
-    TextFilter::new(
-        &filter.local_words,
-        &filter.ignored_punctuations,
-        &filter.white_list,
-        filter.replacement,
-    )
+    crate::filter::text_filter(filter)
 }
 
 /// Filters every non-blank sign line (`ListenerSignChange.onSignChange`).

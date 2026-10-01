@@ -62,8 +62,6 @@ pub const MIN_INTERVAL_MINUTES: u32 = 1;
 pub const MAX_INTERVAL_MINUTES: u32 = 1440;
 /// Game ticks in one minute (20 ticks/s), the WIT scheduler unit.
 const TICKS_PER_MINUTE: u64 = 20 * 60;
-/// Bytes read per `blocking-read` call while draining the response body.
-const READ_CHUNK_BYTES: u64 = 8192;
 /// The bare admin node (`TrChatPermissions.check(player, "trchat.admin")`);
 /// lookups qualify it through [`crate::perms::node`].
 const ADMIN_NODE: &str = "trchat.admin";
@@ -707,116 +705,20 @@ pub fn render_note(line: &str) -> String {
     }
 }
 
-/// The Mod's HTTP GET (`:92-113`), issued through the host's `wasi:http` client.
+/// The Mod's HTTP GET (`:92-113`), issued through the host's `wasi:http` client
+/// by [`crate::http::get`].
 ///
-/// The stable plugin API exposes no fetch helper, so the request is built by
-/// hand from the `wasip2` (WASI 0.2) bindings; the host gates it on the
-/// `http.outbound` permission (`wasm_host/mod.rs:359, 419`).
-#[cfg(target_arch = "wasm32")]
+/// The host gates the request on the `http.outbound` permission
+/// (`wasm_host/mod.rs:359, 419`), which `PluginMetadata` declares.
 fn fetch_latest(current: &str) -> Result<String, String> {
-    use wasip2::http::outgoing_handler;
-    use wasip2::http::types::{
-        Headers, IncomingBody, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
-    };
-    use wasip2::io::poll::poll;
-    use wasip2::io::streams::StreamError;
-
-    let headers = Headers::new();
-    headers
-        .set("accept", &[ACCEPT_HEADER.as_bytes().to_vec()])
-        .map_err(|error| format!("could not set the Accept header: {error:?}"))?;
-    headers
-        .set(
-            "user-agent",
-            &[format!("{USER_AGENT_PREFIX}{current}").into_bytes()],
-        )
-        .map_err(|error| format!("could not set the User-Agent header: {error:?}"))?;
-
-    let request = OutgoingRequest::new(headers);
-    request
-        .set_method(&Method::Get)
-        .map_err(|()| "could not set the request method".to_string())?;
-    request
-        .set_scheme(Some(&Scheme::Https))
-        .map_err(|()| "could not set the request scheme".to_string())?;
-    request
-        .set_authority(Some(API_AUTHORITY))
-        .map_err(|()| "could not set the request authority".to_string())?;
-    request
-        .set_path_with_query(Some(API_PATH))
-        .map_err(|()| "could not set the request path".to_string())?;
-
-    // A `GET` still has to close its (empty) body before it is sent.
-    {
-        let body = request
-            .body()
-            .map_err(|()| "could not open the request body".to_string())?;
-        let stream = body
-            .write()
-            .map_err(|()| "could not open the request body stream".to_string())?;
-        drop(stream);
-        OutgoingBody::finish(body, None)
-            .map_err(|error| format!("could not finish the request body: {error:?}"))?;
-    }
-
-    let timeout = REQUEST_TIMEOUT_SECONDS * 1_000_000_000;
-    let options = RequestOptions::new();
-    options
-        .set_connect_timeout(Some(timeout))
-        .map_err(|()| "could not set the connect timeout".to_string())?;
-    options
-        .set_first_byte_timeout(Some(timeout))
-        .map_err(|()| "could not set the first-byte timeout".to_string())?;
-    options
-        .set_between_bytes_timeout(Some(timeout))
-        .map_err(|()| "could not set the between-bytes timeout".to_string())?;
-
-    let future = outgoing_handler::handle(request, Some(options))
-        .map_err(|error| format!("GitHub request rejected: {error:?}"))?;
-    let response = loop {
-        match future.get() {
-            Some(Ok(Ok(response))) => break response,
-            Some(Ok(Err(error))) => return Err(format!("GitHub request failed: {error:?}")),
-            Some(Err(())) => return Err("the GitHub request was already consumed".to_string()),
-            None => {
-                let pollable = future.subscribe();
-                let _ = poll(&[&pollable]);
-            }
-        }
-    };
-
-    let status = response.status();
-    if !(200..300).contains(&status) {
-        // `UpdateChecker.java:104-106`.
-        return Err(format!("GitHub API returned HTTP {status}"));
-    }
-
-    let incoming = response
-        .consume()
-        .map_err(|()| "could not consume the GitHub response".to_string())?;
-    let stream = incoming
-        .stream()
-        .map_err(|()| "could not open the GitHub response stream".to_string())?;
-    let mut bytes = Vec::new();
-    loop {
-        match stream.blocking_read(READ_CHUNK_BYTES) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => bytes.extend_from_slice(&chunk),
-            Err(StreamError::Closed) => break,
-            Err(error) => return Err(format!("could not read the GitHub response: {error:?}")),
-        }
-    }
-    drop(stream);
-    drop(IncomingBody::finish(incoming));
-
-    String::from_utf8(bytes).map_err(|error| format!("the GitHub response is not UTF-8: {error}"))
-}
-
-/// Native builds have no WASI HTTP client: the checker reports the same WARN the
-/// Mod logs when a request fails, so unit tests and `cargo check` stay offline.
-#[cfg(not(target_arch = "wasm32"))]
-fn fetch_latest(_current: &str) -> Result<String, String> {
-    Err("the WASI HTTP client is only available in the wasm32-wasip2 build".to_string())
+    crate::http::get(
+        &format!("https://{API_AUTHORITY}{API_PATH}"),
+        &[
+            ("accept", ACCEPT_HEADER),
+            ("user-agent", &format!("{USER_AGENT_PREFIX}{current}")),
+        ],
+        REQUEST_TIMEOUT_SECONDS,
+    )
 }
 
 #[cfg(test)]
@@ -962,7 +864,7 @@ mod tests {
         assert_eq!(ACCEPT_HEADER, "application/vnd.github+json");
         assert_eq!(USER_AGENT_PREFIX, "TrChat-Mod/");
         assert_eq!(REQUEST_TIMEOUT_SECONDS, 30);
-        assert!(READ_CHUNK_BYTES > 0);
+        assert!(crate::http::READ_CHUNK_BYTES > 0);
     }
 
     /// The notification block: three header lines, the changelog heading, the

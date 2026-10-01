@@ -172,6 +172,20 @@ impl TextFilter {
     }
 }
 
+/// Builds the `filter.yml` profile with the cloud thesaurus merged in
+/// (`DefaultFilterManager.loadFilter`: local words plus the accumulated
+/// `cloud_words`, longest first — [`TextFilter::new`] sorts and de-duplicates).
+pub fn text_filter(filter: &crate::config::FilterConfig) -> TextFilter {
+    let mut words = filter.local_words.clone();
+    words.extend(crate::cloud::cloud_words());
+    TextFilter::new(
+        &words,
+        &filter.ignored_punctuations,
+        &filter.white_list,
+        filter.replacement,
+    )
+}
+
 /// Full-width → half-width normalization plus lowercase, mirroring the Mod's
 /// `TextFilter.normalize(char)` (U+3000 → space, U+FF01–U+FF5E → ASCII).
 fn normalize(c: char) -> char {

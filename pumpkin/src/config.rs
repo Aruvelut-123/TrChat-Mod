@@ -760,12 +760,25 @@ pub fn global_config() -> &'static SharedConfig {
     GLOBAL_CONFIG.get_or_init(|| SharedConfig(Arc::new(RwLock::new(TrChatConfig::default()))))
 }
 
+/// The plugin data folder recorded by [`init_global`]; empty before the load.
+pub fn data_folder() -> String {
+    DATA_FOLDER.get().cloned().unwrap_or_default()
+}
+
 /// `/trchat reload` — re-reads the YAML files from the data folder.
 pub fn reload_global() -> Result<ReloadOutcome, String> {
     let folder = DATA_FOLDER
         .get()
         .ok_or_else(|| "trchat config is not initialized yet".to_string())?;
-    Ok(global_config().reload(folder))
+    let outcome = global_config().reload(folder);
+    if !outcome.is_total_failure() {
+        // `Filters.reload` re-reports the local profile after every reload
+        // (`Filters.kt:30-45`); the cloud thesaurus keeps its own hourly
+        // schedule (`crate::cloud`), so a slow network never blocks the command.
+        let config = global_config().read();
+        crate::cloud::load(config.filter_config());
+    }
+    Ok(outcome)
 }
 
 /// Outcome of `/trchat reload` — the Mod's `ChatService.ReloadResult`
@@ -1269,13 +1282,13 @@ pub struct FilterConfig {
     /// Consumed by `block_filter::filter_anvil_name`.
     pub anvil_enabled: bool,
     /// `Cloud-Thesaurus.Enabled` — remote thesaurus refresh (default `true`).
-    #[allow(dead_code)] // network fetch is out of scope for the WASM sandbox
+    /// Consumed by `cloud::refresh`.
     pub cloud_enabled: bool,
     /// `Cloud-Thesaurus.Urls` — thesaurus endpoints (default empty).
-    #[allow(dead_code)] // network fetch is out of scope for the WASM sandbox
+    /// Consumed by `cloud::refresh`.
     pub cloud_urls: Vec<String>,
     /// `Cloud-Thesaurus.Ignored` — words never added from the cloud, lowercased.
-    #[allow(dead_code)] // network fetch is out of scope for the WASM sandbox
+    /// Consumed by `cloud::read_database`.
     pub cloud_ignored: Vec<String>,
     /// `Local` — the local sensitive word list.
     pub local_words: Vec<String>,

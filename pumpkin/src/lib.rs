@@ -13,6 +13,7 @@
 mod block_filter;
 mod chat;
 mod clock;
+mod cloud;
 mod command_controller;
 mod commands;
 mod condition;
@@ -20,6 +21,7 @@ mod config;
 mod diag;
 mod filter;
 mod functions;
+mod http;
 mod lang;
 mod perms;
 mod placeholder;
