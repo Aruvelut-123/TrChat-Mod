@@ -46,7 +46,14 @@
 >
 > **Pumpkin deviation（§1.2，`/trchat channel join <channel> <player>` 的未知频道键）**：Mod 的两条分支用不同键 —— 自助 `selectChannel` 用 `Channel-Unknown`（`TRC:603-608`），代他人 `setPlayerChannel` 先过 `isJoinable()`（`!privateChannel()`，`TRC:628`）再报 `Channel-Not-Found`（`TRC:631`）。Rust 侧 `ChannelJoinCommand` 已按 target 是否存在选键，并对 target 分支施加同一 `private` 过滤。
 >
-> **Pumpkin open deviation（§1.2，`/trchat reload` 的权限门）**：Mod 用注册期 `.requires(hasPermission(2))`（`TRC:91-97`），**不认** `trchat.admin`；Rust 侧改查 `trchat:trchat.admin` 节点，而该节点注册默认值就是 `Op(Two)`，故对 OP2 玩家等价，差别仅在“非 OP 被额外显式授予 `trchat.admin`”也会放行。要与 Mod 完全一致应改用 OP 等级判定（`sender.has_permission_lvl(Two)`）；**尚未修改，待定**。
+> **Pumpkin deviation（§1.2，`/trchat reload` 与 `/trchat redis reconnect` 的权限门）**：两者在 Mod 中都是**注册期** `.requires(hasPermission(2))`（`TRC:91-105`），即**仅 OP 等级 2**（控制台 / RCON 恒过），**不认** `trchat.admin` 节点。WIT 的 `CommandNode` 只能挂权限节点字符串、无法表达“仅 OP 等级”，因此 Rust 侧改为执行体首行的运行时判定 `sender.has_permission_level(command_wit::PermissionLevel::Two)`（`commands.rs` 的 `ReloadCommand`、`RedisReconnectCommand`）；被拒时 `reload` 打印与 Pumpkin 自身拒绝等价的 `&cYou do not have permission to use this command.`，`redis reconnect` 沿用 `General-No-Permission` 键。
+>
+> **Pumpkin deviation（§1.2 / §1.3，移植版补充的命令面）**：Mod 的命令树里没有以下三条，Rust 侧为可用性补上，均为**超集**、不改动 Mod 语义：
+> * 裸节点用法回退——裸 `/trchat`、`/trchat shadowmute`、`/trchat channel` 在 Mod 里由 Brigadier 报“语法不完整”，WIT 反馈通道没有等价报错，故打印 `USAGE` / 频道列表文本；
+> * `/trchat version`——Mod 无此子命令（版本已由 `Status-Overview` 的 `{0}` 与 `/ver` 控制器命令给出）；Rust 侧保留它并输出 `TRCHAT_VERSION`（即 `gradle.properties` 的 `mod_version`）；
+> * 顶层 `/channel [join|quit …]`——`/trchat channel` 的等价短别名，且裸 `/channel` 列出可加入频道。
+>
+> 另外，`/msg`、`/tell` 在 Mod 侧来自 `Private.yml` 的 `Bindings.Command` 动态别名，Rust 侧额外**静态注册** `/msg`、`/tell`、`/trmsg`（`register_bound_aliases` 会对同名动态别名去重跳过），使私聊补全与 `/trmsg` 的词表不随频道配置变动。
 
 ### 1.3 顶层命令与别名（`TRC:238-257, 784-808`）
 

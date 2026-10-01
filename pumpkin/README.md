@@ -1,8 +1,9 @@
 # TrChat for PumpkinMC（实验性）
 
 > ⚠️ **实验性（Experimental）**：本目录是 TrChat v2 对
-> [PumpkinMC](https://pumpkinmc.org)（Rust 实现的 Minecraft 服务器）的独立实验性移植，
-> 处于 **WIP** 状态，功能为最小可用核心，不保证生产可用。
+> [PumpkinMC](https://pumpkinmc.org)（Rust 实现的 Minecraft 服务器）的独立实验性移植。
+> 除 Redis 跨服互通（稳定版 `pumpkin-plugin-api` 尚未暴露网络客户端）外，
+> 聊天管线、频道、过滤、命令、权限、语言表与更新检查均已按 Mod 逐条对齐。
 
 ## 这是什么
 
@@ -16,7 +17,7 @@ Gradle 构建，与仓库根目录的 Kotlin 模块（`src/`、`versions/`）并
 | 语言 | Kotlin | Rust（`pumpkin-plugin-api`） |
 | 加载机制 | `plugin.yml` + Java 类加载 | WASM Component，放入服务器 `plugins/` |
 | 聊天事件 | `AsyncChatEvent`（Paper） | `PlayerChatEvent`（WIT 事件，可取消、可改消息） |
-| 配置 | `config.yml`（YAML） | `plugins/data/trchat/config.json`（JSON） |
+| 配置 | `config/trchat/*.yml`（YAML） | 同一套 YAML，落在插件数据目录下 |
 | 互通 | Redis `trchat-message` 协议 | **规划中**（见下方 Roadmap） |
 
 ## 构建
@@ -42,18 +43,21 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 ## 功能（当前）
 
 * 拦截 `PlayerChatEvent`（最高优先级、阻塞模式）
-* 按 `config.json` 中的 `format` 模板渲染聊天消息（支持 `{player}` / `{message}` / `{channel}` 占位符）
+* 按频道 `Formats` 模板渲染聊天消息（支持 `%player_name%` / `%message%` / `%server_name%` 等内置占位符）
 * 将渲染结果广播给所有在线玩家，并抑制服务器默认聊天
-* **频道系统**：`channels[].prefixes` 前缀路由（最长前缀优先，对齐 Bukkit 版 `ChannelManager.byPrefix`）、`is_default` 回退频道、`Join-Permission` 发言权限、`DISTANCE` 说话半径
-* **消息守卫**：`messageMaxLength` 长度限制、`cooldownMillis` 冷却、`antiRepeatSimilarity`/`antiRepeatPeriodMillis` 反重复、全局禁言（`/trchat muteall`）、单玩家禁言（`/trchat mute/unmute`）、忽略（`/trchat ignore`）
-* **过滤**：`blockedWords` + `filterReplacement` 敏感词过滤（大小写不敏感、等长替换）
-* **语言**：`lang/` 语言表（内置 `en_us` / `zh_cn` / `es_es`），回退链 玩家语言 → 默认语言 → `en_us` → 原始 key
-* **命令**：`/trchat`（reload / version / muteall / mute / unmute / ignore / channel）、`/channel <id>`、`/msg <目标> <消息>`（别名 `/tell`）
-* **私聊**：`msg.sender` / `msg.receiver` 模板渲染，遵循忽略列表
+* **频道系统**：`Bindings.Prefix` 前缀路由（最长前缀优先，对齐 Bukkit 版 `ChannelManager.byPrefix`）、`Options.Auto-Join` 回退频道、`Speak-Condition` / `Join-Permission` 权限、`Target` 说话范围
+* **消息守卫**：`messageMaxLength` 长度限制、`cooldownMillis` 冷却、`antiRepeat*` 反重复、`antiHighFrequency*` 高频限制、`antiDuplicate*` 连续重复、全局禁言（`/trchat mute`）、单玩家禁言（`/trchat mute player`、`/trchat unmute`）、影禁言（`/trchat shadowmute`）、忽略（`/trchat ignore`）
+* **过滤**：`filter.yml` 的 `Local` 敏感词 + `Ignored-Punctuations` 跳过标点 + `WhiteList` 白名单 + `Replacement`，并与 `settings.yml` 的 `blockedWords` / `filterReplacement` 双层过滤
+* **语言**：`lang/` 语言表（内置 `en_US` / `zh_CN` / `es_ES`），回退链 玩家语言 → `chat.defaultLanguage` → `en_US` → 原始 key
+* **命令**：`/trchat`（status / reload / redis / version / mute / unmute / shadowmute / spy / msg / channel / color / clear / ignore / view）、`/channel`、`/msg`（别名 `/tell`、`/trmsg`）、`/trreply`（别名 `/r`、`/reply`）、`/trmute`、`/trunmute`、`/trshadowmute`、`/trspy`、`/ignore`、`/ignorelist` 与 `Bindings.Command` 生成的频道动态别名（`/global`、`/all`、`/shout`、`/staff` …）
+* **命令控制器**：`function.yml` 的 `General.Command-Controller` 规则，`/arasple`、`/ver(sion)(s)`、`/help(s)` 由规则匹配后放行
+* **私聊**：`%trchat_toplayer%` / `Sender` / `Receiver` 模板渲染，遵循忽略列表，可选私聊监听（`/trchat spy`）
+* **聊天功能**：`function.yml` 的 `Mention`、`Item-Show`、背包快照（`/trchat view`）
+* **更新检查**：`updates: enabled / intervalMinutes`，经宿主 `wasi:http` 拉取 GitHub release，命中后通知控制台与在线管理员（与 Mod 同款语义版本比较）
 * **玩家数据**：`SessionPlayers` 会话注册表（活跃频道、已加入频道、禁言、忽略、全局禁言）
-* **权限**：命令注册权限（`trchat.use`）与 `CommandSender::has_permission` 管理权限检查（`trchat.admin`）、频道 `Join-Permission`
-* **配置热重载**：`/trchat reload` 重新读取数据目录中的 YAML（`settings.yml` + `channels/` + `lang/` + `filter.yml` + `function.yml` + `special-chars.yml`）
-* 声明了 Redis 互通所需的全部网络权限（`network.tcp.*`、`network.dns`、`network.loopback`）
+* **权限**：Mod 的 `trchat.*` 节点全集（含 `trchat.color.<0-9a-f>` 共 16 个），注册默认值与 Mod 一致；`reload` / `redis reconnect` 为仅 OP2
+* **配置热重载**：`/trchat reload` 重新读取数据目录中的 YAML（`settings.yml` + `channels/` + `lang/` + `filter.yml` + `function.yml` + `special-chars.yml`），输出成功 / 部分失败 / 整体失败三态
+* 声明了 Redis 互通所需的网络权限（`network.tcp.*`、`network.dns`、`network.loopback`）与更新检查所需的 `http.outbound`
 
 ## 配置
 
@@ -65,12 +69,15 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 
 ```text
 plugins/data/trchat/
-├── settings.yml          # 全局：chat.serverId / defaultLanguage / cooldown /
-│                         #       antiRepeat.* / filter.* / globalPrefix / plain 格式 /
-│                         #       msg.sender / msg.receiver / serverName
+├── settings.yml          # 全局：chat.*（serverId / serverName / defaultLanguage /
+│                         #   globalPrefix / messageMaxLength / cooldownMillis /
+│                         #   antiRepeat* / antiHighFrequency* / antiDuplicate* /
+│                         #   blockedWords / filterReplacement / disabledWorlds）、
+│                         #   logging.*（日志格式与保留天数）、
+│                         #   updates.*（enabled / intervalMinutes）、redis.*
 ├── channels/             # 每文件一个频道（Normal / Global / Staff / Private / …）
-│   ├── Normal.yml        #   Options / Bindings(Prefix) / Formats / Sender / Receiver / Console
-│   ├── Global.yml        #   Prefix: ['!all']  + Command: ['global', …]
+│   ├── Normal.yml        #   Options / Bindings(Prefix,Command) / Formats / Sender / Receiver / Console
+│   ├── Global.yml        #   Prefix: ['!all']  + Command: ['global', 'all', 'shout']
 │   └── …
 ├── lang/                 # 每文件一个语言表（en_US / zh_CN / es_ES / …）
 │   ├── en_US.yml
@@ -83,35 +90,68 @@ plugins/data/trchat/
 ```
 
 * **频道路由**：`Bindings.Prefix` 匹配（最长前缀优先），未匹配的消息落入自动加入
-  （`Options.Auto-Join: true`）的默认频道；`Private.yml` 绑定 `/msg` 等命令与
-  `msg.sender` / `msg.receiver` 模板。
+  （`Options.Auto-Join: true`，如 `Normal.yml`）的默认频道；`Private.yml` 绑定
+  `/msg` 等命令并用 `Sender` / `Receiver` 模板渲染私聊。
 * **语言回退链**：玩家语言 → `chat.defaultLanguage` → `en_US` → 原始 key。
 * 数据目录中的同名 YAML **覆盖**内置默认值（首次启动写入的副本就是操作员编辑的版本）。
 
 ## 命令
 
+### `/trchat` 子命令
+
 | 命令 | 权限 | 说明 |
 | --- | --- | --- |
-| `/trchat reload` | `trchat.admin` | 重新读取 `settings.yml`、`channels/`、`lang/`、`filter.yml`、`function.yml` 与 `special-chars.yml` |
-| `/trchat version` | `trchat.use` | 显示插件版本 |
-| `/trchat muteall` | `trchat.admin` | 全局禁言开关 |
-| `/trchat mute <玩家>` | `trchat.admin` | 禁言一名玩家 |
-| `/trchat unmute <玩家>` | `trchat.admin` | 解除禁言 |
-| `/trchat ignore <玩家>` | `trchat.use` | 忽略/取消忽略玩家 |
-| `/trchat channel <id>` | `trchat.use` | 切换活跃频道 |
-| `/channel <id>` | `trchat.use` | 切换活跃频道（别名） |
-| `/msg <目标> <消息>` | `trchat.use` | 私聊（别名 `/tell`） |
+| `/trchat status` | 无 | 插件概览：版本、频道数、默认频道、Redis / 禁言 / 命令控制状态、在线数 |
+| `/trchat status <玩家>` | `trchat.admin` | 该玩家的频道、禁言（含到期与原因）、影禁言、监听、OP 等级 |
+| `/trchat reload` | **仅 OP2** | 重读数据目录 YAML，输出成功 / 部分失败（列出失败段）/ 整体失败三态 |
+| `/trchat redis reconnect` | **仅 OP2** | 触发 Redis 重连（移植版无 Redis 运行时，仅回显提示键） |
+| `/trchat mute` | `trchat.mute` | 切换全服禁言 |
+| `/trchat mute on\|off` | `trchat.mute` | 显式设置全服禁言 |
+| `/trchat mute player <玩家> <时长> [原因]` | `trchat.mute` | 禁言一名玩家（时长支持 `30s` / `5m` / `1h` / `1d` / `7d` / `permanent` 等，原因省略记 `-`） |
+| `/trchat unmute <玩家>` | `trchat.mute` | 解除禁言 |
+| `/trchat shadowmute <玩家> [on\|off]` | `trchat.shadowmute` | 影禁言（省略 on/off 即取反） |
+| `/trchat spy [on\|off]` | OP2 或 `trchat.spy` | 私聊监听（省略即取反） |
+| `/trchat msg <玩家> <消息>` | 无 | 私聊 |
+| `/trchat channel join <频道> [玩家]` | 无 / 他人需 `trchat.command.channel.other` | 切换频道 |
+| `/trchat channel quit [玩家]` | 无 / 他人需 `trchat.command.channel.other` | 退出频道 |
+| `/trchat color <颜色>` | `trchat.command.color` | 设置聊天颜色，`reset` 复位 |
+| `/trchat clear <玩家\|*>` | `trchat.command.clear` | 清屏（`*` = 全服） |
+| `/trchat ignore <玩家> [on\|off]` | `trchat.command.ignore`（默认开放） | 忽略 / 取消忽略 |
+| `/trchat view <快照>` | 无 | 打开只读背包快照 |
+| `/trchat version` | 无 | 显示本移植跟踪的 Mod 版本（移植版便利命令，Mod 无） |
+
+### 顶层命令与别名
+
+| 命令 | 权限 | 说明 |
+| --- | --- | --- |
+| `/channel [join\|quit …]` | 无 | 频道切换 / 列出可用频道（移植版便利命令，Mod 无） |
+| `/msg <目标> <消息>`、`/tell`、`/trmsg` | 无 | 私聊 |
+| `/trreply <消息>`、`/r`、`/reply` | 无 | 回复最近私聊对象 |
+| `/trmute`、`/mute <玩家> <时长> [原因]` | `trchat.mute` | 禁言（无 `on/off` 分支） |
+| `/trunmute <玩家>` | `trchat.mute` | 解除禁言 |
+| `/trshadowmute`、`/shadowmute <玩家> [on\|off]` | `trchat.shadowmute` | 影禁言 |
+| `/trspy [on\|off]` | OP2 或 `trchat.spy` | 私聊监听 |
+| `/ignore`、`/trignore <玩家> [on\|off]` | `trchat.command.ignore` | 忽略 / 取消忽略 |
+| `/ignorelist` | `trchat.command.ignore` | 列出已忽略玩家 |
+| `/arasple`、`/ver`、`/vers`、`/version`、`/versions`、`/help`、`/helps` | 命令控制器规则（`function.yml`） | 由 `General.Command-Controller` 规则匹配后放行 |
+| 频道动态别名：`/global`、`/all`、`/shout`、`/staff`、`/message`、`/w` … | 无 | 由各频道 `Bindings.Command` 生成，重新加载时同步重建 |
+
+> 移植版在 Mod 未定义执行体的裸节点上打印用法提示（裸 `/trchat`、`/trchat shadowmute`、
+> `/trchat channel`）：Mod 由 Brigadier 报语法错误，WIT 侧没有等价报错通道。
+> `/help` / `/helps` 与 Pumpkin 内置 `/help` 同名注册并由分发器合并：内置执行体被遮蔽
+> （与 Mod 一致），其分页参数子节点仍可达。
 
 ## Roadmap（实验阶段后续）
 
-- [x] 频道系统：前缀路由（`#global` / `@local`），对齐 Bukkit 版 `Channel` 语义
-- [x] 私聊命令 `/msg`（`PlayerCommandPreprocessEvent` 拦截）
-- [x] 权限节点注册（`trchat.use` / `trchat.admin`）
+- [x] 频道系统：`Bindings.Prefix` 前缀路由与 `Bindings.Command` 动态别名，对齐 Bukkit 版 `Channel` 语义
+- [x] 私聊命令 `/msg` 与 `/trreply`（`PlayerCommandPreprocessEvent` 拦截）
+- [x] 权限节点注册（Mod 的 `trchat.*` 节点全集，含 16 个 `trchat.color.*`）
+- [x] 更新检查（GitHub release API + 语义版本比较 + 在线管理员通知，见 `updates:`）
 - [ ] Redis 跨服互通：监听 `trchat-message` 频道，与现有 Bukkit/Bungee/Velocity 聊天体系打通
   （当前 `pumpkin-plugin-api` 稳定版未暴露网络客户端接口，WASI 沙箱内 TCP 行为需等 API 提供后实现；插件已声明 `network.tcp.connect` 权限）
-- [ ] 更新检查（Bukkit 版通过 HTTP 请求 SpigotMC API，Pumpkin 无对应端点，需自建）
 - [x] 特殊字符（`special-chars.yml` 彩色 emoji 白名单 + 颜色包裹）与内置占位符
-  （`{player}` / `{message}` / `{server}` / `{world}` / `{target}` / `{time}` 等）
+  （`%player%` / `%player_name%` / `%player_world%` / `%message%` / `%server_name%` /
+  `%server_online%` / `%server_tps%` / `%server_uptime%` / `%trchat_toplayer%` 等）
 - [x] 配置解析覆盖 Mod 全量 YAML：`function.yml`（命令控制器 + 内置/自定义功能）与
   `datasource.yml`（数据源，解析保留待接线）
 - [x] 聊天过滤器（`filter.yml`：`Enable.Chat` + `Local` 敏感词 + `Ignored-Punctuations`
