@@ -12,7 +12,8 @@
 //! * `/trchat unmute <player>` — clear a player's mute (`trchat.mute`)
 //! * `/trchat color <color>` — set the chat colour (`trchat.command.color`)
 //! * `/trchat clear <player|*>` — wipe a chat view (`trchat.command.clear`)
-//! * `/trchat redis reconnect` — OP 2; no-op because Redis is unimplemented
+//! * `/trchat redis reconnect` — OP 2; drops both Redis connections so the
+//!   next tick dials them again (`ChatService.reconnectRedis`)
 //! * `/trmute`, `/mute`, `/trunmute` — standalone aliases of the above
 //! * `/trchat ignore <player> [on|off]` — toggle ignoring a player (open)
 //! * `/ignore`, `/trignore <player> [on|off]`, `/ignorelist` — §1.3 aliases
@@ -407,9 +408,8 @@ pub fn register_commands(context: &Context) {
         "TrChat management and chat commands",
     )
     .then(CommandNode::literal("reload").execute(ReloadCommand))
-    // §1.2 — `/trchat redis reconnect` (OP level 2). This port has no Redis
-    // runtime, so the handler only reports the same key the upstream prints;
-    // see the deviation note on [`RedisReconnectCommand`].
+    // §1.2 — `/trchat redis reconnect` (OP level 2) → `RedisReconnectCommand`,
+    // which forwards to `redis::reconnect` (`ChatService.reconnectRedis`).
     .then(
         CommandNode::literal("redis")
             .then(CommandNode::literal("reconnect").execute(RedisReconnectCommand)),
