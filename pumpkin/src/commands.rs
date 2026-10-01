@@ -45,6 +45,9 @@ use pumpkin_plugin_api::{
     text::TextComponent,
     Context, ItemStack, Screen, Server,
 };
+// `command.wit` declares its own `permission-level` enum, distinct from the
+// `permission` package's — `CommandSender::has_permission_level` takes this one.
+use pumpkin_plugin_api::command_wit::PermissionLevel as SenderPermissionLevel;
 
 use crate::command_controller;
 use crate::condition;
@@ -57,7 +60,8 @@ use crate::playerdata::SessionPlayers;
 /// The node is always qualified with this plugin's name, because
 /// `Context::register_command` prepends the plugin name to a bare node.
 const PERM_USE: &str = "trchat:trchat.use";
-/// Permission of administrators (reload, mute, muteall).
+/// Permission of administrators (`/trchat status <player>` and the moderation
+/// commands; `/trchat reload` and `/trchat redis reconnect` are OP2-only).
 const PERM_ADMIN: &str = "trchat:trchat.admin";
 /// Permission for private-message spy (also granted to OPs, spec §2.6).
 const PERM_SPY: &str = "trchat:trchat.spy";
@@ -120,7 +124,7 @@ fn register_permissions(context: &Context) {
         ),
         (
             PERM_ADMIN,
-            "Manage TrChat (reload, mute, muteall)",
+            "Manage TrChat (player status, moderation)",
             PermissionDefault::Op(PermissionLevel::Two),
         ),
         (
@@ -459,7 +463,7 @@ pub fn register_commands(context: &Context) {
                         ),
                 ),
             )
-            .execute(MuteAllCommand),
+            .execute(GlobalMuteToggleCommand),
     )
     .then(
         CommandNode::literal("unmute").then(
@@ -492,6 +496,17 @@ pub fn register_commands(context: &Context) {
                         .execute(IgnoreCommand),
                 )
                 .execute(IgnoreCommand),
+        ),
+    )
+    // §1.2 — `/trchat msg <player> <message>` is the same private-message
+    // executor `/trmsg` uses (`TRC:167-174`); like every greedy message
+    // argument it offers no suggestions (§1.6).
+    .then(
+        CommandNode::literal("msg").then(
+            CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord)).then(
+                CommandNode::argument("message", &ArgumentType::String(StringType::Greedy))
+                    .execute(MsgCommand),
+            ),
         ),
     )
     .then(
@@ -802,10 +817,14 @@ impl CommandHandler for ReloadCommand {
     fn handle(
         &self,
         sender: CommandSender,
-        server: Server,
+        _server: Server,
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_ADMIN) {
+        // §1.1 — the Mod attaches `requires(hasPermission(2))` at *registration*
+        // time (`TRC:91-97`), so only operator level 2 (or console/RCON) passes;
+        // the `trchat.admin` node is deliberately not consulted, unlike the
+        // other management commands.
+        if !sender.has_permission_level(SenderPermissionLevel::Two) {
             send(&sender, "&cYou do not have permission to use this command.");
             return Ok(0);
         }
@@ -858,7 +877,7 @@ impl CommandHandler for VersionCommand {
             &sender,
             &format!(
                 "&a[TrChat] TrChat v{} (Pumpkin WASM port)",
-                env!("CARGO_PKG_VERSION")
+                crate::updater::CURRENT_VERSION
             ),
         );
         Ok(0)
@@ -1232,10 +1251,11 @@ impl CommandHandler for RedisReconnectCommand {
     fn handle(
         &self,
         sender: CommandSender,
-        server: Server,
+        _server: Server,
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        if !sender.has_permission(&server, PERM_ADMIN) {
+        // §1.1 — operator level 2 only, like `/trchat reload` (`TRC:98-105`).
+        if !sender.has_permission_level(SenderPermissionLevel::Two) {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
@@ -1351,10 +1371,11 @@ fn mute_expiry_text(until: i64) -> String {
     crate::playerdata::mute_expiry_text(until)
 }
 
-/// `/trchat mute` (bare) — toggle the global mute.
-struct MuteAllCommand;
+/// `/trchat mute` (bare) — toggle the global mute (`TRC:106-134`); the Mod has
+/// no `/trchat muteall`, this is the whole-server switch.
+struct GlobalMuteToggleCommand;
 
-impl CommandHandler for MuteAllCommand {
+impl CommandHandler for GlobalMuteToggleCommand {
     fn handle(
         &self,
         sender: CommandSender,
@@ -1702,7 +1723,8 @@ impl CommandHandler for ChannelListCommand {
         send(
             &sender,
             &format!(
-                "&a[TrChat] Usage: /channel join|quit [channel|player]\n&aAvailable channels: {}",
+                "&8[&3Tr&bChat&8] &7/trchat channel &fjoin&7|&fquit &7[&fchannel&7|&fplayer&7]\n\
+                 &8[&3Tr&bChat&8] &7Available channels: &a{}",
                 ids.join(", ")
             ),
         );
@@ -1916,7 +1938,11 @@ impl CommandHandler for MsgCommand {
         server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        let Some(target) = arg_string(&args, "target") else {
+        // `/trchat msg` names the target `player` (`TRC:168`), while `/msg`,
+        // `/tell` and `/trmsg` are the port's own spellings of the same
+        // executor and use `target`.
+        let Some(target) = arg_string(&args, "target").or_else(|| arg_string(&args, "player"))
+        else {
             send(&sender, "&cUsage: /msg <player> <message>");
             return Ok(0);
         };
@@ -2363,7 +2389,7 @@ impl CommandHandler for ShadowMuteCommand {
 /// the Mod has no `/trchat muteall` (the bare `/trchat mute` is the toggle,
 /// `TRC:106-134`), so advertising one would send players to a command Pumpkin
 /// then rejects.
-const USAGE: &str = "&8[&3Tr&bChat&8] &7/trchat &fstatus&7, &freload&7, &fredis&7, &fversion&7, &fmute&7, &funmute&7, &fshadowmute&7, &fspy&7, &fchannel&7, &fcolor&7, &fclear&7, &fignore&7, &fview";
+const USAGE: &str = "&8[&3Tr&bChat&8] &7/trchat &fstatus&7, &freload&7, &fredis&7, &fversion&7, &fmute&7, &funmute&7, &fshadowmute&7, &fspy&7, &fmsg&7, &fchannel&7, &fcolor&7, &fclear&7, &fignore&7, &fview";
 
 struct UsageCommand;
 
@@ -2649,7 +2675,7 @@ mod tests {
 
     /// The bare-`/trchat` help line must only advertise sub-commands that the
     /// registration actually mounts. It used to name a non-existent `muteall`
-    /// while omitting `redis`, `version` and `ignore`.
+    /// while omitting `redis`, `msg`, `ignore` and `view`.
     #[test]
     fn usage_line_lists_only_registered_subcommands() {
         for name in [
@@ -2661,6 +2687,7 @@ mod tests {
             "unmute",
             "shadowmute",
             "spy",
+            "msg",
             "channel",
             "color",
             "clear",
