@@ -49,7 +49,7 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 * **消息守卫**：`messageMaxLength` 长度限制、`cooldownMillis` 冷却、`antiRepeat*` 反重复、`antiHighFrequency*` 高频限制、`antiDuplicate*` 连续重复、全局禁言（`/trchat mute`）、单玩家禁言（`/trchat mute player`、`/trchat unmute`）、影禁言（`/trchat shadowmute`）、忽略（`/trchat ignore`）
 * **过滤**：`filter.yml` 的 `Local` 敏感词 + `Ignored-Punctuations` 跳过标点 + `WhiteList` 白名单 + `Replacement`，并与 `settings.yml` 的 `blockedWords` / `filterReplacement` 双层过滤
 * **语言**：`lang/` 语言表（内置 `en_US` / `zh_CN` / `es_ES`），回退链 玩家语言 → `chat.defaultLanguage` → `en_US` → 原始 key
-* **命令**：`/trchat`（status / reload / redis / version / mute / unmute / shadowmute / spy / msg / channel / color / clear / ignore / view）、`/channel`、`/msg`（别名 `/tell`、`/trmsg`）、`/trreply`（别名 `/r`、`/reply`）、`/trmute`、`/trunmute`、`/trshadowmute`、`/trspy`、`/ignore`、`/ignorelist` 与 `Bindings.Command` 生成的频道动态别名（`/global`、`/all`、`/shout`、`/staff` …）
+* **命令**：`/trchat`（status / reload / redis / mute / unmute / shadowmute / spy / msg / channel / color / clear / ignore / view）、`/msg`（别名 `/tell`、`/trmsg`）、`/trreply`（别名 `/r`、`/reply`）、`/trmute`、`/trunmute`、`/trshadowmute`、`/trspy`、`/ignore`、`/ignorelist` 与 `Bindings.Command` 生成的频道动态别名（`/global`、`/all`、`/shout`、`/staff` …）
 * **命令控制器**：`function.yml` 的 `General.Command-Controller` 规则，`/arasple`、`/ver(sion)(s)`、`/help(s)` 由规则匹配后放行
 * **私聊**：`%trchat_toplayer%` / `Sender` / `Receiver` 模板渲染，遵循忽略列表，可选私聊监听（`/trchat spy`）
 * **聊天功能**：`function.yml` 的 `Mention`、`Item-Show`、背包快照（`/trchat view`）
@@ -118,13 +118,11 @@ plugins/data/trchat/
 | `/trchat clear <玩家\|*>` | `trchat.command.clear` | 清屏（`*` = 全服） |
 | `/trchat ignore <玩家> [on\|off]` | `trchat.command.ignore`（默认开放） | 忽略 / 取消忽略 |
 | `/trchat view <快照>` | 无 | 打开只读背包快照 |
-| `/trchat version` | 无 | 显示本移植跟踪的 Mod 版本（移植版便利命令，Mod 无） |
 
 ### 顶层命令与别名
 
 | 命令 | 权限 | 说明 |
 | --- | --- | --- |
-| `/channel [join\|quit …]` | 无 | 频道切换 / 列出可用频道（移植版便利命令，Mod 无） |
 | `/msg <目标> <消息>`、`/tell`、`/trmsg` | 无 | 私聊 |
 | `/trreply <消息>`、`/r`、`/reply` | 无 | 回复最近私聊对象 |
 | `/trmute`、`/mute <玩家> <时长> [原因]` | `trchat.mute` | 禁言（无 `on/off` 分支） |
@@ -165,3 +163,23 @@ plugins/data/trchat/
   会有大量破坏性 WIT 变更，插件会随时无法加载。
 * 事件、命令、权限等 WIT 定义位于
   `crates/pumpkin-plugin-wit/v0.1/`（[Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) 仓库内）。
+* **权限节点必须带插件命名空间**：宿主的 `register_permission` 会打回裸节点
+  （`trchat.mute` → `Permission trchat.mute must use the plugin's namespace (trchat)`），
+  而权限查询按完全一致的字符串匹配、未注册即拒绝。因此注册表里只有
+  `trchat:trchat.mute` 这一类拼写，YAML/Mod 的裸写法（`perm "trchat.global"`、频道
+  `Join-Permission`、`function.yml` 的 `Permission`）在查询前统一经 `perms::node`
+  补齐命名空间。
+* **插件内不要写 stderr**：宿主没有为插件接上 `wasi:cli/stderr`，`eprintln!` 的写入会
+  失败并 panic，进而把整个插件 abort —— 真机冒烟测试里，注册权限失败后的那一行 stderr
+  直接终止了 `on_load`。所有诊断统一走 `pumpkin:plugin/logging`（`diag::info` /
+  `diag::warn`）。
+* **配置必须先于命令注册装载**：命令树里的 `/global`、`/all`、`/arasple` 等别名来自
+  `Bindings.Command`，而 `global_config()` 首次访问会初始化一份**默认**快照；先注册命令
+  会让 `OnceLock` 被默认值占住，真实配置再也装不进去（`on_load` 已改为先
+  `ChatManager::init` 再 `register_commands`，`init_global` 装不上时也会写日志）。
+* **版本号**：`Cargo.toml` 只能写三段（`2.5.4+1`），对外一律报告 `mod_version`
+  （`2.5.4.1`，由 `build.rs` 注入 `TRCHAT_VERSION`）——`/plugins`、`/trchat status`、
+  `/ver` 与更新检查用的是同一个字符串。
+* 真机（Pumpkin `0.2.0+26.3-26.51`，Windows x64）冒烟测试已通过：插件加载、命令树
+  （含权限拒绝路径）、`/trchat reload`、配置文件首次播种、`wasi:http` 拉取 GitHub
+  release 并完成版本比较（日志 `TrChat 2.5.4.1 is up to date.`）。

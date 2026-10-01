@@ -48,10 +48,15 @@
 >
 > **Pumpkin deviation（§1.2，`/trchat reload` 与 `/trchat redis reconnect` 的权限门）**：两者在 Mod 中都是**注册期** `.requires(hasPermission(2))`（`TRC:91-105`），即**仅 OP 等级 2**（控制台 / RCON 恒过），**不认** `trchat.admin` 节点。WIT 的 `CommandNode` 只能挂权限节点字符串、无法表达“仅 OP 等级”，因此 Rust 侧改为执行体首行的运行时判定 `sender.has_permission_level(command_wit::PermissionLevel::Two)`（`commands.rs` 的 `ReloadCommand`、`RedisReconnectCommand`）；被拒时 `reload` 打印与 Pumpkin 自身拒绝等价的 `&cYou do not have permission to use this command.`，`redis reconnect` 沿用 `General-No-Permission` 键。
 >
-> **Pumpkin deviation（§1.2 / §1.3，移植版补充的命令面）**：Mod 的命令树里没有以下三条，Rust 侧为可用性补上，均为**超集**、不改动 Mod 语义：
-> * 裸节点用法回退——裸 `/trchat`、`/trchat shadowmute`、`/trchat channel` 在 Mod 里由 Brigadier 报“语法不完整”，WIT 反馈通道没有等价报错，故打印 `USAGE` / 频道列表文本；
-> * `/trchat version`——Mod 无此子命令（版本已由 `Status-Overview` 的 `{0}` 与 `/ver` 控制器命令给出）；Rust 侧保留它并输出 `TRCHAT_VERSION`（即 `gradle.properties` 的 `mod_version`）；
-> * 顶层 `/channel [join|quit …]`——`/trchat channel` 的等价短别名，且裸 `/channel` 列出可加入频道。
+> **Pumpkin deviation（§1.2 / §1.3，移植版补充的命令面）**：Mod 的命令树里没有以下用法，Rust 侧为可用性补上，均为**超集**、不改动 Mod 语义：
+> * 裸节点用法回退——裸 `/trchat`、`/trchat shadowmute`、`/trchat channel` 在 Mod 里由 Brigadier 报“语法不完整”，WIT 反馈通道没有等价报错，故打印 `USAGE` / 频道列表文本。
+>
+> **Pumpkin 宿主契约（权限节点的命名空间，真机验证）**：宿主对权限节点的注册与查询有三条硬性规则，本移植的全部权限写法都由它们决定：
+> * `Context::register_permission` 拒绝任何不以 `{插件名}:` 开头的节点（`plugin/api/context.rs:278-291`，报 `Permission {node} must use the plugin's namespace ({name})`），重复注册同样报错（`pumpkin-util/src/permission.rs:90-99`）；
+> * `Context::register_command` 会把**不含 `:` 的** requires 自动补成 `trchat:{node}`，已含 `:` 的原样使用；
+> * `PermissionManager::has_permission` 按**完全一致的字符串**查询，未注册节点一律拒绝（`pumpkin-util/src/permission.rs:330-388`）。
+>
+> 因此上文与下文各表“权限”列里的裸拼写（`trchat.mute`，也就是 Mod 与 YAML 的写法）在 Rust 侧统一经 `perms::node` 补齐为 `trchat:trchat.mute` 后再注册与查询，注册表里**只有**命名空间拼写。真机冒烟测试的第一版正是注册了裸拼写：宿主返回 `Err`，随后的 stderr 输出又把整个插件 abort 在 `on_load`（见 README 的“说明”一节）。
 >
 > 另外，`/msg`、`/tell` 在 Mod 侧来自 `Private.yml` 的 `Bindings.Command` 动态别名，Rust 侧额外**静态注册** `/msg`、`/tell`、`/trmsg`（`register_bound_aliases` 会对同名动态别名去重跳过），使私聊补全与 `/trmsg` 的词表不随频道配置变动。
 
