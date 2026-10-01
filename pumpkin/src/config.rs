@@ -14,10 +14,10 @@
 //!
 //! Fully typed and wired into the runtime today: `settings.yml` plus
 //! `channels/*.yml` (+ `lang/*.yml` through [`crate::lang`]),
-//! `filter.yml` (`TextFilter`), `function.yml` (`functions`) and
-//! `special-chars.yml` (`special`). `datasource.yml` is written and
-//! YAML-validated but not consumed yet — the honest same status the
-//! previous JSON build had for Redis, a documented follow-up.
+//! `filter.yml` (`TextFilter`), `function.yml` (`functions`),
+//! `special-chars.yml` (`special`) and `redis:` (`crate::redis`).
+//! `datasource.yml` is written and YAML-validated but not consumed yet — the
+//! honest same status Redis had until its bridge landed.
 //!
 //! Key naming matches the Mod (`camelCase` in `settings.yml`, `PascalCase`
 //! sections in channel files), so a single `config/trchat/` folder can be
@@ -157,7 +157,9 @@ pub struct UpdatesSection {
     pub interval_minutes: u32,
 }
 
-/// `redis:` — cross-server transport (runtime is a documented follow-up).
+/// `redis:` — cross-server transport, wired to [`crate::redis`] (subscribe /
+/// publish loop, reconnect, `BroadcastRaw` / `SendPrivateRaw` / `GlobalMute` /
+/// `UpdateNames` / `SendLang`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct RedisSection {
@@ -242,14 +244,15 @@ pub struct ChannelOptions {
     pub private: bool,
     /// `ALL` | `SELF` | `SINGLE_WORLD` | `DISTANCE;<blocks>`.
     pub target: String,
-    /// Parsed and kept for the Redis transport follow-up.
-    #[allow(dead_code)]
+    /// Consumed by the Redis cross-server proxy (`chat.rs` Proxy channel
+    /// publish; `Force-Proxy` blocks non-proxied traffic).
     pub proxy: bool,
-    #[allow(dead_code)]
+    /// `Force-Proxy` — reject when the channel is proxy-only.
     pub force_proxy: bool,
-    #[allow(dead_code)]
+    /// `Double-Transfer` — forward even when the sender is the forwarding
+    /// server's own player.
     pub double_transfer: bool,
-    #[allow(dead_code)]
+    /// Additional server ports to forward to.
     pub ports: Vec<u16>,
     /// Functions disabled in this channel (`Mention`, …) — parsed and kept
     /// for the chat-functions follow-up (function.yml).

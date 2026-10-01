@@ -2,8 +2,8 @@
 
 > ⚠️ **实验性（Experimental）**：本目录是 TrChat v2 对
 > [PumpkinMC](https://pumpkinmc.org)（Rust 实现的 Minecraft 服务器）的独立实验性移植。
-> 除 Redis 跨服互通（稳定版 `pumpkin-plugin-api` 尚未暴露网络客户端）外，
-> 聊天管线、频道、过滤、命令、权限、语言表与更新检查均已按 Mod 逐条对齐。
+> 聊天管线、频道、过滤、命令、权限、语言表、更新检查与跨服 Redis 互通
+> （`trchat-message` 协议，自研 RESP 客户端）均已按 Mod 逐条对齐。
 
 ## 这是什么
 
@@ -18,7 +18,7 @@ Gradle 构建，与仓库根目录的 Kotlin 模块（`src/`、`versions/`）并
 | 加载机制 | `plugin.yml` + Java 类加载 | WASM Component，放入服务器 `plugins/` |
 | 聊天事件 | `AsyncChatEvent`（Paper） | `PlayerChatEvent`（WIT 事件，可取消、可改消息） |
 | 配置 | `config/trchat/*.yml`（YAML） | 同一套 YAML，落在插件数据目录下 |
-| 互通 | Redis `trchat-message` 协议 | **规划中**（见下方 Roadmap） |
+| 互通 | Redis `trchat-message` 协议 | **已实现**：自研 RESP 客户端（`src/redis.rs` + `src/resp.rs`），公共/私聊/全局静音/名单/语言通知五通道对齐 Mod 线协议 |
 
 ## 构建
 
@@ -149,8 +149,9 @@ plugins/data/trchat/
 - [x] 私聊命令 `/msg` 与 `/trreply`（`PlayerCommandPreprocessEvent` 拦截）
 - [x] 权限节点注册（Mod 的 `trchat.*` 节点全集，含 16 个 `trchat.color.*`）
 - [x] 更新检查（GitHub release API + 语义版本比较 + 在线管理员通知，见 `updates:`）
-- [ ] Redis 跨服互通：监听 `trchat-message` 频道，与现有 Bukkit/Bungee/Velocity 聊天体系打通
-  （当前 `pumpkin-plugin-api` 稳定版未暴露网络客户端接口，WASI 沙箱内 TCP 行为需等 API 提供后实现；插件已声明 `network.tcp.connect` 权限）
+- [x] Redis 跨服互通：监听 `trchat-message` 频道，与现有 Bukkit/Bungee/Velocity 聊天体系打通
+  （自研 RESP 客户端：TCP 直连 + AUTH/SELECT + 订阅循环 + 断线重连；`BroadcastRaw` / `SendPrivateRaw` /
+  `GlobalMute` / `UpdateNames` / `SendLang` 五类 action 与 `ForwardMessage` 剥壳，见 `src/redis.rs`）
 - [x] 特殊字符（`special-chars.yml` 彩色 emoji 白名单 + 颜色包裹）与内置占位符
   （`%player%` / `%player_name%` / `%player_world%` / `%message%` / `%server_name%` /
   `%server_online%` / `%server_tps%` / `%server_uptime%` / `%trchat_toplayer%` 等）
