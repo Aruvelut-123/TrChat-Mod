@@ -15,6 +15,17 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 
+# The update checker (`updates:`) talks to the GitHub API through the host's
+# `wasi:http` client, which the `wasm32-wasip2` target links in. Keep it
+# target-specific so host builds (`cargo test`) stay free of WASI bindings.
+#
+# Pinned exactly: the Rust toolchain's `std` links `wasi:*` at the 0.2.9
+# snapshot, and a newer `wasip2` would raise the whole component (stdlib imports
+# included) to its own snapshot — a host that satisfies today's component would
+# then refuse to instantiate it. `1.0.2` is the last release on 0.2.9.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasip2 = "=1.0.2"
+
 [profile.release]
 opt-level = "s"
 lto = true

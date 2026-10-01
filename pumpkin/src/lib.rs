@@ -24,11 +24,12 @@ mod playerdata;
 mod private_msg;
 mod snapshot;
 mod special;
+mod updater;
 
 use pumpkin_plugin_api::{
     permissions::{
-        FS_READ_DATA, FS_WRITE_DATA, NETWORK_DNS, NETWORK_LOOPBACK, NETWORK_OUTBOUND, NETWORK_TCP,
-        NETWORK_TCP_CONNECT,
+        FS_READ_DATA, FS_WRITE_DATA, HTTP_OUTBOUND, NETWORK_DNS, NETWORK_LOOPBACK,
+        NETWORK_OUTBOUND, NETWORK_TCP, NETWORK_TCP_CONNECT,
     },
     register_plugin, Context, Plugin, PluginMetadata,
 };
@@ -56,6 +57,10 @@ impl Plugin for TrChatPlugin {
                 NETWORK_DNS.to_string(),
                 NETWORK_LOOPBACK.to_string(),
                 NETWORK_OUTBOUND.to_string(),
+                // The `updates:` checker GETs the GitHub releases API through the
+                // host's `wasi:http` client; without this node the host answers
+                // `HttpRequestDenied` (`wasm_host/state.rs:664`).
+                HTTP_OUTBOUND.to_string(),
                 FS_READ_DATA.to_string(),
                 FS_WRITE_DATA.to_string(),
             ],
@@ -69,7 +74,9 @@ impl Plugin for TrChatPlugin {
         // Commands are registered before the chat pipeline so both borrow
         // the context without conflict.
         crate::commands::register_commands(&context);
-        ChatManager::init(context)
+        ChatManager::init(&context)?;
+        // Last: the checker reads the global config `ChatManager::init` seeds.
+        crate::updater::start(&context)
     }
 }
 

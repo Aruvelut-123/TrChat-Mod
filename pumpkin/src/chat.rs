@@ -78,8 +78,8 @@ pub struct ChatManager;
 
 impl ChatManager {
     /// Loads the configuration and registers the chat event handler.
-    pub fn init(context: Context) -> Result<(), String> {
-        let config = SharedConfig::load(&context)?;
+    pub fn init(context: &Context) -> Result<(), String> {
+        let config = SharedConfig::load(context)?;
         // Seed the process-wide config handle used by the command surface
         // (`commands::ChannelCommand`, `MsgCommand`) before any command runs.
         crate::config::init_global(&config, context.get_data_folder());
