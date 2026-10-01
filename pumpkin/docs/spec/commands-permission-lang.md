@@ -203,6 +203,10 @@
 
 `zh_CN.yml` / `en_US.yml` / `es_ES.yml` 各 145 行、**95 个顶层键** + `Placeholder-Translations` 内 **19 条**。
 
+键集与本地重实现的 `src/main/resources/defaults/lang/` 逐键一致（92 键），另按上游 Mod 的语言表补齐云端
+词库播报所需的 3 个 `Plugin-*` 键（上游还有 `Plugin-Loaded-Channels`、`Plugin-Reloaded`、
+`Plugin-Proxy-*` 等键，本地重实现未搬，端口同样未加）。
+
 | 前缀组 | 数量 | 代表性键名 |
 |---|---|---|
 | `Function-*` | 14 | `Function-Snapshot-Expired`、`Function-Mention-Notify`、`Function-Mention-Title`、`Function-Mention-Subtitle`、`Function-Mention-Hover`、`Function-Mention-All-Hover`、`Function-Item-Air`、`Function-Item-Title`、`Function-Inventory-Format/Hover/Title`、`Function-EnderChest-Format/Hover/Title` |
