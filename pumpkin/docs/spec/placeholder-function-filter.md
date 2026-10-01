@@ -693,11 +693,21 @@ Custom 的 `FunctionSettings` 是硬编码的（行 825–837）：`enabled=true
 **注意**：`reload()`（行 59–73）先 `words = settings.localWords()`，随后异步刷新；
 若云端尚未返回，只有本地词生效。云端失败时**本地词仍然生效**（因为 HashSet 以 localWords 起始）。
 
-**Pumpkin 支持情况**：`Cloud-Thesaurus.*` 三个键被解析进 `FilterConfig`（`config.rs:1094-1102`）但标注
-`#[allow(dead_code)]`——WASM 沙盒无后台线程与 HTTP 拉取，云端词库刷新为 out-of-scope；
-`Local` / `WhiteList` / `Ignored-Punctuations` / `Replacement` 全部接入聊天管线
-（`chat.rs:447-467` 先 `TextFilter` 后 `MessageGuard`）。沙盒内该偏差等价于云端拉取持续失败，
-而规格第 20 条保证本地词仍然生效。
+**Pumpkin 支持情况**：已按本节移植到 `pumpkin/src/cloud.rs`（`http.rs` 提供共用的 `wasi:http` GET，30 秒超时）。
+
+- `Cloud-Thesaurus.*` 三个键全部接入（`config.rs` 的 `FilterConfig`，已去掉 `#[allow(dead_code)]`）。
+- 刷新跑在宿主调度器上：插件加载时排程 `delay = 1 tick`、`period = 72_000 ticks`（一小时）——与 Mod 的
+  `submitAsync(period = 60 * 60 * 20)`（taboolib 以 **tick** 计）及本地重实现的 `ticks >= 72_000` 一致；
+  首次抓取因此不阻塞插件加载。
+- 词表按 Mod 语义**跨刷新累加**（本地重实现是每次整体替换），排序按长度降序并去重；`words` 逐项减去
+  `Ignored`（比较统一转小写）；`lastUpdateDate` 与上次**相同**的库视为已应用（`readDatabase` 行 137-141）。
+- 抓取失败回读 `{data_folder}/filters/<hex(url.hashCode())>.json` 缓存（本地重实现的缓存命名）；
+  缓存也不可用时只记警告，不抛错。
+- 播报走插件日志（对应 Mod 的 `console().sendLang`）：加载时 `Plugin-Loaded-Filter-Local`（本地词数）、
+  成功 `Plugin-Loaded-Filter-Cloud`（词数 / url / `lastUpdateDate`）、累计词表仍为空才
+  `Plugin-Failed-Load-Filter-Cloud`。
+- `filter::text_filter` 把本地词表与云端词表合并后同时供聊天、告示牌、铁砧三条管线使用，
+  因此“云端失败时本地词仍然生效”的第 20 条结论依旧成立，沙盒内无网络时亦同。
 
 ---
 

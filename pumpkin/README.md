@@ -47,7 +47,7 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 * 将渲染结果广播给所有在线玩家，并抑制服务器默认聊天
 * **频道系统**：`Bindings.Prefix` 前缀路由（最长前缀优先，对齐 Bukkit 版 `ChannelManager.byPrefix`）、`Options.Auto-Join` 回退频道、`Speak-Condition` / `Join-Permission` 权限、`Target` 说话范围
 * **消息守卫**：`messageMaxLength` 长度限制、`cooldownMillis` 冷却、`antiRepeat*` 反重复、`antiHighFrequency*` 高频限制、`antiDuplicate*` 连续重复、全局禁言（`/trchat mute`）、单玩家禁言（`/trchat mute player`、`/trchat unmute`）、影禁言（`/trchat shadowmute`）、忽略（`/trchat ignore`）
-* **过滤**：`filter.yml` 的 `Local` 敏感词 + `Ignored-Punctuations` 跳过标点 + `WhiteList` 白名单 + `Replacement`，并与 `settings.yml` 的 `blockedWords` / `filterReplacement` 双层过滤
+* **过滤**：`filter.yml` 的 `Enable.Chat` / `Enable.Sign` / `Enable.Anvil`（聊天、告示牌、铁砧三条管线），`Local` 敏感词 + `Cloud-Thesaurus` 云端词库（经宿主 `wasi:http` 抓取，失败回退 `filters/<hash>.json` 缓存）+ `Ignored-Punctuations` 跳过标点 + `WhiteList` 白名单 + `Replacement`，并与 `settings.yml` 的 `blockedWords` / `filterReplacement` 双层过滤
 * **语言**：`lang/` 语言表（内置 `en_US` / `zh_CN` / `es_ES`），回退链 玩家语言 → `chat.defaultLanguage` → `en_US` → 原始 key
 * **命令**：`/trchat`（status / reload / redis / mute / unmute / shadowmute / spy / msg / channel / color / clear / ignore / view）、`/msg`（别名 `/tell`、`/trmsg`）、`/trreply`（别名 `/r`、`/reply`）、`/trmute`、`/trunmute`、`/trshadowmute`、`/trspy`、`/ignore`、`/ignorelist` 与 `Bindings.Command` 生成的频道动态别名（`/global`、`/all`、`/shout`、`/staff` …）
 * **命令控制器**：`function.yml` 的 `General.Command-Controller` 规则，`/arasple`、`/ver(sion)(s)`、`/help(s)` 由规则匹配后放行
@@ -65,7 +65,11 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 `channels/<Id>.yml`、`lang/<locale>.yml`、`filter.yml`、`function.yml`、`datasource.yml`
 与 `special-chars.yml`，与 Mod 端 `config/trchat/` 的布局一一对应
 （键名也保持相同，便于两端共享同一套配置）。**文件不存在时**（首次启动，或管理员删除后
-重启）插件会自动从内置默认值写入并创建，方便直接编辑；已存在的文件**不会被覆盖**。
+重启）插件会自动从内置默认值写入并创建，方便直接编辑；**已存在的文件不会被整体覆盖**，
+但 `settings.yml`、`datasource.yml`、`filter.yml` 与 `channels/*.yml` 在解析前会与内置默认
+对齐：缺失的键补成出厂值、内置 schema 不认识的键删除，其余取值（含整个列表）保持编辑器里
+的内容（对齐 Mod 的 `YamlConfigSynchronizer`；`function.yml` 的键是用户自定义命令、
+`lang/*.yml` 是译表，两者只做缺失播种，不会被裁剪）。
 
 ```text
 plugins/data/trchat/
@@ -155,6 +159,11 @@ plugins/data/trchat/
 - [x] 聊天过滤器（`filter.yml`：`Enable.Chat` + `Local` 敏感词 + `Ignored-Punctuations`
   跳过标点 + `WhiteList` 白名单 + `Replacement` 全角归一化），与 `settings.yml`
   `blockedWords` 双层过滤，对齐 Mod `FilterService` / `MessageGuard` 管道
+- [x] 告示牌与铁砧敏感词过滤（`Enable.Sign` / `Enable.Anvil` + `Filter-Anvil-Blocked`，
+  经宿主事件回写 `lines` / `rename_text`）
+- [x] 云端词库（`Cloud-Thesaurus` 经 `wasi:http` 拉取、`lastUpdateDate` 去重、
+  `filters/<hash>.json` 缓存兜底，每小时刷新一次，加载与重载时在插件日志播报）
+- [x] 配置对齐内置默认值（缺失键补全并写回文件，未知键删除，对齐 Mod `YamlConfigSynchronizer`）
 
 ## 说明
 

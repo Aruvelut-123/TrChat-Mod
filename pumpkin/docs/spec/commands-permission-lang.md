@@ -201,7 +201,7 @@
 
 ### 3.3 语言文件键清单结构（三语文件键集**完全一致**）
 
-`zh_CN.yml` / `en_US.yml` / `es_ES.yml` 各 142 行、**92 个顶层键** + `Placeholder-Translations` 内 **19 条**。
+`zh_CN.yml` / `en_US.yml` / `es_ES.yml` 各 145 行、**95 个顶层键** + `Placeholder-Translations` 内 **19 条**。
 
 | 前缀组 | 数量 | 代表性键名 |
 |---|---|---|
@@ -220,9 +220,11 @@
 | `Reload-*` | 3 | `Reload-Success`、`Reload-Partial`、`Reload-Failed` |
 | `Global-*` | 2 | `Global-Mute-On`、`Global-Mute-Off` |
 | 单键 | 5 | `Console-Name`、`Clear-Success`、`Cooldowns-Chat`、`Filter-Anvil-Blocked`、`Placeholder-Translations`（映射，19 条：`yes`/`no`、4 个游戏模式、`Overworld`/`Nether`/`The End`、8 个方位 `N`…`NW`、`invalid date`、`invalid format and time`） |
+| `Plugin-*` | 3 | `Plugin-Loaded-Filter-Local`、`Plugin-Loaded-Filter-Cloud`、`Plugin-Failed-Load-Filter-Cloud`（移植补齐：云端词库刷新在插件日志里播报，见 `docs/spec/placeholder-function-filter.md` §3.4） |
 
 > **Pumpkin deviation（§3.3，默认文件里存在但 Rust 侧无引用点的键）**：三份默认语言文件保留了完整的 Mod 键集，下列键暂未被引用，因为对应子系统不在本次移植范围：
-> `Console-Name`（Mod 用作 console 日志前缀/查看者名，Rust 侧 console 视图另行拼装）、`Filter-Anvil-Blocked`（告示牌/铁砧过滤 out of scope，见 `config.rs` 中 `FilterConfig` 的 `dead_code` 注释）、`Updater-*`（UpdateChecker 未移植）、`Status-State-Connected` / `Status-State-Reconnecting`（Redis 未实现，`/trchat status` 固定报 `Status-State-Disabled`）、`Status-Creator-Link-Hover` / `Status-Repository-Link-Hover`（WIT 反馈通道每条只承载一个组件，链接以纯文本附加，hover 丢弃）。
+> `Console-Name`（Mod 用作 console 日志前缀/查看者名，Rust 侧 console 视图另行拼装）、`Status-State-Connected` / `Status-State-Reconnecting`（Redis 未实现，`/trchat status` 固定报 `Status-State-Disabled`）。
+> `Filter-Anvil-Blocked`（告示牌/铁砧过滤）、`Status-Creator-Link-Hover` / `Status-Repository-Link-Hover`（反馈组件的 hover）、`Updater-*`（更新检查器）均已接入。
 > 其余“只在 Mod 源码出现”的字符串 —— `TrChat-Data-Save`、`TrChat-Filter-Cloud`、`trchat-message`、`trchat-neoforge`、`User-Agent` —— 分别是线程名、虚拟线程名、配置频道名、旧版数据目录名与 HTTP 头，**不是语言键**。
 
 ---

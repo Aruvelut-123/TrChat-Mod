@@ -223,6 +223,25 @@
 - `Auto-Join` 为 true 的频道 **>1 个即报错**（行 71-76）；`Auto-Join` 频道若 `Private` 也报错（行 83-88）。
 - 前缀匹配：遍历全部频道全部前缀，取 `message.startsWith` 中**最长**者（行 125-137）。
 
+### 6.4 Pumpkin 移植（`pumpkin/src/sync.rs`、`config.rs::seed_defaults`）
+- `sync::synchronize(file, default, schema)` 实现 §6.2 的 1/3/4/5 条：文件不存在 → 原样复制 bundled 资源；
+  以默认键顺序重建输出（`serde_yaml::Mapping` 保留插入顺序）——键在默认中存在则递归、当前缺失则取默认值；
+  只在当前中存在的键，schema 声明过则保留并按 schema 递归，否则**删除**；叶子值 Map→递归、
+  List→当前是 List 则保留用户列表、标量→无条件保留用户值。
+- 只有结果与当前不等才回写（行 68-71），写 `<file>.yml.tmp` 后 `rename`，失败回退原地写。
+- 与 Java 的差异：**没有 `openMapPaths` 参数**（四个调用点都传 `Set.of()`，形同未使用）；输出由 `serde_yaml`
+  序列化（缩进 2、序列不额外缩进、多行标量走引号转义）。因此随包发行的默认文件保持**逐字节不变**
+  （测试 `the_bundled_files_are_already_reconciled` 断言 settings/datasource/filter 与六个频道文件回环无改写）。
+- 接入点与 Mod 一致：`settings.yml`（`TrChatConfig.java:391`）、`datasource.yml`（`PlayerDataStore.java:61`）、
+  `filter.yml`（`FilterService.java:62`）与 `channels/*.yml`（`ChannelManager.java:164`）。
+  `function.yml`（键是用户自定义命令，schema 无从声明）、`special-chars.yml`（`SpecialChars.java:38-45` 只补缺失文件）
+  与 `lang/*.yml`（`LanguageService` 不经过同步器）仍只做缺失播种。
+- 对齐失败只 `diag::warn` 后跳过，由随后的段读取器按 `settings.yml` / `filter.yml` / `channels` 上报
+  （`reload_from_folder` 的 `ReloadOutcome`），整个加载不会被中止；损坏文件原样保留给运维排查。
+- 频道文件同样对齐：同名 bundled 默认存在则用它，否则用 `Schema.yml`（`ChannelManager.synchronizeChannel:159`），
+  `Server.yml` 跳过。补全默认值会改变部分语义：`Normal.yml` 只写 `Id: Normal` 时会被补上 bundled 的
+  `Options.Auto-Join: true`（与 Mod 相同），因此该不变量的测试用例显式写 `Auto-Join: false`。
+
 ---
 
 ## 7. `SpecialChars`
@@ -253,4 +272,8 @@
 9. **`Example.yml`/`Server.yml` 必须硬排除**；`Normal` 缺失与 `Auto-Join` 重复是**致命错误**（加载失败，不是警告）。
 10. **点击动作择一**：`suggest`>`command`>`url`>`copy`>`file`，且 `url` 必须能通过 URI 校验才生效。
 11. **`SpecialChars` 按码点匹配并跳过 ZWJ/肤色/VS16**，且玩家手动颜色码优先于自动包裹色。
-12. **Pumpkin deviation（§6.2，WASM guest 约束）**：M 侧 `YamlConfigSynchronizer` 会把**缺失键补成 bundled 默认值**并写回文件（schema 键「缺失不补」仅限 schema 文件）；Pumpkin 加载用 `#[serde(default)]`，缺失键落到 **Rust 类型默认**（`""`/`0`/`false`），不会写回文件。首次生成文件完整时两者等价；用户删键后语义不同（如 `chat.serverName` 缺失 → M 补 `"A Minecraft Server"`，Pumpkin 得 `""`）。已确认无崩溃路径：`defaultLanguage` 空串会被 lang 链回退到 `en_US`（`lang.rs` fallback），其余缺失键按各自消费者处理为空值。
+12. **Pumpkin 已对齐缺失键语义（§6.4）**：`settings.yml` / `datasource.yml` / `filter.yml` / `channels/*.yml`
+    在解析前先与 bundled 默认对齐并把缺失键写回文件（即 M 侧 `YamlConfigSynchronizer` 的行为），
+    因此不再落到 Rust 类型默认值（如 `chat.serverName` 缺失会补 `"A Minecraft Server"`）。
+    `function.yml`、`special-chars.yml`、`lang/*.yml` 仍只做缺失播种（Mod 也不对它们对齐）。
+    `#[serde(default)]` 保留为解析层兜底（对齐被跳过或用户运行期改文件时）。
