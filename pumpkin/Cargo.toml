@@ -1,6 +1,10 @@
 [package]
 name = "trchat-pumpkin"
-version = "0.1.0"
+# Kept in step with `mod_version` in the repository `gradle.properties`
+# (`2.5.4.1`). Cargo versions are strict `MAJOR.MINOR.PATCH`, so the Mod's fourth
+# segment lives in build metadata; the plugin reports the exact `mod_version`
+# through `TRCHAT_VERSION` (see `build.rs`), which is what the server lists.
+version = "2.5.4+1"
 edition = "2021"
 description = "TrChat experimental support for PumpkinMC (Rust / WASM plugin)"
 license = "MIT"

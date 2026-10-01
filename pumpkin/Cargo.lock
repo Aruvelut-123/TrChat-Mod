@@ -444,7 +444,7 @@ dependencies = [
 
 [[package]]
 name = "trchat-pumpkin"
-version = "0.1.0"
+version = "2.5.4+1"
 dependencies = [
  "pumpkin-plugin-api",
  "regex",
