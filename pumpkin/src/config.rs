@@ -24,7 +24,7 @@
 //! shared between the NeoForge/Fabric Mod and this experimental plugin.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard};
 
 use pumpkin_plugin_api::text::TextComponent;
@@ -42,6 +42,9 @@ pub mod defaults {
     pub const FILTER: &str = include_str!("defaults/filter.yml");
     pub const FUNCTION: &str = include_str!("defaults/function.yml");
     pub const SPECIAL_CHARS: &str = include_str!("defaults/special-chars.yml");
+    /// `channels/Schema.yml` — the key schema every channel file reconciles
+    /// against (`ChannelManager.synchronizeChannel`).
+    pub const SCHEMA: &str = include_str!("defaults/channels/Schema.yml");
     /// Channel defaults, keyed by file stem (`Normal`, `Global`, …).
     /// `Example.yml` and `Schema.yml` are shipped for reference but are never
     /// registered as channels (same rule as the upstream loader).
@@ -939,46 +942,93 @@ pub fn load_from_folder(folder: &str) -> Result<TrChatConfig, String> {
     })
 }
 
-/// Seeds `settings.yml`, the optional files and the bundled `channels` /
-/// `lang` defaults. Only files that do not exist yet are written.
+/// Seeds and repairs `settings.yml`, `datasource.yml`, `filter.yml`, the
+/// bundled `channels` defaults and the remaining bundled files.
+///
+/// The three settings-style files and the channel files go through
+/// [`crate::sync::synchronize`]: a missing file is a copy of the bundled
+/// resource and an existing one has the bundled keys merged in (and keys the
+/// bundled schema does not declare dropped). `serde(default)` alone would only
+/// fall back to the *type* default, which is the difference the NeoForge/Fabric
+/// port closes with `YamlConfigSynchronizer`.
+///
+/// `function.yml` (an open map of user-defined commands), `special-chars.yml`
+/// and `lang/*.yml` are seeded only — the Mod never reconciles them
+/// (`SpecialChars.java:38-45` copies the bundled resource, `LanguageService`
+/// loads whatever the operator wrote).
+///
+/// A reconciliation failure is logged and skipped: the section reader that runs
+/// next reports it against its own section (`settings.yml`, `filter.yml`,
+/// `channels`), which is how the Mod attributes the same failure.
 fn seed_defaults(root: &Path) -> Result<(), String> {
     let channels_dir = root.join("channels");
     let lang_dir = root.join("lang");
     fs::create_dir_all(&channels_dir).map_err(|e| format!("create channels dir: {e}"))?;
     fs::create_dir_all(&lang_dir).map_err(|e| format!("create lang dir: {e}"))?;
 
-    write_default(
-        &root.join("settings.yml"),
-        defaults::SETTINGS,
-        "settings.yml",
-    )?;
-    write_default(
-        &root.join("datasource.yml"),
-        defaults::DATASOURCE,
-        "datasource.yml",
-    )?;
-    write_default(&root.join("filter.yml"), defaults::FILTER, "filter.yml")?;
-    write_default(
-        &root.join("function.yml"),
-        defaults::FUNCTION,
-        "function.yml",
-    )?;
-    write_default(
-        &root.join("special-chars.yml"),
-        defaults::SPECIAL_CHARS,
-        "special-chars.yml",
-    )?;
+    for (name, content) in [
+        ("settings.yml", defaults::SETTINGS),
+        ("datasource.yml", defaults::DATASOURCE),
+        ("filter.yml", defaults::FILTER),
+    ] {
+        synchronize_default(&root.join(name), content, content);
+    }
+    for (name, content) in [
+        ("function.yml", defaults::FUNCTION),
+        ("special-chars.yml", defaults::SPECIAL_CHARS),
+    ] {
+        write_default(&root.join(name), content, name)?;
+    }
+
+    // Channels: a bundled file reconciles against its own default with
+    // `Schema.yml` as the schema (`ChannelManager.reload`), any other channel
+    // file against `Schema.yml` alone (`ChannelManager.synchronizeChannel:159`),
+    // except the legacy `Server.yml`, which the Java skips.
     for (name, content) in defaults::CHANNELS {
-        write_default(
+        synchronize_default(
             &channels_dir.join(format!("{name}.yml")),
             content,
-            "channels/*.yml",
-        )?;
+            defaults::SCHEMA,
+        );
     }
+    let mut files: Vec<PathBuf> = fs::read_dir(&channels_dir)
+        .map_err(|e| format!("read channels dir: {e}"))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("yml"))
+        })
+        .collect();
+    files.sort();
+    for file in files {
+        let stem = file
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default();
+        if stem.eq_ignore_ascii_case("Server")
+            || defaults::CHANNELS
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case(stem))
+        {
+            continue;
+        }
+        synchronize_default(&file, defaults::SCHEMA, defaults::SCHEMA);
+    }
+
     for (name, content) in defaults::LANGS {
         write_default(&lang_dir.join(format!("{name}.yml")), content, "lang/*.yml")?;
     }
     Ok(())
+}
+
+/// Reconciles one configuration file, logging a failure instead of aborting the
+/// load ([`seed_defaults`]).
+fn synchronize_default(file: &Path, default_yaml: &str, schema_yaml: &str) {
+    if let Err(error) = crate::sync::synchronize(file, default_yaml, schema_yaml) {
+        crate::diag::warn(&format!("config: {error}"));
+    }
 }
 
 /// `settings.yml` — mandatory: the snapshot cannot be built without it.
@@ -2564,10 +2614,12 @@ font: "minecraft:default"
         let two_err = two.expect_err("two Auto-Join channels must fail");
         assert!(two_err.contains("Auto-Join"), "unexpected error: {two_err}");
 
-        // The sole Auto-Join channel being private → rejected.
+        // The sole Auto-Join channel being private → rejected. `Normal` states
+        // `Auto-Join: false` explicitly: the reconciler fills a missing key from
+        // the bundled `Normal.yml`, whose value is `true`.
         let private = case(
             "chan_invariants_private_autojoin",
-            "Id: Normal\n",
+            "Id: Normal\nOptions:\n  Auto-Join: false\n",
             "Id: Other\nOptions:\n  Auto-Join: true\n  Private: true\n",
         );
         let private_err = private.expect_err("a private Auto-Join channel must fail");

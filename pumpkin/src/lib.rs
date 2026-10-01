@@ -29,6 +29,7 @@ mod playerdata;
 mod private_msg;
 mod snapshot;
 mod special;
+mod sync;
 mod updater;
 
 use pumpkin_plugin_api::{
