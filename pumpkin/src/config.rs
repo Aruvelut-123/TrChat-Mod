@@ -1263,10 +1263,10 @@ pub struct FilterConfig {
     /// `Enable.Chat` — whether chat messages are filtered (default `true`).
     pub chat_enabled: bool,
     /// `Enable.Sign` — whether sign text is filtered (default `true`).
-    #[allow(dead_code)] // sign/anvil filtering is out of scope for chat-only Pumpkin
+    /// Consumed by `block_filter::filter_sign_lines`.
     pub sign_enabled: bool,
     /// `Enable.Anvil` — whether anvil renames are filtered (default `true`).
-    #[allow(dead_code)] // sign/anvil filtering is out of scope for chat-only Pumpkin
+    /// Consumed by `block_filter::filter_anvil_name`.
     pub anvil_enabled: bool,
     /// `Cloud-Thesaurus.Enabled` — remote thesaurus refresh (default `true`).
     #[allow(dead_code)] // network fetch is out of scope for the WASM sandbox

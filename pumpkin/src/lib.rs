@@ -10,6 +10,7 @@
 //! Cross-server (Redis) messaging is a documented follow-up; the crate already
 //! declares the network permissions the future proxy code will need.
 
+mod block_filter;
 mod chat;
 mod clock;
 mod command_controller;
@@ -85,6 +86,11 @@ impl Plugin for TrChatPlugin {
         // whole command surface (and the update checker) on defaults.
         ChatManager::init(&context)?;
         crate::commands::register_commands(&context);
+        // `filter.yml`'s `Enable.Sign` / `Enable.Anvil` ride the blocking
+        // `SignChangeEvent` / `PrepareAnvilEvent` (the Mod's two listeners); the
+        // handlers read the shared configuration, so this must follow
+        // `ChatManager::init`.
+        crate::block_filter::register(&context)?;
         // Last: the checker reads the global config `ChatManager::init` seeds.
         crate::updater::start(&context)?;
         crate::diag::info(format!(
