@@ -57,23 +57,53 @@ pub fn toggle_spy(name: &str) -> bool {
     }
 }
 
-/// Delivers one private message, rendering both sides and running the
-/// `sendPrivate` side effects (correspondent tracking + spy echo).
+/// What [`send_private`] did — the hint the caller reports, if any.
 ///
-/// Shared by `/msg` and `/trreply` so both behave identically. Returns `false`
-/// when the receiver ignores the sender, in which case nothing is delivered.
-pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str) -> bool {
-    let sender_name = sender.get_name();
-    let target_name = target.get_name();
+/// `sendPrivate` answers with a plain `int`, but each failure carries its own
+/// language key, so the port names the outcome instead
+/// (`ChatService.java:151-234`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrivateOutcome {
+    /// The receiver got their copy — locally, or through the Redis relay.
+    Delivered,
+    /// The receiver ignores the sender: the sender still saw their own copy and
+    /// the spies still saw the conversation, but the receiver did not.
+    Ignored,
+    /// Neither a local player nor a Redis-known remote player has that name
+    /// (`General-Player-Not-Found`).
+    NotFound,
+    /// The receiver is on another server and Redis could not take the message
+    /// (`Redis-Private-Unavailable`).
+    RedisUnavailable,
+    /// A cross-server message displayed an item another server cannot resolve,
+    /// so it was refused before anything was sent (`Redis-Unsafe-Item`).
+    UnsafeItem,
+}
 
-    // The receiver ignores the sender → the message is swallowed (spec §2.7).
-    {
-        let session = SessionPlayers::global();
-        let session = session.read().unwrap_or_else(|e| e.into_inner());
-        if session.ignores(&target_name, &sender_name) {
-            return false;
-        }
-    }
+/// `ChatService.sendPrivate` — delivers one private message to a local or a
+/// remote receiver, rendering both sides and running the `sendPrivate` side
+/// effects (correspondent tracking, mention alert, spy echo).
+///
+/// Shared by `/msg`, `/trreply` and the private-channel aliases. `target_name`
+/// is the spelling the sender typed: the exact account name is resolved from
+/// the local player list first and then from the Redis `UpdateNames` snapshots,
+/// which is how a message reaches a player on another server
+/// (`ChatService.java:162-167`).
+pub fn send_private(
+    server: &Server,
+    sender: &Player,
+    target_name: &str,
+    message: &str,
+) -> PrivateOutcome {
+    let sender_name = sender.get_name();
+    let local_target = server.get_player_by_name(target_name);
+    let exact_target = match &local_target {
+        Some(target) => target.get_name(),
+        None => match crate::redis::exact_remote_name(target_name) {
+            Some(name) => name,
+            None => return PrivateOutcome::NotFound,
+        },
+    };
 
     // §2.5 — a shadow-muted sender is not blocked by a guard: the message is
     // instead split here, exactly as `sendPublic` splits it at step 6. Only the
@@ -91,8 +121,8 @@ pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str)
     // the exact target name. The flattened templates are only the fallback for a
     // missing `Private` channel or a tier that yields no match
     // (`ChatService.java:174-185`, `ChannelRenderer.java:96-99`).
-    let target_key = target_name.to_ascii_lowercase();
-    let (sender_view, receiver_view, mention_target, sender_tpl, receiver_tpl) = {
+    let target_key = exact_target.to_ascii_lowercase();
+    let (sender_view, receiver_view, processed, mention_target, sender_tpl, receiver_tpl) = {
         let config = crate::config::global_config();
         let config = config.read();
         let channel = config.private_channel();
@@ -109,48 +139,65 @@ pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str)
         let mention_target = processed
             .as_ref()
             .is_some_and(|out| out.mentioned.contains(&target_key));
-        let local = [("trchat_toplayer", target_name.as_str())];
-        // Both views share the processed component (the Mod renders one and hands
-        // it to both `render` calls).
-        let processed = processed.as_ref();
+        let local = [("trchat_toplayer", exact_target.as_str())];
+        let processed_ref = processed.as_ref();
+        let sender_view = crate::chat::render_audience_view(
+            &crate::chat::AudienceRender {
+                channel,
+                audience: Audience::Sender,
+                subject: sender,
+                viewer: sender,
+                message,
+                processed: processed_ref,
+                local: &local,
+            },
+            server,
+            &config,
+        );
+        // A remote receiver has no `Player` handle here, so the sender stands in
+        // as the viewer. That is what the Mod does in effect: its
+        // `PlaceholderResolver.resolve` never reads the viewer, and the only
+        // thing this port takes from it is the locale used for the function
+        // hovers — which the Mod also localises with the *sender*
+        // (`ChatService.java:181`, `ChatFunctionService.java:342`).
+        let receiver_view = crate::chat::render_audience_view(
+            &crate::chat::AudienceRender {
+                channel,
+                audience: Audience::Receiver,
+                subject: sender,
+                viewer: local_target.as_ref().unwrap_or(sender),
+                message,
+                processed: processed_ref,
+                local: &local,
+            },
+            server,
+            &config,
+        );
         (
-            crate::chat::render_audience_view(
-                &crate::chat::AudienceRender {
-                    channel,
-                    audience: Audience::Sender,
-                    subject: sender,
-                    viewer: sender,
-                    message,
-                    processed,
-                    local: &local,
-                },
-                server,
-                &config,
-            ),
-            crate::chat::render_audience_view(
-                &crate::chat::AudienceRender {
-                    channel,
-                    audience: Audience::Receiver,
-                    subject: sender,
-                    viewer: target,
-                    message,
-                    processed,
-                    local: &local,
-                },
-                server,
-                &config,
-            ),
+            sender_view,
+            receiver_view,
+            processed,
             mention_target,
             config.msg.sender.clone(),
             config.msg.receiver.clone(),
         )
     };
 
+    // §2.8 — a cross-server hop must be able to resolve every displayed item, so
+    // the message is refused before the sender even sees it
+    // (`ChatService.java:187-190`). A local delivery never takes this branch.
+    let cross_server_safe = processed.as_ref().is_none_or(|out| out.cross_server_safe);
+    if !shadow_muted && local_target.is_none() && !cross_server_safe {
+        return PrivateOutcome::UnsafeItem;
+    }
+
     // The sender's copy: their audience view, else the flattened template.
+    // `ChatService.java:191` — it goes out before the receiver's copy, so an
+    // ignored message still shows the sender what they typed.
     if let Some(component) = sender_view {
         sender.send_system_message(component, false);
     } else if !sender_tpl.is_empty() {
-        let text = render_msg(&sender_tpl, &sender_name, &target_name, message);
+        let text = render_msg(&sender_tpl, &sender_name, &exact_target, message);
         let component = TextComponent::from_legacy_string_with_code(&text, '&');
         sender.send_system_message(component, false);
     }
@@ -158,38 +205,91 @@ pub fn deliver(server: &Server, sender: &Player, target: &Player, message: &str)
     if shadow_muted {
         // No correspondent is remembered either: from the receiver's point of
         // view the conversation never happened, so `/reply` must not find it.
-        let config = crate::config::global_config();
-        let config = config.read();
-        crate::chat::log_private_message(&config, sender, server, &target_name, message);
-        return true;
+        log_private(server, sender, &exact_target, message);
+        return PrivateOutcome::Delivered;
     }
 
-    // The target's copy: the `Receiver` view, whose subject is still the sender,
-    // so both sides read "sender ➥ target".
-    if let Some(component) = receiver_view {
-        target.send_system_message(component, false);
-    } else if !receiver_tpl.is_empty() {
-        let text = render_msg(&receiver_tpl, &sender_name, &target_name, message);
-        let component = TextComponent::from_legacy_string_with_code(&text, '&');
-        target.send_system_message(component, false);
+    // §1.6 local delivery (`ChatService.java:198-212`) — the receiver may still
+    // ignore the sender, in which case only the spy echo and the log happen.
+    if let Some(target) = local_target {
+        let delivered_name = target.get_name();
+        let ignored = ignores(&delivered_name, &sender_name);
+        if !ignored {
+            // The target's copy: the `Receiver` view, whose subject is still the
+            // sender, so both sides read "sender ➥ target".
+            if let Some(component) = receiver_view {
+                target.send_system_message(component, false);
+            } else if !receiver_tpl.is_empty() {
+                let text = render_msg(&receiver_tpl, &sender_name, &exact_target, message);
+                let component = TextComponent::from_legacy_string_with_code(&text, '&');
+                target.send_system_message(component, false);
+            }
+            // §1.3 step 9b — a mentioned target gets the mention notification, but
+            // only once the message really reached them (`ChatService.java:203-205`).
+            if mention_target {
+                crate::functions::notify_mentioned(&target, &sender_name, &target.get_locale());
+            }
+            remember_correspondent(&delivered_name, &sender_name);
+        }
+        notify_spies(server, sender, &target, message);
+        log_private(server, sender, &exact_target, message);
+        return if ignored {
+            PrivateOutcome::Ignored
+        } else {
+            PrivateOutcome::Delivered
+        };
     }
 
-    // §1.3 step 9b — a mentioned target gets the mention notification, but only
-    // once the message really reached them (`ChatService.java:203-205`).
+    // §1.6 cross-server relay (`ChatService.java:214-233`) — a `Private` channel
+    // without `Proxy` cannot relay, and neither can one whose publish fails;
+    // both report `Redis-Private-Unavailable`.
+    let (receiver_json, receiver_fallback) = match receiver_view {
+        Some(component) => {
+            let fallback = component.get_text();
+            (component.to_json(), fallback)
+        }
+        None => {
+            let text = if receiver_tpl.is_empty() {
+                message.to_string()
+            } else {
+                render_msg(&receiver_tpl, &sender_name, &exact_target, message)
+            };
+            let component = TextComponent::from_legacy_string_with_code(&text, '&');
+            let fallback = component.get_text();
+            (component.to_json(), fallback)
+        }
+    };
+    // Field 5 is the spy view. The Mod serialises the processed component; only
+    // its plain text is ever read back (`receivePrivate`), so the processed body
+    // is what travels.
+    let processed_body = processed.as_ref().map_or(message, |out| out.body.as_str());
+    let message_json = TextComponent::text(processed_body).to_json();
+    if !crate::redis::publish_private(
+        &exact_target,
+        &sender_name,
+        &receiver_json,
+        &receiver_fallback,
+        &message_json,
+    ) {
+        return PrivateOutcome::RedisUnavailable;
+    }
     if mention_target {
-        crate::functions::notify_mentioned(target, &sender_name, &target.get_locale());
+        crate::redis::publish_send_lang(
+            &exact_target,
+            "Function-Mention-Notify",
+            &[&sender_name],
+        );
     }
+    log_private(server, sender, &exact_target, message);
+    PrivateOutcome::Delivered
+}
 
-    remember_correspondent(&target_name, &sender_name);
-    notify_spies(server, sender, target, message);
-    // §1.6 — the console records private messages through `logPrivate` plus the
-    // rendered `Console` (or `Formats`) view of the Private channel.
-    {
-        let config = crate::config::global_config();
-        let config = config.read();
-        crate::chat::log_private_message(&config, sender, server, &target_name, message);
-    }
-    true
+/// §1.6 — records one private message in the console log
+/// (`ChatService.logToConsole` on the `Private` channel).
+fn log_private(server: &Server, sender: &Player, target_name: &str, message: &str) {
+    let config = crate::config::global_config();
+    let config = config.read();
+    crate::chat::log_private_message(&config, sender, server, target_name, message);
 }
 
 /// Renders the **fallback** private-message template (`{player}`, `{target}`,
@@ -204,14 +304,28 @@ fn render_msg(template: &str, from: &str, to: &str, text: &str) -> String {
         .replace("{message}", text)
 }
 
+/// Whether `observer` ignores `other` (spec §2.7) — the `ModerationService`
+/// check shared by `/msg` and the cross-server receive path, where the sender
+/// only exists as a name.
+pub fn ignores(observer: &str, other: &str) -> bool {
+    let session = SessionPlayers::global();
+    let session = session.read().unwrap_or_else(|e| e.into_inner());
+    session.ignores(observer, other)
+}
+
 /// Delivers the spy echo to every player with spy enabled, excluding the two
 /// participants (they already saw the conversation themselves).
 pub fn notify_spies(server: &Server, sender: &Player, target: &Player, message: &str) {
-    let sender_name = sender.get_name();
-    let target_name = target.get_name();
+    notify_spies_by_name(server, &sender.get_name(), &target.get_name(), message);
+}
+
+/// [`notify_spies`] for a pair named by string — the shape the Redis receive
+/// path needs, where the sender is on another server and the target may already
+/// have left (`ChatService.notifyPrivateSpies`).
+pub fn notify_spies_by_name(server: &Server, sender_name: &str, target_name: &str, message: &str) {
     for player in server.get_all_players() {
         let name = player.get_name();
-        if name.eq_ignore_ascii_case(&sender_name) || name.eq_ignore_ascii_case(&target_name) {
+        if name.eq_ignore_ascii_case(sender_name) || name.eq_ignore_ascii_case(target_name) {
             continue;
         }
         if !is_spying(&name) {
@@ -228,8 +342,8 @@ pub fn notify_spies(server: &Server, sender: &Player, target: &Player, message: 
             continue;
         }
         let text = template
-            .replace("{0}", &sender_name)
-            .replace("{1}", &target_name)
+            .replace("{0}", sender_name)
+            .replace("{1}", target_name)
             .replace("{2}", message);
         let component = TextComponent::from_legacy_string_with_code(&text, '&');
         player.send_system_message(component, false);

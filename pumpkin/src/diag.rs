@@ -16,6 +16,15 @@ pub fn info(message: impl AsRef<str>) {
     emit(pumpkin_plugin_api::logging::LogLevel::Info, message.as_ref());
 }
 
+/// Reports a debug message to the server log.
+///
+/// The Mod logs the actions it ignores at debug level
+/// (`ChatService.java:988`), so remote chatter this port does not implement
+/// stays quiet on a default server log.
+pub fn debug(message: impl AsRef<str>) {
+    emit(pumpkin_plugin_api::logging::LogLevel::Debug, message.as_ref());
+}
+
 /// Reports a warning to the server log.
 pub fn warn(message: impl AsRef<str>) {
     emit(pumpkin_plugin_api::logging::LogLevel::Warn, message.as_ref());

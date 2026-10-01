@@ -72,6 +72,12 @@ pub struct FunctionOutcome {
     /// Lowercased names of players to notify when they really receive the
     /// broadcast (`Notify` functions only).
     pub mentioned: HashSet<String>,
+    /// `ProcessedMessage.crossServerSafe()` — `false` once an `Item-Show` span
+    /// displayed an item whose namespace is not `minecraft`. Another server
+    /// cannot resolve that registry key, so `ChatService` refuses to relay the
+    /// message through Redis and reports `Redis-Unsafe-Item` instead
+    /// (`ChatFunctionService.java:116,131-135`).
+    pub cross_server_safe: bool,
 }
 
 /// One highlighted span inside the processed body.
@@ -310,6 +316,9 @@ pub fn process(
     let mut out_body = String::new();
     let mut spans = Vec::new();
     let mut mentioned = HashSet::new();
+    // `ChatFunctionService.process` starts safe and clears the flag in the
+    // `Item-Show` branch only (`:116`, `:131-135`).
+    let mut cross_server_safe = true;
     let mut cooldown_granted = HashSet::new();
     let mut cursor = 0usize;
     for t in &accepted {
@@ -395,6 +404,21 @@ pub fn process(
                     Some(stack) => {
                         let count = stack.get_count();
                         let key = stack.get_registry_key();
+                        // §2.8 — the Mod clears `crossServerSafe` when the
+                        // *displayed* stack is not a vanilla item
+                        // (`isVanillaDisplayedItem`, `ChatFunctionService.java:448-460`).
+                        // The check reads the real registry key, not the
+                        // `Compatible` substitute, so it happens before `hover_key`
+                        // is chosen below.
+                        if !key.is_empty()
+                            && !key
+                                .split(':')
+                                .next()
+                                .unwrap_or("minecraft")
+                                .eq_ignore_ascii_case("minecraft")
+                        {
+                            cross_server_safe = false;
+                        }
                         let name = item_display_name(&key, function.origin_name);
                         out_body.push('[');
                         out_body.push_str(&name);
@@ -493,6 +517,7 @@ pub fn process(
         body: out_body,
         spans,
         mentioned,
+        cross_server_safe,
     })
 }
 

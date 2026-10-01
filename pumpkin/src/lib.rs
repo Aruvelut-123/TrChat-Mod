@@ -5,10 +5,12 @@
 //!
 //! * intercepts player chat through the `player-chat` event,
 //! * renders the message with the configured format,
-//! * broadcasts the rendered message to all online players.
+//! * broadcasts the rendered message to all online players,
+//! * relays chat, private messages, the player list, the global mute and
+//!   language notices to other TrChat servers over Redis (`redis::start`), in
+//!   the wire format the Bukkit/NeoForge Mod publishes.
 //!
-//! Cross-server (Redis) messaging is a documented follow-up; the crate already
-//! declares the network permissions the future proxy code will need.
+//! The crate declares the network permissions the Redis transport needs.
 
 mod block_filter;
 mod chat;
@@ -27,6 +29,8 @@ mod perms;
 mod placeholder;
 mod playerdata;
 mod private_msg;
+mod redis;
+mod resp;
 mod snapshot;
 mod special;
 mod sync;
@@ -96,6 +100,9 @@ impl Plugin for TrChatPlugin {
         crate::block_filter::register(&context)?;
         // Last: the checker reads the global config `ChatManager::init` seeds.
         crate::updater::start(&context)?;
+        // Cross-server chat reads the same configuration; it stays inert until
+        // `redis.enabled` is set.
+        crate::redis::start(&context)?;
         crate::diag::info(format!(
             "TrChat {} loaded (Pumpkin WASM port)",
             crate::updater::CURRENT_VERSION

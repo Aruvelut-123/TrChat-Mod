@@ -275,7 +275,8 @@ fn channel_subtree() -> CommandNode {
         )
 }
 
-/// §1.6 — tab-completes online player names.
+/// §1.6 — tab-completes online player names, plus the Redis-known remote names
+/// (`ChatService.knownPlayerNames`, `ChatService.java:276-287`).
 struct PlayerNames;
 
 impl CommandSuggestionHandler for PlayerNames {
@@ -285,10 +286,17 @@ impl CommandSuggestionHandler for PlayerNames {
         server: Server,
         request: SuggestionRequest,
     ) -> CommandSuggestions {
-        suggest_matching(
-            &request,
-            server.get_all_players().iter().map(|p| p.get_name()),
-        )
+        let mut names = server
+            .get_all_players()
+            .iter()
+            .map(|p| p.get_name())
+            .collect::<Vec<_>>();
+        for remote in crate::redis::remote_player_names() {
+            if !names.iter().any(|n| n.eq_ignore_ascii_case(&remote)) {
+                names.push(remote);
+            }
+        }
+        suggest_matching(&request, names.into_iter())
     }
 }
 
@@ -963,6 +971,18 @@ fn status_overview(sender: &CommandSender, server: &Server) -> TextComponent {
         players.is_global_muted()
     };
 
+    // §1.2 — the overview reports the Redis transport state: disabled when the
+    // config turns it off, otherwise connected or still reconnecting as the
+    // bridge currently is (`Status-State-Disabled` / `Status-State-Connected` /
+    // `Status-State-Reconnecting`, `TrChatCommands.java:281-286`).
+    let redis_state = if !crate::redis::is_enabled() {
+        message("Status-State-Disabled", sender, &[]).to_string()
+    } else if crate::redis::is_connected() {
+        message("Status-State-Connected", sender, &[]).to_string()
+    } else {
+        message("Status-State-Reconnecting", sender, &[]).to_string()
+    };
+
     let overview = message_component(
         "Status-Overview",
         sender,
@@ -970,8 +990,7 @@ fn status_overview(sender: &CommandSender, server: &Server) -> TextComponent {
             version,
             &channel_count,
             &default_channel,
-            // Redis is not implemented by this port.
-            &message("Status-State-Disabled", sender, &[]),
+            &redis_state,
             &state_text(sender, globally_muted),
             &state_text(sender, controller_enabled),
             &rule_count,
@@ -1261,10 +1280,9 @@ fn clear_chat(player: &pumpkin_plugin_api::player::Player) {
 
 /// `/trchat redis reconnect` — OP level 2 (`TRC:98-105`).
 ///
-/// Deviation: the port has no Redis runtime (the cross-server block is not
-/// implemented), so there is nothing to reconnect. The handler reports the same
-/// `Redis-Reconnect-Started` key the upstream does, so the command surface and
-/// the language keys stay complete, but it performs no I/O.
+/// `TrChatCommands` forwards the literal to `ChatService.reconnectRedis`
+/// (`TRC:431-441`), which drops both the publisher and the subscriber; the next
+/// tick dials them again.
 struct RedisReconnectCommand;
 
 impl CommandHandler for RedisReconnectCommand {
@@ -1279,6 +1297,7 @@ impl CommandHandler for RedisReconnectCommand {
             send(&sender, &message("General-No-Permission", &sender, &[]));
             return Ok(0);
         }
+        crate::redis::reconnect();
         send(&sender, &message("Redis-Reconnect-Started", &sender, &[]));
         Ok(1)
     }
@@ -1452,6 +1471,10 @@ fn set_global_mute(sender: &CommandSender, server: &Server, muted: bool) {
             .unwrap_or_else(|e| e.into_inner());
         players.set_global_muted(muted);
     }
+    // §1.6 — with Redis connected, the state change is relayed to every other
+    // server, which applies it locally and announces it to its own players
+    // (`ChatService.java:334-336`; the payload is `on`/`off`).
+    crate::redis::publish_global_mute(muted);
     // The announcement goes to everyone online, including the issuer.
     let key = if muted {
         "Global-Mute-On"
@@ -1545,15 +1568,17 @@ fn reason_or_dash(reason: &str) -> String {
     }
 }
 
-/// Whether `name` belongs to an online player (case-insensitive).
+/// Whether `name` belongs to a known player (case-insensitive).
 ///
-/// The upstream ignore command also consults the Redis-known player list;
-/// without Redis this port only knows who is online.
+/// The upstream ignore command consults the Redis-known player list as well, so
+/// a player parked on another server can be ignored
+/// (`ChatService.findKnownPlayer`, `ChatService.java:1168-1175`).
 fn player_exists(server: &Server, name: &str) -> bool {
     server
         .get_all_players()
         .iter()
         .any(|player| player.get_name().eq_ignore_ascii_case(name))
+        || crate::redis::exact_remote_name(name).is_some()
 }
 
 /// `/trchat unmute <player>` — clear a player's mute.
@@ -1977,21 +2002,41 @@ impl CommandHandler for MsgCommand {
             send(&sender, &message("General-Player-Only", &sender, &[]));
             return Ok(0);
         };
-        let online = server.get_all_players();
-        let Some(target_player) = online
-            .iter()
-            .find(|p| p.get_name().eq_ignore_ascii_case(&target))
-        else {
-            send(&sender, &format!("&cPlayer {target} is not online."));
-            return Ok(0);
-        };
 
         // §1.6 — one shared delivery path so `/msg` and `/trreply` behave
-        // identically (ignore check, rendering, spy echo).
-        if !crate::private_msg::deliver(&server, &sender_player, target_player, &text) {
-            send(&sender, &format!("&c{target} is ignoring you."));
-        }
+        // identically (ignore check, rendering, spy echo). The target may live on
+        // another server; `send_private` resolves them through the Redis player
+        // snapshots and relays the message there (`ChatService.java:162-167`).
+        report_private_outcome(
+            &sender,
+            &target,
+            crate::private_msg::send_private(&server, &sender_player, &target, &text),
+            format!("&cPlayer {target} is not online."),
+        );
         Ok(0)
+    }
+}
+
+/// Reports a private delivery that did not simply succeed — the port-specific
+/// "is ignoring you" hint, the caller's own not-found text, and the Mod's two
+/// Redis keys (`Redis-Private-Unavailable` / `Redis-Unsafe-Item`).
+fn report_private_outcome(
+    sender: &CommandSender,
+    target: &str,
+    outcome: crate::private_msg::PrivateOutcome,
+    not_found: String,
+) {
+    use crate::private_msg::PrivateOutcome;
+    match outcome {
+        PrivateOutcome::Delivered => {}
+        PrivateOutcome::Ignored => send(sender, &format!("&c{target} is ignoring you.")),
+        PrivateOutcome::NotFound => send(sender, &not_found),
+        PrivateOutcome::RedisUnavailable => {
+            send(sender, &message("Redis-Private-Unavailable", sender, &[]));
+        }
+        PrivateOutcome::UnsafeItem => {
+            send(sender, &message("Redis-Unsafe-Item", sender, &[]));
+        }
     }
 }
 
@@ -2058,20 +2103,14 @@ impl CommandHandler for BoundAliasCommand {
                 );
                 return Ok(0);
             }
-            let online = server.get_all_players();
-            let Some(target) = online
-                .iter()
-                .find(|p| p.get_name().eq_ignore_ascii_case(&target_name))
-            else {
-                send(
-                    &sender,
-                    &message("General-Player-Not-Found", &sender, &[&target_name]),
-                );
-                return Ok(0);
-            };
-            if !crate::private_msg::deliver(&server, &sender_player, target, &text) {
-                send(&sender, &format!("&c{target_name} is ignoring you."));
-            }
+            // §2.2/§1.6 — the same delivery path `/msg` uses, so a private alias
+            // also reaches a player parked on another server.
+            report_private_outcome(
+                &sender,
+                &target_name,
+                crate::private_msg::send_private(&server, &sender_player, &target_name, &text),
+                message("General-Player-Not-Found", &sender, &[&target_name]),
+            );
             return Ok(0);
         }
 
@@ -2224,21 +2263,15 @@ impl CommandHandler for ReplyCommand {
             crate::private_msg::no_reply_hint(&player);
             return Ok(0);
         };
-        // The correspondent may have gone offline since the last message.
-        let online = server.get_all_players();
-        let Some(target) = online
-            .iter()
-            .find(|p| p.get_name().eq_ignore_ascii_case(&target_name))
-        else {
-            send(
-                &sender,
-                &message("General-Player-Not-Found", &sender, &[&target_name]),
-            );
-            return Ok(0);
-        };
-        if !crate::private_msg::deliver(&server, &player, target, &text) {
-            return Ok(0);
-        }
+        // The correspondent may have gone offline — or never been on this server
+        // at all: `send_private` falls back to the Redis player snapshots
+        // (`ChatService.java:236-243`).
+        report_private_outcome(
+            &sender,
+            &target_name,
+            crate::private_msg::send_private(&server, &player, &target_name, &text),
+            message("General-Player-Not-Found", &sender, &[&target_name]),
+        );
         Ok(0)
     }
 }

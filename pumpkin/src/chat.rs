@@ -637,6 +637,63 @@ fn chat_pipeline(
         return ChatOutcome::Accepted;
     }
 
+    // §1.3 step 6.5 — the `Proxy` option (`ChatService.java:603-623`): with Redis
+    // enabled and a cross-server-safe body, the message is *published* instead of
+    // broadcast locally. This server's own subscription echoes the packet back
+    // and `redis::receive_broadcast` delivers it to the local receivers (and logs
+    // it), which is why a successful publish returns without touching the loop
+    // below.
+    if let Some(ch) = channel {
+        if ch.options.proxy && crate::redis::is_enabled() {
+            // §2.8 — a body showing an item another server cannot resolve is
+            // simply broadcast locally instead (`processed.crossServerSafe()`).
+            let cross_server_safe = outcome.as_ref().is_none_or(|out| out.cross_server_safe);
+            if cross_server_safe {
+                // One render for every server: the Mod serialises the single
+                // `rendered` view, so the mention/item hovers carry the sender's
+                // locale rather than each receiver's (`ChatService.java:607`).
+                let component = build_component(player);
+                let component_json = component.to_json();
+                let fallback = component.get_text();
+                // `String.join(",", mentioned)` — the Mod keeps a list, this port
+                // a set, so sort for a deterministic wire form; the receiver only
+                // tests case-insensitive membership.
+                let mut mentioned: Vec<String> = outcome
+                    .as_ref()
+                    .map(|out| out.mentioned.iter().cloned().collect())
+                    .unwrap_or_default();
+                mentioned.sort();
+                let published = crate::redis::publish_broadcast(
+                    &player.get_id().to_string(),
+                    &component_json,
+                    ch.listen_permission(),
+                    ch.options.double_transfer,
+                    &ch.options.ports,
+                    &fallback,
+                    &name,
+                    &mentioned.join(","),
+                );
+                if published {
+                    return ChatOutcome::Accepted;
+                }
+                if ch.options.force_proxy {
+                    // `Force-Proxy` refuses the message outright when Redis is
+                    // down (`ChatService.java:618-621`).
+                    return reject_with(player, &locale, "Redis-Force-Unavailable", &[]);
+                }
+                // `Redis-Fallback` warns, then the message still goes out locally.
+                let text = lang::lang()
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .format("Redis-Fallback", &locale, &[]);
+                player.send_system_message(
+                    TextComponent::from_legacy_string_with_code(&text, '&'),
+                    false,
+                );
+            }
+        }
+    }
+
     // 9. Broadcast — every online player, subject to the four §2.3 receiver
     //    checks: ignore list, channel membership, listen permission, and the
     //    `Target` reach (SELF / WORLD / DISTANCE, squared comparison).
