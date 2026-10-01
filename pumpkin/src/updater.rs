@@ -289,9 +289,8 @@ fn notify_player(player: &Player) {
     }
 
     let table = crate::lang::lang().read().unwrap_or_else(|e| e.into_inner());
-    for line in notification_lines(&table, &release, CURRENT_VERSION, "") {
-        let _ = player
-            .send_system_message(TextComponent::from_legacy_string_with_code(&line, '&'), false);
+    for component in notification_components(&table, &release, CURRENT_VERSION, "") {
+        let _ = player.send_system_message(component, false);
     }
 }
 
@@ -304,38 +303,101 @@ fn is_admin(player: &Player) -> bool {
     player.has_permission(&crate::perms::node(ADMIN_NODE))
 }
 
+/// One rendered piece of the update notification (`UpdateChecker.notifyPlayer`).
+///
+/// The block is built once as parts so the component rendering (players) and
+/// the test-level string rendering cannot drift apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotificationPart {
+    /// A plain rendered line.
+    Line(String),
+    /// The `Updater-Link-Prefix` + `Updater-Link` line; the Mod's `header`
+    /// (`:162-185`) puts the URL click and the `Updater-Link-Hover` tooltip on
+    /// the label, so it needs a component of its own.
+    Link {
+        prefix: String,
+        label: String,
+        hover: String,
+        url: String,
+    },
+}
+
 /// The message block of `notifyPlayer` (`:79-88`) plus the Mod's `header`
-/// (`:162-185`), as one string per feedback component.
-pub fn notification_lines(
+/// (`:162-185`), as parts.
+pub fn notification_parts(
     table: &Lang,
     release: &ReleaseInfo,
     current_text: &str,
     locale: &str,
-) -> Vec<String> {
-    let mut lines = Vec::new();
+) -> Vec<NotificationPart> {
+    let mut parts = Vec::new();
     // `Updater-Available` is a two-line value and the Mod appends the link block
     // after a newline, so the header spans three rendered lines.
     for line in table
         .format("Updater-Available", locale, &[current_text, &release.version])
         .split('\n')
     {
-        lines.push(line.to_string());
+        parts.push(NotificationPart::Line(line.to_string()));
     }
-    lines.push(format!(
-        "{}{}",
-        table.format("Updater-Link-Prefix", locale, &[]),
-        table.format("Updater-Link", locale, &[])
+    parts.push(NotificationPart::Link {
+        prefix: table.format("Updater-Link-Prefix", locale, &[]),
+        label: table.format("Updater-Link", locale, &[]),
+        hover: table.format("Updater-Link-Hover", locale, &[]),
+        url: release.url.clone(),
+    });
+    parts.push(NotificationPart::Line(
+        table.format("Updater-Changelog", locale, &[]),
     ));
-    lines.push(table.format("Updater-Changelog", locale, &[]));
     if release.notes.is_empty() {
-        lines.push(table.format("Updater-Changelog-Empty", locale, &[]));
+        parts.push(NotificationPart::Line(
+            table.format("Updater-Changelog-Empty", locale, &[]),
+        ));
     } else {
         for note in &release.notes {
-            lines.push(render_note(note));
+            parts.push(NotificationPart::Line(render_note(note)));
         }
     }
-    lines.push(table.format("Status-Footer", locale, &[]));
-    lines
+    parts.push(NotificationPart::Line(
+        table.format("Status-Footer", locale, &[]),
+    ));
+    parts
+}
+
+/// [`notification_parts`] as components: the link line carries the click action
+/// on `release.url` and the `Updater-Link-Hover` tooltip, which a plain string
+/// cannot express.
+pub fn notification_components(
+    table: &Lang,
+    release: &ReleaseInfo,
+    current_text: &str,
+    locale: &str,
+) -> Vec<TextComponent> {
+    notification_parts(table, release, current_text, locale)
+        .into_iter()
+        .map(|part| match part {
+            NotificationPart::Line(line) => TextComponent::from_legacy_string_with_code(&line, '&'),
+            NotificationPart::Link {
+                prefix,
+                label,
+                hover,
+                url,
+            } => {
+                let line = TextComponent::from_legacy_string_with_code(&prefix, '&');
+                let label = TextComponent::from_legacy_string_with_code(&label, '&');
+                let label = if url.is_empty() {
+                    label
+                } else {
+                    label.click_open_url(&url)
+                };
+                let label = if hover.is_empty() {
+                    label
+                } else {
+                    label.hover_show_text(TextComponent::from_legacy_string_with_code(&hover, '&'))
+                };
+                line.add_child(label)
+            }
+        })
+        .collect()
 }
 
 /// One GitHub release payload (`tag_name` / `html_url` / `body`, `:107-112`).
@@ -907,13 +969,25 @@ mod tests {
     /// notes (or the empty-notes line) and the status footer.
     #[test]
     fn notification_lines_follow_the_mod_order() {
+        /// The rendered text of each part, with the link line flattened to its
+        /// prefix + label (what the old string rendering produced).
+        fn rendered(parts: &[NotificationPart]) -> Vec<String> {
+            parts
+                .iter()
+                .map(|part| match part {
+                    NotificationPart::Line(line) => line.clone(),
+                    NotificationPart::Link { prefix, label, .. } => format!("{prefix}{label}"),
+                })
+                .collect()
+        }
+
         let table = Lang::init("", "en_US");
         let release = ReleaseInfo {
             version: "2.6.0".to_string(),
             url: RELEASES_URL.to_string(),
             notes: vec!["## Notes".to_string(), "- a fix".to_string()],
         };
-        let lines = notification_lines(&table, &release, "2.5.4", "");
+        let lines = rendered(&notification_parts(&table, &release, "2.5.4", ""));
 
         assert!(lines[0].contains("Update found"), "header line 1: {}", lines[0]);
         assert!(
@@ -937,9 +1011,39 @@ mod tests {
             notes: Vec::new(),
             ..release
         };
-        let lines = notification_lines(&table, &empty, "2.5.4", "");
+        let lines = rendered(&notification_parts(&table, &empty, "2.5.4", ""));
         assert_eq!(lines[4], table.format("Updater-Changelog-Empty", "", &[]));
         assert_eq!(lines.len(), 6);
+    }
+
+    /// The link line keeps its URL and hover text as structured data; that is
+    /// what `notification_components` turns into the click action and tooltip of
+    /// the Mod's `header` (`:162-185`).
+    #[test]
+    fn notification_link_part_carries_url_and_hover() {
+        let table = Lang::init("", "en_US");
+        let release = ReleaseInfo {
+            version: "2.6.0".to_string(),
+            url: "https://example.invalid/releases/tag/v2.6.0".to_string(),
+            notes: Vec::new(),
+        };
+        let parts = notification_parts(&table, &release, "2.5.4", "");
+        let (prefix, label, hover, url) = parts
+            .iter()
+            .find_map(|part| match part {
+                NotificationPart::Link {
+                    prefix,
+                    label,
+                    hover,
+                    url,
+                } => Some((prefix, label, hover, url)),
+                NotificationPart::Line(_) => None,
+            })
+            .expect("the notification carries a link part");
+        assert_eq!(url, &release.url);
+        assert_eq!(hover, &table.format("Updater-Link-Hover", "", &[]));
+        assert!(prefix.contains("Download"), "prefix: {prefix}");
+        assert!(label.contains("GitHub Releases"), "label: {label}");
     }
 
     /// The tracked version comes from `gradle.properties`, not from the crate.

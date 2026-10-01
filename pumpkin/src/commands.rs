@@ -773,6 +773,30 @@ fn send(sender: &CommandSender, text: &str) {
     let _ = sender.send_system_message(TextComponent::from_legacy_string_with_code(text, '&'));
 }
 
+/// Sends an already-rendered component (the status blocks carry click/hover
+/// actions, which a plain string cannot express).
+fn send_component(sender: &CommandSender, component: TextComponent) {
+    let _ = sender.send_system_message(component);
+}
+
+/// Resolves a locale-aware message by key as a legacy-coloured component.
+fn message_component(key: &str, sender: &CommandSender, args: &[&str]) -> TextComponent {
+    TextComponent::from_legacy_string_with_code(&message(key, sender, args), '&')
+}
+
+/// `statusLink` (`TrChatCommands.java:392-407`): the label opens `url` on click
+/// and shows the matching `-Hover` key as its tooltip.
+fn link_component(
+    sender: &CommandSender,
+    label_key: &str,
+    url: &str,
+    hover_key: &str,
+) -> TextComponent {
+    let component = message_component(label_key, sender, &[]);
+    let component = component.click_open_url(url);
+    component.hover_show_text(message_component(hover_key, sender, &[]))
+}
+
 /// Resolves a locale-aware message by key with positional args.
 ///
 /// `CommandSender::get_locale()` returns the WIT `locale` enum (a large
@@ -855,7 +879,7 @@ impl CommandHandler for StatusCommand {
         server: Server,
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        send(&sender, &status_overview(&sender, &server));
+        send_component(&sender, status_overview(&sender, &server));
         Ok(0)
     }
 }
@@ -903,11 +927,15 @@ fn state_text(sender: &CommandSender, enabled: bool) -> String {
 /// The `/trchat status` block: the overview line plus the creator, original
 /// author and repository credits closed by the footer.
 ///
-/// Deviations, both forced by the runtime: Redis has no implementation in this
-/// port, so its state is reported as *disabled* rather than connected; and the
-/// link/credit lines are appended as plain text instead of click actions
-/// because the WIT feedback channel carries a single component per line.
-fn status_overview(sender: &CommandSender, server: &Server) -> String {
+/// Deviation forced by the runtime: Redis has no implementation in this port,
+/// so its state is reported as *disabled* rather than connected.
+///
+/// The credit block is a single component tree (a `"\n"` text child between the
+/// segments), which is what lets the two links keep their click action and
+/// hover tooltip (`statusLink`, `TrChatCommands.java:392-407`). The earlier port
+/// appended them as plain text because the feedback channel carries one
+/// component per message; `add-child` removes that limitation.
+fn status_overview(sender: &CommandSender, server: &Server) -> TextComponent {
     // The Mod's own version, not the crate's: Cargo cannot hold a four-segment
     // version, so `CARGO_PKG_VERSION` (`2.5.4+1`) would disagree with `/plugins`.
     let version = crate::updater::CURRENT_VERSION;
@@ -935,7 +963,7 @@ fn status_overview(sender: &CommandSender, server: &Server) -> String {
         players.is_global_muted()
     };
 
-    let overview = message(
+    let overview = message_component(
         "Status-Overview",
         sender,
         &[
@@ -951,16 +979,45 @@ fn status_overview(sender: &CommandSender, server: &Server) -> String {
             &server.get_max_players().to_string(),
         ],
     );
-    let credits = format!(
-        "{}\n{}\n{}{}\n{}",
-        message("Status-Creator-Prefix", sender, &[])
-            + &message("Status-Creator-Link", sender, &[]),
-        message("Status-Original-Author", sender, &[]),
-        message("Status-Repository-Prefix", sender, &[]),
-        message("Status-Repository-Link", sender, &[]),
-        message("Status-Footer", sender, &[]),
+    let overview = push_segment(overview, message_component("Status-Creator-Prefix", sender, &[]));
+    let overview = push_segment(
+        overview,
+        link_component(
+            sender,
+            "Status-Creator-Link",
+            BILIBILI_PROFILE_URL,
+            "Status-Creator-Link-Hover",
+        ),
     );
-    format!("{overview}\n{credits}")
+    let overview = push_segment(
+        overview,
+        message_component("Status-Original-Author", sender, &[]),
+    );
+    let overview = push_segment(
+        overview,
+        message_component("Status-Repository-Prefix", sender, &[]),
+    );
+    let overview = push_segment(
+        overview,
+        link_component(
+            sender,
+            "Status-Repository-Link",
+            REPOSITORY_URL,
+            "Status-Repository-Link-Hover",
+        ),
+    );
+    push_segment(overview, message_component("Status-Footer", sender, &[]))
+}
+
+/// The two link targets of the status block (`TrChatCommands.java:46-47`).
+const REPOSITORY_URL: &str = "https://github.com/Aruvelut-123/TrChat-Mod";
+const BILIBILI_PROFILE_URL: &str = "https://space.bilibili.com/475655508";
+
+/// Appends `"\n"` and `segment` to a status block, sharing the line with any
+/// segment appended right after it.
+fn push_segment(root: TextComponent, segment: TextComponent) -> TextComponent {
+    let root = root.add_child(TextComponent::from_legacy_string_with_code("\n", '&'));
+    root.add_child(segment)
 }
 
 /// The `/trchat status <player>` block (spec §1.2).
@@ -1276,7 +1333,7 @@ impl CommandHandler for ControllerCommand {
                 send(&sender, &message("Command-About", &sender, &[version]));
             }
             ControllerDispatch::Status => {
-                send(&sender, &status_overview(&sender, &server));
+                send_component(&sender, status_overview(&sender, &server));
             }
             ControllerDispatch::Help => {
                 send(&sender, &message("Command-Help", &sender, &[]));
