@@ -674,9 +674,19 @@ impl TrChatConfig {
             .find(|c| c.bindings.command.iter().any(|a| a.eq_ignore_ascii_case(command)))
     }
 
-    /// Routes a chat message: longest matching prefix wins, unprefixed
-    /// messages fall through to the default (auto-join) channel.
+    /// Routes a chat message without a player context: longest matching prefix
+    /// wins, unprefixed messages fall through to the default (auto-join)
+    /// channel. Equivalent to [`Self::route_with_active`] with no active
+    /// channel.
     pub fn route(&self, message: &str) -> Route<'_> {
+        self.route_with_active(message, None)
+    }
+
+    /// Routes a chat message: longest matching prefix wins; an unprefixed
+    /// message goes to the player's active channel when it is registered
+    /// (`chat.md` §1.2 step 4: `channels.byId(activeChannels.getOrDefault(…))`),
+    /// and only then falls through to the default (auto-join) channel.
+    pub fn route_with_active(&self, message: &str, active: Option<&str>) -> Route<'_> {
         let trimmed = message.trim_start();
         // Tracks the matched prefix length so the longest prefix wins even
         // when a shorter prefix matched first.
@@ -695,6 +705,13 @@ impl TrChatConfig {
         }
         if let Some((channel, _, rest)) = best {
             return Route::Channel(channel, rest.trim_start().to_string());
+        }
+        // §1.2 step 4 — a joiner's active channel beats the default once it is
+        // registered; a stale id (channel deleted from config) falls through.
+        if let Some(id) = active {
+            if let Some(channel) = self.channel_by_id(id) {
+                return Route::Channel(channel, trimmed.to_string());
+            }
         }
         if let Some(channel) = self.default_channel() {
             return Route::Channel(channel, trimmed.to_string());
@@ -2899,6 +2916,65 @@ font: "minecraft:default"
                 assert_eq!(rest, "plain hello");
             }
             _ => panic!("expected the default channel"),
+        }
+    }
+
+    #[test]
+    fn unmatched_message_prefers_the_active_channel() {
+        // §1.2 step 4 — `/trchat channel join Global` must make a plain
+        // message land in Global, not the auto-join default.
+        let config = sample_config(|c| {
+            c.channels = vec![
+                test_channel("Normal", vec![], Default::default()),
+                test_channel("Global", vec!["!all"], Default::default()),
+            ];
+            c.channels[0].options.auto_join = true;
+        });
+        match config.route_with_active("plain hello", Some("Global")) {
+            Route::Channel(ch, rest) => {
+                assert_eq!(ch.id, "Global");
+                assert_eq!(rest, "plain hello");
+            }
+            _ => panic!("expected the active channel"),
+        }
+    }
+
+    #[test]
+    fn active_channel_prefix_still_wins() {
+        // A prefix always beats the active channel, matching upstream's
+        // byPrefix-before-activeChannels order.
+        let config = sample_config(|c| {
+            c.channels = vec![
+                test_channel("Normal", vec![], Default::default()),
+                test_channel("Global", vec!["!all"], Default::default()),
+            ];
+            c.channels[0].options.auto_join = true;
+        });
+        match config.route_with_active("!all hey", Some("Normal")) {
+            Route::Channel(ch, rest) => {
+                assert_eq!(ch.id, "Global");
+                assert_eq!(rest, "hey");
+            }
+            _ => panic!("expected the prefixed channel"),
+        }
+    }
+
+    #[test]
+    fn stale_active_channel_falls_back_to_default() {
+        // A channel id that is no longer registered (deleted from config)
+        // must not win; the default channel takes the message.
+        let config = sample_config(|c| {
+            c.channels = vec![
+                test_channel("Normal", vec![], Default::default()),
+            ];
+            c.channels[0].options.auto_join = true;
+        });
+        match config.route_with_active("hello", Some("Deleted")) {
+            Route::Channel(ch, rest) => {
+                assert_eq!(ch.id, "Normal");
+                assert_eq!(rest, "hello");
+            }
+            _ => panic!("expected the default fallback"),
         }
     }
 

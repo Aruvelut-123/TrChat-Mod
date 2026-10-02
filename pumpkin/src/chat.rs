@@ -271,10 +271,22 @@ fn chat_pipeline(
     //    A forced channel (`/staff hello` through a bound alias, §1.5 of
     //    commands spec) skips routing entirely — the alias already names the
     //    channel, so the whole body belongs to it with no prefix to strip.
+    //    §1.2 step 4: when no prefix matches, the message goes to the sender's
+    //    active channel (`activeChannels.getOrDefault(uuid, …)`) instead of
+    //    straight to the default one — that is what makes `/trchat channel
+    //    join` visibly switch where messages land.
     let (channel, body) = if let Some(forced) = forced {
         (Some(forced), message.to_string())
     } else {
-        match config.route(message) {
+        let active = {
+            let session = SessionPlayers::global()
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
+            session
+                .state(&name)
+                .map(|s| s.active_channel.clone())
+        };
+        match config.route_with_active(message, active.as_deref()) {
             Route::Channel(channel, body) => (Some(channel), body),
             Route::Plain(body) => (None, body),
         }

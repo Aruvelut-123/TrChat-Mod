@@ -688,10 +688,14 @@ pub fn publish_broadcast(
         .map(u16::to_string)
         .collect::<Vec<_>>()
         .join(";");
+    // `ChatService.java:607` serialises the rendered view with the Adventure
+    // GSON shape, so the wire payload must match it for the other servers to
+    // keep the hover/click events (see the wire helpers above).
+    let component_json = to_adventure_wire_json(component_json);
     publish(&Message::of(&[
         "BroadcastRaw",
         sender_uuid,
-        component_json,
+        component_json.as_str(),
         permission,
         if double_transfer { "true" } else { "false" },
         &ports,
@@ -710,12 +714,14 @@ pub fn publish_private(
     fallback: &str,
     message_component: &str,
 ) -> bool {
+    let receiver_component = to_adventure_wire_json(receiver_component);
+    let message_component = to_adventure_wire_json(message_component);
     publish(&forward_private(
         target,
         sender,
-        receiver_component,
+        &receiver_component,
         fallback,
-        message_component,
+        &message_component,
     ))
 }
 
@@ -867,14 +873,249 @@ fn handle(server: &Server, message: &Message) {
     }
 }
 
+/// The wire shape of the component JSON carried by `BroadcastRaw` /
+/// `SendPrivateRaw` is what the Bukkit side serialises with Adventure's
+/// `GsonComponentSerializer`: `hoverEvent` / `clickEvent` camelCase keys, hover
+/// payload under `contents`, click payload always under `value`.
+///
+/// The host's `TextComponent::to_json` / `from_json` speak the pumpkin serde
+/// shape instead: `hover_event` / `click_event` snake_case keys, hover payload
+/// under `value` (with `show_item` / `show_entity` fields flattened), click
+/// payload under the variant's own key (`url` / `command` / `path` / `page`).
+///
+/// The two shapes do not recognise each other: feeding Adventure JSON straight
+/// into `from_json`, or publishing `to_json` output to the wire, silently drops
+/// hover/click as unknown fields — which is why cross-server messages lost
+/// their hover (e.g. the `%server_time%` hover line). These helpers remap the
+/// keys at the JSON level so the wire always carries the Adventure shape.
+fn to_adventure_wire_json(component_json: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(component_json) else {
+        return component_json.to_string();
+    };
+    convert_wire_json(&mut value, true);
+    value.to_string()
+}
+
+fn from_adventure_wire_json(component_json: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(component_json) else {
+        return component_json.to_string();
+    };
+    convert_wire_json(&mut value, false);
+    value.to_string()
+}
+
+/// Recursively maps one component JSON object between the pumpkin serde shape
+/// (`to_adventure = true`) and the Adventure wire shape (`false`).
+fn convert_wire_json(value: &mut serde_json::Value, to_adventure: bool) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+
+    let (hover_from, hover_to) = if to_adventure {
+        ("hover_event", "hoverEvent")
+    } else {
+        ("hoverEvent", "hover_event")
+    };
+    if let Some(hover) = object.remove(hover_from) {
+        let mut hover = hover;
+        convert_hover_wire_json(&mut hover, to_adventure);
+        object.insert(hover_to.to_string(), hover);
+    }
+
+    let (click_from, click_to) = if to_adventure {
+        ("click_event", "clickEvent")
+    } else {
+        ("clickEvent", "click_event")
+    };
+    if let Some(click) = object.remove(click_from) {
+        let mut click = click;
+        convert_click_wire_json(&mut click, to_adventure);
+        object.insert(click_to.to_string(), click);
+    }
+
+    // `extra` (text children) and `with` (translate arguments) recurse.
+    for key in ["extra", "with"] {
+        if let Some(array) = object.get_mut(key).and_then(|v| v.as_array_mut()) {
+            for child in array {
+                convert_wire_json(child, to_adventure);
+            }
+        }
+    }
+}
+
+fn convert_hover_wire_json(hover: &mut serde_json::Value, to_adventure: bool) {
+    let Some(object) = hover.as_object_mut() else {
+        return;
+    };
+    let action = object
+        .get("action")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    match action.as_str() {
+        "show_text" => {
+            if to_adventure {
+                if let Some(value) = object.remove("value") {
+                    let mut value = value;
+                    if let Some(array) = value.as_array_mut() {
+                        for child in array {
+                            convert_wire_json(child, true);
+                        }
+                    } else {
+                        convert_wire_json(&mut value, true);
+                    }
+                    object.insert("contents".to_string(), value);
+                }
+            } else if let Some(contents) = object.remove("contents") {
+                let mut contents = contents;
+                if let Some(array) = contents.as_array_mut() {
+                    for child in array {
+                        convert_wire_json(child, false);
+                    }
+                } else {
+                    // Adventure may send a single component where pumpkin serde
+                    // expects a list.
+                    convert_wire_json(&mut contents, false);
+                    contents = serde_json::json!([contents]);
+                }
+                object.insert("value".to_string(), contents);
+            }
+        }
+        "show_item" | "show_entity" => {
+            if to_adventure {
+                let mut contents = serde_json::Map::new();
+                if let Some(id) = object.remove("id") {
+                    contents.insert("id".to_string(), id);
+                }
+                if let Some(count) = object.remove("count") {
+                    contents.insert("count".to_string(), count);
+                }
+                if action == "show_entity" {
+                    // pumpkin serde keeps the entity type under `id` and the
+                    // uuid under `uuid`; Adventure wants type/id under
+                    // `contents.type`/`contents.id`.
+                    if let Some(id) = contents.remove("id") {
+                        contents.insert("type".to_string(), id);
+                    }
+                    if let Some(uuid) = object.remove("uuid") {
+                        contents.insert("id".to_string(), uuid);
+                    }
+                    if let Some(name) = object.remove("name") {
+                        // Adventure serialises `name` as a single component,
+                        // pumpkin serde as a list.
+                        let name = match name.as_array() {
+                            Some(array) if array.len() == 1 => array[0].clone(),
+                            Some(array) => serde_json::json!({ "extra": array }),
+                            _ => name,
+                        };
+                        contents.insert("name".to_string(), name);
+                    }
+                }
+                object.insert("contents".to_string(), serde_json::Value::Object(contents));
+            } else if let Some(contents) = object.remove("contents") {
+                if let serde_json::Value::Object(contents) = contents {
+                    for (key, mut child) in contents {
+                        if action == "show_entity" {
+                            match key.as_str() {
+                                "type" => {
+                                    object.insert("id".to_string(), child);
+                                    continue;
+                                }
+                                "id" => {
+                                    object.insert("uuid".to_string(), child);
+                                    continue;
+                                }
+                                "name" => {
+                                    if let Some(array) = child.as_array_mut() {
+                                        for component in array {
+                                            convert_wire_json(component, false);
+                                        }
+                                    } else {
+                                        // Adventure may send a single component
+                                        // where pumpkin serde expects a list.
+                                        convert_wire_json(&mut child, false);
+                                        child = serde_json::json!([child]);
+                                    }
+                                    object.insert("name".to_string(), child);
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
+                        if let Some(array) = child.as_array_mut() {
+                            for component in array {
+                                convert_wire_json(component, false);
+                            }
+                        }
+                        object.insert(key, child);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn convert_click_wire_json(click: &mut serde_json::Value, to_adventure: bool) {
+    let Some(object) = click.as_object_mut() else {
+        return;
+    };
+    let action = object
+        .get("action")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if to_adventure {
+        // pumpkin serde keeps the payload under the variant's own key;
+        // Adventure always uses `value`.
+        let payload_key = match action.as_str() {
+            "open_url" => Some("url"),
+            "run_command" | "suggest_command" => Some("command"),
+            "open_file" => Some("path"),
+            "change_page" => Some("page"),
+            "copy_to_clipboard" => Some("value"),
+            _ => None,
+        };
+        if let Some(key) = payload_key {
+            if let Some(payload) = object.remove(key) {
+                object.insert("value".to_string(), payload);
+            }
+        }
+    } else if let Some(payload) = object.remove("value") {
+        let key = match action.as_str() {
+            "open_url" => "url",
+            "run_command" | "suggest_command" => "command",
+            "open_file" => "path",
+            "change_page" => "page",
+            _ => "value",
+        };
+        if action == "change_page" {
+            // pumpkin serde expects a u32, Adventure may send a string.
+            let page = payload
+                .as_str()
+                .and_then(|text| text.parse::<u32>().ok())
+                .or_else(|| payload.as_u64().map(|page| page as u32));
+            object.insert(
+                "page".to_string(),
+                page.map(|page| serde_json::json!(page)).unwrap_or(payload),
+            );
+        } else {
+            object.insert(key.to_string(), payload);
+        }
+    }
+}
+
 /// `ComponentJson.deserialize` — the parsed component, or the legacy fallback
 /// when the JSON is blank or unusable.
 ///
 /// A `TextComponent` is a WIT resource handle, so each receiver needs its own
-/// parse; the port builds it per delivery, exactly as the renderer does.
+/// parse; the port builds it per delivery, exactly as the renderer does. The
+/// wire carries Adventure JSON (see the helpers above), so it is mapped back to
+/// the pumpkin serde shape before the host parses it.
 fn deserialize_component(json: &str, fallback: &str) -> TextComponent {
     if !json.trim().is_empty() {
-        if let Ok(component) = TextComponent::from_json(json) {
+        let pumpkin_json = from_adventure_wire_json(json);
+        if let Ok(component) = TextComponent::from_json(&pumpkin_json) {
             return component;
         }
     }
@@ -1077,6 +1318,103 @@ fn ignored(player: &str, sender_uuid: Option<&str>, sender_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Asserts the `to_adventure_wire_json` → `from_adventure_wire_json` round
+    /// trip preserves the pumpkin serde value exactly.
+    fn assert_wire_round_trip(pumpkin_json: &str) {
+        let adventure = to_adventure_wire_json(pumpkin_json);
+        let back = from_adventure_wire_json(&adventure);
+        let pumpkin: serde_json::Value = serde_json::from_str(pumpkin_json).unwrap();
+        let round: serde_json::Value = serde_json::from_str(&back).unwrap();
+        assert_eq!(round, pumpkin, "round trip changed the value");
+    }
+
+    #[test]
+    fn wire_json_maps_show_text_hover_and_click() {
+        let pumpkin = r##"{"text":"hi","hover_event":{"action":"show_text","value":[{"text":"t","color":"#ff0000"}]},"click_event":{"action":"run_command","command":"/tp @s"}}"##;
+        let adventure = to_adventure_wire_json(pumpkin);
+        let expected: serde_json::Value = serde_json::from_str(
+            r##"{"text":"hi","hoverEvent":{"action":"show_text","contents":[{"text":"t","color":"#ff0000"}]},"clickEvent":{"action":"run_command","value":"/tp @s"}}"##,
+        )
+        .unwrap();
+        let actual: serde_json::Value = serde_json::from_str(&adventure).unwrap();
+        assert_eq!(actual, expected);
+        assert_wire_round_trip(pumpkin);
+    }
+
+    #[test]
+    fn wire_json_maps_click_variants() {
+        let pumpkin = r#"{"text":"a","click_event":{"action":"open_url","url":"https://example.com"}}"#;
+        let adventure: serde_json::Value =
+            serde_json::from_str(&to_adventure_wire_json(pumpkin)).unwrap();
+        assert_eq!(adventure["clickEvent"]["value"], "https://example.com");
+        assert_wire_round_trip(pumpkin);
+
+        let pumpkin =
+            r#"{"text":"b","click_event":{"action":"change_page","page":3}}"#;
+        let adventure: serde_json::Value =
+            serde_json::from_str(&to_adventure_wire_json(pumpkin)).unwrap();
+        assert_eq!(adventure["clickEvent"]["value"], 3);
+        assert_wire_round_trip(pumpkin);
+
+        let pumpkin = r#"{"text":"c","click_event":{"action":"copy_to_clipboard","value":"x"}}"#;
+        assert_wire_round_trip(pumpkin);
+    }
+
+    #[test]
+    fn wire_json_maps_show_item() {
+        let pumpkin =
+            r#"{"text":"i","hover_event":{"action":"show_item","id":"minecraft:diamond","count":2}}"#;
+        let adventure: serde_json::Value =
+            serde_json::from_str(&to_adventure_wire_json(pumpkin)).unwrap();
+        assert_eq!(adventure["hoverEvent"]["contents"]["id"], "minecraft:diamond");
+        assert_eq!(adventure["hoverEvent"]["contents"]["count"], 2);
+        assert!(adventure["hoverEvent"].get("id").is_none());
+        assert_wire_round_trip(pumpkin);
+    }
+
+    #[test]
+    fn wire_json_maps_show_entity() {
+        let pumpkin = r#"{"text":"e","hover_event":{"action":"show_entity","id":"minecraft:pig","uuid":"00000000-0000-0000-0000-000000000001","name":[{"text":"Pig"}]}}"#;
+        let adventure: serde_json::Value =
+            serde_json::from_str(&to_adventure_wire_json(pumpkin)).unwrap();
+        let contents = &adventure["hoverEvent"]["contents"];
+        assert_eq!(contents["type"], "minecraft:pig");
+        assert_eq!(contents["id"], "00000000-0000-0000-0000-000000000001");
+        assert_eq!(contents["name"], serde_json::json!({"text":"Pig"}));
+        assert_wire_round_trip(pumpkin);
+    }
+
+    #[test]
+    fn wire_json_recurse_into_extra() {
+        let pumpkin = r#"{"text":"a","extra":[{"text":"b","hover_event":{"action":"show_text","value":[{"text":"t"}]}}]}"#;
+        let adventure: serde_json::Value =
+            serde_json::from_str(&to_adventure_wire_json(pumpkin)).unwrap();
+        assert!(adventure["extra"][0].get("hoverEvent").is_some());
+        assert!(adventure["extra"][0].get("hover_event").is_none());
+        assert_wire_round_trip(pumpkin);
+    }
+
+    #[test]
+    fn wire_json_show_text_single_component() {
+        // Adventure may put a single component under `contents`; the round trip
+        // must still yield the list shape pumpkin serde expects.
+        let adventure = r##"{"text":"hi","hoverEvent":{"action":"show_text","contents":{"text":"t","color":"#ff0000"}}}"##;
+        let back = from_adventure_wire_json(adventure);
+        let pumpkin: serde_json::Value = serde_json::from_str(&back).unwrap();
+        assert_eq!(pumpkin["hover_event"]["value"], serde_json::json!([{"text":"t","color":"#ff0000"}]));
+        // and re-serialising keeps the list shape Adventure expects.
+        let again = to_adventure_wire_json(&back);
+        let adventure_val: serde_json::Value = serde_json::from_str(&again).unwrap();
+        assert_eq!(adventure_val["hoverEvent"]["contents"], serde_json::json!([{"text":"t","color":"#ff0000"}]));
+    }
+
+    #[test]
+    fn wire_json_passes_through_unparseable_input() {
+        assert_eq!(to_adventure_wire_json("not json"), "not json");
+        assert_eq!(from_adventure_wire_json("not json"), "not json");
+        assert_eq!(from_adventure_wire_json("\"plain\""), "\"plain\"");
+    }
 
     #[test]
     fn envelope_matches_the_mod_encoding() {
