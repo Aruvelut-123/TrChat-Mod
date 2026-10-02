@@ -82,6 +82,14 @@
 - 关闭：`saveExecutor.shutdown()` + `awaitTermination(10, SECONDS)`，超时记 WARNING（`:348-359`）。
 - 读路径同步（在事件线程 / 计算线程上阻塞 JDBC）。
 
+### 1.6 WASM 移植执行层（Rust）
+
+- **配置解析**：`crate::datasource::Datasource::resolve` 复刻 §1.1 全部行为 —— `Type` 分支（`sqlite`/`local`、`mysql`、`mariadb`、`postgresql`/`postgres`）、JDBC URL 组合（`scheme://host:port/database?parameters`，空值回退 `127.0.0.1` / 默认端口 / `trchat`）、网络分支表名前缀 `safeIdentifier(prefix + 表名)`（默认 `trchat_`；非法字符 panic，对应 Mod `IllegalArgumentException`）。
+- **SQL 文本**：`datasource::Datasource::{ddl,load_*,save_*}` 生成 §1.2-§1.4 的 **逐字** SQL（`CREATE TABLE`、`SELECT`、`UPDATE`、`INSERT`、`DELETE`；save 先 UPDATE、`executeUpdate()==0` 才 INSERT 的双语句序列由调用方按 §1.4 顺序执行）。单测锁定逐字文本。
+- **执行层（偏差）**：WASM 沙箱无 JDBC 驱动、`turso_core` 嵌入式引擎探针失败（§7），故 `crate::playerdata::PlayerStore` 以 **每玩家一个 JSON 文件**（`<存储根>/playerdata/<uuid 去连字符>.json`，原子写 = 临时文件 + rename）承载与 §1.3 相同的字段集合。`datasource.yml` 的 `SQLite.File` 决定**存储根**：解析后绝对 DB 路径的父目录（`folder.resolve(configured).normalize()` 后取 parent；空值 / 网络后端回退插件数据文件夹），不承载真实 DB 文件。
+- **读写时机（偏差）**：Mod 在任意状态变更后即 `saveAsync`（§1.4）；本 port 仅在 `player-join`（`load` → 安装会话）、`player-leave`（`save`）与 `on_unload`（`flush_all`，对应 `store.close()` 的逐个同步 `save`）落盘。会话期间的变更只存在于内存态（与 Redis 中继共享），崩溃/强杀最多丢**当前会话**的增量 —— 与 Mod「退出必存 + 关闭全存」的可恢复面等价。
+- **默认频道**：`player-join` 以 `config.default_channel()` 为兜底（§1.4 的 `join`），持久化 `activeChannel` 优先于配置默认，与 Mod 恢复 `is_active=1` 行一致。
+
 ---
 
 ## 2. 聊天日志 `ChatLogService`（`data/ChatLogService.java`）

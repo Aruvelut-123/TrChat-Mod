@@ -20,6 +20,7 @@ mod command_controller;
 mod commands;
 mod condition;
 mod config;
+mod datasource;
 mod diag;
 mod filter;
 mod functions;
@@ -103,10 +104,20 @@ impl Plugin for TrChatPlugin {
         // Cross-server chat reads the same configuration; it stays inert until
         // `redis.enabled` is set.
         crate::redis::start(&context)?;
+        // Player-data persistence: restores chat state on join, stores it on
+        // leave (`datasource.yml` semantics; file-backed execution layer).
+        crate::playerdata::register(&context)?;
         crate::diag::info(format!(
             "TrChat {} loaded (Pumpkin WASM port)",
             crate::updater::CURRENT_VERSION
         ));
+        Ok(())
+    }
+
+    fn on_unload(&self, _context: Context) -> Result<(), String> {
+        // `ModerationService.close` — persist every online player before the
+        // plugin goes away.
+        crate::playerdata::flush_all();
         Ok(())
     }
 }

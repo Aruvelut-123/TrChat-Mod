@@ -2,20 +2,35 @@
 //!
 //! Stores per-player chat state: active channel membership, joined channels,
 //! mute / shadow-mute flags, ignore list and chosen chat colour. The upstream
-//! implementation persists this to a database on logout and shutdown; this
-//! Pumpkin port keeps the *session* copy in memory (see [`SessionPlayers`]) and
-//! persists a JSON snapshot to the plugin data folder on unload.
+//! implementation persists this to a database (`datasource.yml`) on logout and
+//! shutdown; this Pumpkin port keeps the *session* copy in memory (see
+//! [`SessionPlayers`]) and holds the same field set in a file-backed store
+//! ([`PlayerStore`], one JSON file per player UUID under `trchat/playerdata/`).
+//! The file layout is a porting deviation — the WASM sandbox has no database
+//! driver (see `docs/spec/data-redis-update.md` §7) — while the semantics
+//! (`datasource.yml` resolution, table names and exact SQL) live in
+//! [`crate::datasource`].
 //!
 //! The muted/ignored snapshot is also what the Redis relay exchanges between
 //! servers (35 s TTL), keeping cross-server ignore checks working without
 //! sharing the full state table.
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
+use pumpkin_plugin_api::events::player::{PlayerJoinEvent, PlayerLeaveEvent};
+use pumpkin_plugin_api::events::{EventData, EventHandler, EventPriority};
+use pumpkin_plugin_api::{Context, Server};
+
 /// One player's chat state (mirrors `PlayerDataStore.PlayerState`).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct PlayerState {
+    /// Player UUID (hyphenated, `PlayerDataStore.java:150`-style key); the
+    /// file-backed store keys by it. Empty until the join handler stamps it.
+    pub player_uuid: String,
     /// Active channel id (original case, e.g. `Normal`).
     pub active_channel: String,
     /// Joined channel ids, lowercased.
@@ -91,6 +106,32 @@ impl SessionPlayers {
     #[allow(dead_code)]
     pub fn leave(&mut self, name: &str) -> Option<PlayerState> {
         self.states.remove(&name.to_ascii_lowercase())
+    }
+
+    /// Places a player joining with the state [`PlayerStore::load`] returned,
+    /// mirroring `PlayerDataStore.load` + `save` on login (spec §1.4).
+    ///
+    /// A session entry that already exists (re-login flicker) is kept and only
+    /// the default channel is re-ensured; a fresh entry takes the persisted
+    /// state with the default channel joined and the stored active channel
+    /// preferred over the configuration default (the Mod restores the saved
+    /// `is_active` row the same way).
+    pub fn join_with(&mut self, name: &str, default_channel: &str, stored: PlayerState) {
+        let key = name.to_ascii_lowercase();
+        if let Some(entry) = self.states.get_mut(&key) {
+            entry
+                .joined_channels
+                .insert(default_channel.to_ascii_lowercase());
+            return;
+        }
+        let mut state = stored;
+        if state.active_channel.is_empty() {
+            state.active_channel = default_channel.to_string();
+        }
+        state
+            .joined_channels
+            .insert(default_channel.to_ascii_lowercase());
+        self.states.insert(key, state);
     }
 
     /// Borrows a player's state, creating a default if unseen.
@@ -394,5 +435,368 @@ mod tests {
 
         // Shadow mute is independent of the plain mute flag.
         assert!(!s.is_muted("Alice"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Persistence: `PlayerDataStore` ports.
+//
+// The upstream persists the four tables (`player_state`, `player_channels`,
+// `player_ignored`, `player_preferences`) through JDBC. The WASM sandbox has no
+// driver and the embedded-engine probe failed (spec §7), so this port stores
+// the same field set as one JSON document per player UUID under
+// `trchat/playerdata/`. The SQL/table semantics stay exact in
+// [`crate::datasource`], so a future engine swap needs no format migration.
+// ---------------------------------------------------------------------------
+
+/// The player-data subfolder under the plugin data folder.
+const PLAYERDATA_DIR: &str = "playerdata";
+
+/// File-backed execution layer for `PlayerDataStore` (`PlayerStore`).
+///
+/// `datasource.yml` is resolved by [`crate::datasource::Datasource::resolve`];
+/// the file location is the resolved SQLite path when one is configured and the
+/// default `data.db` under the data folder otherwise — both only *name* the
+/// store, since the sandbox cannot open a real database (spec §7).
+#[derive(Debug, Clone)]
+pub struct PlayerStore {
+    root: PathBuf,
+}
+
+impl PlayerStore {
+    /// Builds the store rooted at `<data_root>/playerdata`, creating it. The
+    /// caller passes the *data root* (the resolved `datasource.yml` file name's
+    /// parent directory, or the plugin data folder).
+    pub fn open(data_root: &str) -> Result<PlayerStore, String> {
+        let root = Path::new(data_root).join(PLAYERDATA_DIR);
+        fs::create_dir_all(&root).map_err(|error| format!("cannot create {root:?}: {error}"))?;
+        Ok(PlayerStore { root })
+    }
+
+    /// Path of `name`'s JSON snapshot.
+    fn file_for(&self, uuid: &str) -> PathBuf {
+        let key = uuid.replace('-', "");
+        self.root.join(format!("{key}.json"))
+    }
+
+    /// Loads a player's persisted state (`PlayerDataStore.load`, `:161-190` +
+    /// `:234` + `:277` + `:316`): missing files mean a blank record — the Mod's
+    /// `SELECT` returns no rows and the defaults stand.
+    pub fn load(&self, uuid: &str) -> Result<PlayerState, String> {
+        let path = self.file_for(uuid);
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(PlayerState {
+                    player_uuid: uuid.to_string(),
+                    ..PlayerState::default()
+                });
+            }
+            Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+        };
+        let mut state: PlayerState = serde_json::from_str(&text)
+            .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
+        state.player_uuid = uuid.to_string();
+        Ok(state)
+    }
+
+    /// Persists `state` atomically (temp file + rename; the Mod's
+    /// `save*` batch writes).
+    pub fn save(&self, state: &PlayerState) -> Result<(), String> {
+        if state.player_uuid.is_empty() {
+            return Err("cannot save a player state without a UUID".to_string());
+        }
+        let path = self.file_for(&state.player_uuid);
+        let text = serde_json::to_string_pretty(state)
+            .map_err(|error| format!("cannot serialise player state: {error}"))?;
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, text).map_err(|error| format!("cannot write {}: {error}", tmp.display()))?;
+        fs::rename(&tmp, &path)
+            .map_err(|error| format!("cannot commit {}: {error}", path.display()))
+    }
+}
+
+/// Join handler: restores the persisted chat state (`PlayerDataStore.load`).
+struct PersistJoinHandler;
+
+impl EventHandler<PlayerJoinEvent> for PersistJoinHandler {
+    fn handle(
+        &self,
+        _server: Server,
+        event: EventData<PlayerJoinEvent>,
+    ) -> EventData<PlayerJoinEvent> {
+        let store = match player_store() {
+            Ok(store) => store,
+            Err(error) => {
+                crate::diag::warn(format!("[TrChat] playerdata: {error}"));
+                return event;
+            }
+        };
+        let uuid = event.player.get_id().to_string();
+        let stored = store.load(&uuid).unwrap_or_else(|error| {
+            crate::diag::warn(format!(
+                "[TrChat] playerdata: falling back to defaults for {}: {error}",
+                event.player.get_name()
+            ));
+            PlayerState {
+                player_uuid: uuid.clone(),
+                ..PlayerState::default()
+            }
+        });
+        let default_channel = default_channel_id();
+        SessionPlayers::global()
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+            .join_with(&event.player.get_name(), &default_channel, stored);
+        event
+    }
+}
+
+/// Leave handler: persists the session state (`PlayerDataStore.save*`).
+struct PersistLeaveHandler;
+
+impl EventHandler<PlayerLeaveEvent> for PersistLeaveHandler {
+    fn handle(
+        &self,
+        _server: Server,
+        event: EventData<PlayerLeaveEvent>,
+    ) -> EventData<PlayerLeaveEvent> {
+        let name = event.player.get_name();
+        let uuid = event.player.get_id().to_string();
+        let state = SessionPlayers::global()
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+            .leave(&name)
+            .unwrap_or_else(|| PlayerState {
+                player_uuid: uuid.clone(),
+                ..PlayerState::default()
+            });
+        let mut state = state;
+        state.player_uuid = uuid.clone();
+        match player_store() {
+            Ok(store) => {
+                if let Err(error) = store.save(&state) {
+                    crate::diag::warn(format!(
+                        "[TrChat] playerdata: cannot persist {name}: {error}"
+                    ));
+                }
+            }
+            Err(error) => crate::diag::warn(format!("[TrChat] playerdata: {error}")),
+        }
+        event
+    }
+}
+
+/// Registers the join/leave persistence handlers (`on_load`).
+pub fn register(context: &Context) -> Result<(), String> {
+    context
+        .register_event_handler::<PlayerJoinEvent, PersistJoinHandler>(
+            PersistJoinHandler,
+            EventPriority::Normal,
+            true,
+        )
+        .map_err(|error| error.to_string())?;
+    context
+        .register_event_handler::<PlayerLeaveEvent, PersistLeaveHandler>(
+            PersistLeaveHandler,
+            EventPriority::Normal,
+            true,
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// The shared file store, rooted at the plugin data folder
+/// (`datasource.yml`'s resolved file *name* when available).
+fn player_store() -> Result<PlayerStore, String> {
+    let folder = crate::config::data_folder();
+    if folder.is_empty() {
+        return Err("plugin data folder is not initialised yet".to_string());
+    }
+    let config = crate::config::global_config();
+    let cfg = config.read().datasource.clone();
+    let datasource = crate::datasource::Datasource::resolve(&cfg, Path::new(&folder))
+        .map_err(|error| format!("datasource.yml: {error}"))?;
+    crate::diag::debug(format!(
+        "[TrChat] playerdata backend: {:?} ({})",
+        datasource.backend, folder
+    ));
+    // `datasource.yml`'s `SQLite.File` decides the *name* of the storage root
+    // (spec §1.6): the resolved absolute database path's parent directory,
+    // falling back to the plugin data folder for network backends (no local
+    // database file exists).
+    let root = datasource
+        .sqlite_file
+        .as_deref()
+        .and_then(Path::parent)
+        .unwrap_or(Path::new(&folder));
+    PlayerStore::open(&root.to_string_lossy())
+}
+
+/// The configured auto-join channel id, mirroring
+/// `commands.rs` `player-info`'s default (`config.default_channel()`).
+fn default_channel_id() -> String {
+    let config = crate::config::global_config();
+    let config = config.read();
+    config
+        .default_channel()
+        .map(|channel| channel.id.clone())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+/// Persists every online player's session state (`ModerationService.close`,
+/// `ModerationService.java:207-212` — `store.close()` then a per-state
+/// synchronous `save`; called from `on_unload`).
+pub fn flush_all() {
+    let session = SessionPlayers::global()
+        .read()
+        .unwrap_or_else(|error| error.into_inner());
+    let Ok(store) = player_store() else {
+        return;
+    };
+    for state in session.states.values() {
+        if state.player_uuid.is_empty() {
+            continue;
+        }
+        if let Err(error) = store.save(state) {
+            crate::diag::warn(format!(
+                "[TrChat] playerdata: cannot flush {}: {error}",
+                state.player_uuid
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    /// A per-test scratch dir: tests run in parallel, so the label keeps the
+    /// stores from deleting each other's files.
+    fn temp_dir(label: &str) -> PathBuf {
+        let n = std::process::id();
+        std::env::temp_dir().join(format!("trchat-playerdata-test-{n}-{label}"))
+    }
+
+    /// Round-trips every field through `save` → `load`.
+    #[test]
+    fn store_round_trips_full_state() {
+        let dir = temp_dir("roundtrip");
+        let _ = fs::remove_dir_all(&dir);
+        let store = PlayerStore::open(&dir.to_string_lossy()).unwrap();
+
+        let mut state = PlayerState {
+            player_uuid: "00112233-4455-6677-8899-aabbccddeeff".to_string(),
+            active_channel: "Normal".to_string(),
+            joined_channels: HashSet::from(["normal".to_string(), "global".to_string()]),
+            mute_until: -1,
+            mute_reason: "spam".to_string(),
+            shadow_muted: true,
+            ignored: HashSet::from(["alice".to_string()]),
+            colour: "b".to_string(),
+            last_private_sender: "carol".to_string(),
+            private_spy: true,
+        };
+        store.save(&state).unwrap();
+        state.active_channel = "Other".to_string();
+
+        let loaded = store.load(&state.player_uuid).unwrap();
+        assert_eq!(loaded.player_uuid, state.player_uuid);
+        assert_eq!(loaded.active_channel, "Normal", "saved snapshot wins");
+        assert_eq!(loaded.joined_channels, HashSet::from(["normal".to_string(), "global".to_string()]));
+        assert_eq!(loaded.mute_until, -1);
+        assert_eq!(loaded.mute_reason, "spam");
+        assert!(loaded.shadow_muted);
+        assert_eq!(loaded.ignored, HashSet::from(["alice".to_string()]));
+        assert_eq!(loaded.colour, "b");
+        assert_eq!(loaded.last_private_sender, "carol");
+        assert!(loaded.private_spy);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A missing file loads as a blank record with the key stamped.
+    #[test]
+    fn missing_file_loads_defaults() {
+        let dir = temp_dir("missing");
+        let _ = fs::remove_dir_all(&dir);
+        let store = PlayerStore::open(&dir.to_string_lossy()).unwrap();
+        let state = store.load("ffffffff-0000-0000-0000-000000000000").unwrap();
+        assert_eq!(state.player_uuid, "ffffffff-0000-0000-0000-000000000000");
+        assert_eq!(state.active_channel, "");
+        assert!(!state.shadow_muted);
+        assert!(state.ignored.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The UUID key is hyphen-stripped for the file name, like the Mod's
+    /// string keys stay case/dash-normalised.
+    #[test]
+    fn save_file_name_strips_hyphens() {
+        let dir = temp_dir("hyphens");
+        let _ = fs::remove_dir_all(&dir);
+        let store = PlayerStore::open(&dir.to_string_lossy()).unwrap();
+        let uuid = "00112233-4455-6677-8899-aabbccddeeff";
+        store
+            .save(&PlayerState {
+                player_uuid: uuid.to_string(),
+                ..PlayerState::default()
+            })
+            .unwrap();
+        assert!(
+            store.file_for(uuid).exists(),
+            "expected {} to exist",
+            store.file_for(uuid).display()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Saving without a UUID is refused (the DB row key would be NULL).
+    #[test]
+    fn save_without_uuid_is_refused() {
+        let dir = temp_dir("nouuid");
+        let _ = fs::remove_dir_all(&dir);
+        let store = PlayerStore::open(&dir.to_string_lossy()).unwrap();
+        let err = store
+            .save(&PlayerState {
+                ..PlayerState::default()
+            })
+            .unwrap_err();
+        assert!(err.contains("UUID"), "err = {err}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `join_with` prefers the stored active channel, else the default.
+    #[test]
+    fn join_with_restores_stored_state() {
+        let mut s = SessionPlayers::default();
+        let stored = PlayerState {
+            player_uuid: "00112233-4455-6677-8899-aabbccddeeff".to_string(),
+            active_channel: "Global".to_string(),
+            joined_channels: HashSet::from(["global".to_string()]),
+            ..PlayerState::default()
+        };
+        s.join_with("Alice", "Normal", stored);
+        assert_eq!(s.state("Alice").unwrap().active_channel, "Global");
+        assert!(s.state("Alice").unwrap().joined_channels.contains("normal"));
+
+        // A re-join keeps prior state and only ensures the default channel.
+        s.join_with("Alice", "Normal", PlayerState::default());
+        assert_eq!(s.state("Alice").unwrap().active_channel, "Global");
+    }
+
+    /// A blank stored state falls back to the configuration default channel.
+    #[test]
+    fn join_with_falls_back_to_default_channel() {
+        let mut s = SessionPlayers::default();
+        s.join_with(
+            "Bob",
+            "Normal",
+            PlayerState {
+                player_uuid: "00112233-4455-6677-8899-aabbccddeeff".to_string(),
+                ..PlayerState::default()
+            },
+        );
+        assert_eq!(s.state("Bob").unwrap().active_channel, "Normal");
     }
 }
