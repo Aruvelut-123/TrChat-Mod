@@ -24,6 +24,13 @@ redis = { version = "1.7.1", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+# The state store (`datasource.yml`) now runs the embedded engine directly:
+# turso_core (limbo) is a SQLite engine that compiles to `wasm32-wasip2`
+# (its generic IO backend uses `std::fs`), so the port persists player data
+# to a real `data.db` instead of the earlier per-player JSON fallback.
+# Features mirror the `dbprobe` harness so the probe's behaviour is exactly
+# what the plugin sees. Default features are off (no networking extras).
+turso_core = { version = "0.8.1", default-features = false, features = ["fs", "time", "uuid", "json", "pure-rust-crypto"] }
 
 # The update checker (`updates:`) talks to the GitHub API through the host's
 # `wasi:http` client, which the `wasm32-wasip2` target links in. Keep it

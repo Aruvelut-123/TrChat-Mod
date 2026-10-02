@@ -2,49 +2,36 @@
 //!
 //! Ports the configuration branch of `data/PlayerDataStore.java` `initialize`
 //! (fact spec: `docs/spec/data-redis-update.md` §1.1-§1.4): the `Type` switch,
-//! the JDBC URLs, the table-name derivation and the exact `CREATE TABLE` /
-//! `SELECT` / `UPDATE` / `INSERT` / `DELETE` SQL texts the Mod runs against the
-//! four tables (`player_state`, `player_channels`, `player_ignored`,
-//! `player_preferences`).
+//! the SQLite file resolution and the exact `CREATE TABLE` / `SELECT` /
+//! `UPDATE` / `INSERT` / `DELETE` SQL texts the Mod runs against the four tables
+//! (`player_state`, `player_channels`, `player_ignored`, `player_preferences`).
 //!
-//! The WASM sandbox has no JDBC driver and cannot open a database connection
-//! (see the crate docs and `docs/spec/data-redis-update.md` §7 for the probe
-//! that ruled out an embedded pure-Rust engine), so this module is the
-//! **semantics layer** only: it resolves the configuration and generates the
-//! SQL. The storage layer for this port is the file-backed store in
-//! [`crate::playerdata`] (`PlayerStore`), which persists the same field set the
-//! four tables hold — recorded as a porting deviation.
-//!
-//! `Type` values other than SQLite/Local, MySQL, MariaDB and PostgreSQL are
-//! rejected by [`Datasource::resolve`]: the Mod's fallback JDBC branch itself is
-//! broken (spec §7 conclusion 9 — `ignoredTable` / `preferenceTable` stay `null`
-//! and the save paths throw `NPE`), so there is nothing to mirror.
+//! This port runs the embedded engine **turso_core** (limbo) instead of a JDBC
+//! driver, so only `Type: SQLite` / `Type: Local` is supported: the WASM sandbox
+//! has no JDBC driver, and turso_core speaks SQLite (its Postgres dialect is
+//! experimental and not exposed through the WASM component — see
+//! `docs/spec/data-redis-update.md` §7 for the probe that ruled the network
+//! backends out). The network `Type` values (MySQL, MariaDB, PostgreSQL) and the
+//! generic JDBC branch are **rejected** by [`Datasource::resolve`]; the Mod's
+//! fallback JDBC branch is itself broken (spec §7 conclusion 9 —
+//! `ignoredTable` / `preferenceTable` stay `null` and the save paths throw
+//! `NPE`), so there is nothing to mirror.
 
 use std::path::{Component, Path, PathBuf};
 
-use crate::config::{DataSourceConfig, JdbcDatabase, NetworkDatabase};
+use crate::config::DataSourceConfig;
 
-/// The data-source backends the Mod's `Type` switch can land on
-/// (`PlayerDataStore.java:64-93`). Unsupported types surface as
-/// [`Datasource::resolve`] errors instead.
+/// The data-source backend this port supports. Only SQLite survives: the
+/// sandbox runs turso_core (limbo), which is a SQLite engine (spec §7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Backend {
-    /// `Type: SQLite` / `Type: Local` — `jdbc:sqlite:<file>`.
+    /// `Type: SQLite` / `Type: Local` — a local `data.db` file.
     Sqlite,
-    /// `Type: MySQL` — `jdbc:mysql://host:port/db`.
-    Mysql,
-    /// `Type: MariaDB` — `jdbc:mariadb://host:port/db`.
-    Mariadb,
-    /// `Type: PostgreSQL` / `Type: Postgres` — `jdbc:postgresql://host:port/db`.
-    Postgresql,
 }
 
-/// The four table names (`PlayerDataStore.java:73-76`, `:152-156`).
-///
-/// SQLite uses the fixed Mod names; the network backends derive them as
-/// `safeIdentifier(prefix + suffix)` with the default prefix `trchat_`.
+/// The four table names (`PlayerDataStore.java:73-76`): SQLite uses the fixed
+/// Mod names.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // spec-locked SQL semantics; see `docs/spec` §1.6
 pub struct TableNames {
     pub state: String,
     pub channels: String,
@@ -52,64 +39,29 @@ pub struct TableNames {
     pub preferences: String,
 }
 
-/// A resolved data source: the backend, the table names and the connection
-/// parameters the Mod builds. The file-backed [`crate::playerdata::PlayerStore`]
-/// is the execution layer for this port.
+/// A resolved data source: the backend, the table names and the absolute
+/// SQLite database path. [`crate::playerdata::PlayerStore`] executes the SQL
+/// through turso_core.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // spec-locked connection semantics; file store executes today
 pub struct Datasource {
     pub backend: Backend,
     pub tables: TableNames,
     /// Absolute SQLite database path (`PlayerDataStore.java:68`
-    /// `folder.resolve(configured).normalize()`), when [`Backend::Sqlite`].
-    pub sqlite_file: Option<PathBuf>,
-    /// JDBC URL for the network backends (`PlayerDataStore.java:147-148`).
-    pub jdbc_url: Option<String>,
-    #[allow(dead_code)] // connection credentials for a future engine; spec §7
-    pub user: String,
-    #[allow(dead_code)] // connection credentials for a future engine; spec §7
-    pub password: String,
+    /// `folder.resolve(configured).normalize()`).
+    pub sqlite_file: PathBuf,
 }
 
-/// Default database name for the network backends (`:145`).
-pub const DEFAULT_DATABASE: &str = "trchat";
-/// Default table prefix (`:152`).
-pub const DEFAULT_TABLE_PREFIX: &str = "trchat_";
-/// Default host (`:143`).
-pub const DEFAULT_HOST: &str = "127.0.0.1";
-
-#[allow(dead_code)] // SQL semantics for the future engine; file store executes today
 impl Datasource {
     /// Resolves `cfg` against the plugin data folder, mirroring
-    /// `PlayerDataStore.initialize` `:64-93`.
+    /// `PlayerDataStore.initialize` `:64-93` — restricted to the SQLite branch.
     pub fn resolve(cfg: &DataSourceConfig, data_folder: &Path) -> Result<Datasource, String> {
         match cfg.kind().as_str() {
             "sqlite" | "local" => Ok(sqlite(cfg, data_folder)),
-            "mysql" => Ok(network(
-                "MySQL",
-                "jdbc:mysql",
-                3306,
-                &cfg.mysql,
-                &cfg.jdbc,
-            )),
-            "mariadb" => Ok(network(
-                "MariaDB",
-                "jdbc:mariadb",
-                3306,
-                &cfg.mariadb,
-                &cfg.jdbc,
-            )),
-            "postgresql" | "postgres" => Ok(network(
-                "PostgreSQL",
-                "jdbc:postgresql",
-                5432,
-                &cfg.postgresql,
-                &cfg.jdbc,
-            )),
-            other => Err(format!(
-                "datasource Type '{other}': this port supports SQLite, MySQL, MariaDB and \
-                 PostgreSQL only (the Mod's generic JDBC branch is itself broken — spec \
-                 conclusion 9)"
+            _ => Err(format!(
+                "datasource Type '{}': this port supports SQLite/Local only \
+                 (turso_core is a SQLite engine; the network JDBC branches of the Mod \
+                 are out of scope — spec §7)",
+                cfg.data_type
             )),
         }
     }
@@ -241,77 +193,8 @@ fn sqlite(cfg: &DataSourceConfig, data_folder: &Path) -> Datasource {
     Datasource {
         backend: Backend::Sqlite,
         tables: sqlite_table_names(),
-        sqlite_file: Some(database),
-        jdbc_url: None,
-        user: String::new(),
-        password: String::new(),
+        sqlite_file: database,
     }
-}
-
-/// One of the network branches (`configureNetworkDatabase`, `:135-158`).
-fn network(
-    _section: &str,
-    scheme: &str,
-    default_port: u16,
-    database: &NetworkDatabase,
-    jdbc: &JdbcDatabase,
-) -> Datasource {
-    let host = if database.host.is_empty() {
-        DEFAULT_HOST
-    } else {
-        &database.host
-    };
-    let port = if database.port == 0 {
-        default_port.to_string()
-    } else {
-        database.port.to_string()
-    };
-    let name = if database.database.is_empty() {
-        DEFAULT_DATABASE
-    } else {
-        &database.database
-    };
-    let parameters = if database.parameters.is_empty() {
-        String::new()
-    } else {
-        format!("?{}", database.parameters)
-    };
-    let url = format!("{scheme}://{host}:{port}/{name}{parameters}");
-    let prefix = if jdbc.table_prefix.is_empty() {
-        DEFAULT_TABLE_PREFIX
-    } else {
-        jdbc.table_prefix.as_str()
-    };
-    Datasource {
-        backend: network_backend(scheme),
-        tables: TableNames {
-            state: safe_identifier(&format!("{prefix}player_state")),
-            channels: safe_identifier(&format!("{prefix}player_channels")),
-            ignored: safe_identifier(&format!("{prefix}player_ignored")),
-            preferences: safe_identifier(&format!("{prefix}player_preferences")),
-        },
-        sqlite_file: None,
-        jdbc_url: Some(url),
-        user: database.user.clone(),
-        password: database.password.clone(),
-    }
-}
-
-fn network_backend(scheme: &str) -> Backend {
-    match scheme {
-        "jdbc:mysql" => Backend::Mysql,
-        "jdbc:mariadb" => Backend::Mariadb,
-        _ => Backend::Postgresql,
-    }
-}
-
-/// `safeIdentifier` (`PlayerDataStore.java:361-364`): the prefix-plus-suffix
-/// table name must be `[A-Za-z0-9_]+`, otherwise the Mod throws.
-pub fn safe_identifier(value: &str) -> String {
-    if value.is_empty() || !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        panic!("Invalid table prefix: {value:?}");
-    }
-    value.to_string()
 }
 
 /// Lexical `Path::normalize` (`PlayerDataStore.java:68`): resolves `.` and `..`
@@ -373,13 +256,6 @@ mod tests {
         }
     }
 
-    fn mysql_cfg() -> DataSourceConfig {
-        DataSourceConfig {
-            data_type: "MySQL".to_string(),
-            ..DataSourceConfig::default()
-        }
-    }
-
     #[test]
     fn sqlite_resolves_fixed_tables_and_absolutized_file() {
         let ds = Datasource::resolve(&sqlite_cfg(), Path::new("C:\\server\\plugins")).unwrap();
@@ -394,11 +270,7 @@ mod tests {
             }
         );
         // relative File + folder → normalized absolute (Mod :68).
-        assert_eq!(
-            ds.sqlite_file,
-            Some(PathBuf::from("C:\\server\\plugins\\data.db"))
-        );
-        assert_eq!(ds.jdbc_url, None);
+        assert_eq!(ds.sqlite_file, PathBuf::from("C:\\server\\plugins\\data.db"));
     }
 
     #[test]
@@ -408,7 +280,7 @@ mod tests {
         let ds = Datasource::resolve(&cfg, Path::new("C:\\server\\plugins")).unwrap();
         assert_eq!(
             ds.sqlite_file,
-            Some(PathBuf::from("D:\\db\\trchat.db")),
+            PathBuf::from("D:\\db\\trchat.db"),
             "absolute File stays as-is"
         );
 
@@ -416,69 +288,27 @@ mod tests {
         let ds = Datasource::resolve(&cfg, Path::new("C:\\server\\plugins")).unwrap();
         assert_eq!(
             ds.sqlite_file,
-            Some(PathBuf::from("C:\\server\\plugins\\nested.db")),
+            PathBuf::from("C:\\server\\plugins\\nested.db"),
             ".. is resolved lexically"
         );
     }
 
     #[test]
-    fn mysql_url_and_tables_match_mod() {
-        let mut cfg = mysql_cfg();
-        cfg.mysql.host = "db.example.com".to_string();
-        cfg.mysql.port = 3307;
-        cfg.mysql.database = "trchat2".to_string();
-        cfg.mysql.parameters = "useSSL=false".to_string();
-        cfg.jdbc.table_prefix = "tc_".to_string();
-        let ds = Datasource::resolve(&cfg, Path::new("C:\\server")).unwrap();
-        assert_eq!(ds.backend, Backend::Mysql);
-        assert_eq!(
-            ds.jdbc_url.as_deref(),
-            Some("jdbc:mysql://db.example.com:3307/trchat2?useSSL=false")
-        );
-        assert_eq!(
-            ds.tables,
-            TableNames {
-                state: "tc_player_state".to_string(),
-                channels: "tc_player_channels".to_string(),
-                ignored: "tc_player_ignored".to_string(),
-                preferences: "tc_player_preferences".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn network_defaults_match_mod() {
-        let ds = Datasource::resolve(&mysql_cfg(), Path::new("C:\\server")).unwrap();
-        assert_eq!(
-            ds.jdbc_url.as_deref(),
-            Some("jdbc:mysql://127.0.0.1:3306/trchat")
-        );
-        let pg = Datasource::resolve(
-            &DataSourceConfig {
-                data_type: "Postgres".to_string(),
-                ..DataSourceConfig::default()
-            },
-            Path::new("C:\\server"),
-        )
-        .unwrap();
-        assert_eq!(pg.backend, Backend::Postgresql);
-        assert_eq!(
-            pg.jdbc_url.as_deref(),
-            Some("jdbc:postgresql://127.0.0.1:5432/trchat")
-        );
-        let maria = Datasource::resolve(
-            &DataSourceConfig {
-                data_type: "MariaDB".to_string(),
-                ..DataSourceConfig::default()
-            },
-            Path::new("C:\\server"),
-        )
-        .unwrap();
-        assert_eq!(maria.backend, Backend::Mariadb);
-        assert_eq!(
-            maria.jdbc_url.as_deref(),
-            Some("jdbc:mariadb://127.0.0.1:3306/trchat")
-        );
+    fn network_types_are_rejected() {
+        for data_type in ["MySQL", "MariaDB", "PostgreSQL", "Postgres"] {
+            let err = Datasource::resolve(
+                &DataSourceConfig {
+                    data_type: data_type.to_string(),
+                    ..DataSourceConfig::default()
+                },
+                Path::new("C:\\server"),
+            )
+            .unwrap_err();
+            assert!(
+                err.contains("SQLite") && err.contains(data_type),
+                "{data_type}: err = {err}"
+            );
+        }
     }
 
     #[test]
@@ -585,13 +415,5 @@ mod tests {
                 format!("INSERT INTO {} (uuid,chat_color) VALUES (?,?)", t.preferences),
             )
         );
-    }
-
-    #[test]
-    fn safe_identifier_accepts_alnum_underscore_only() {
-        assert_eq!(safe_identifier("trchat_player_state"), "trchat_player_state");
-        assert_eq!(safe_identifier("tc_player_channels"), "tc_player_channels");
-        assert!(std::panic::catch_unwind(|| safe_identifier("trchat-player"))
-            .is_err(), "hyphen must panic like the Mod's IllegalArgumentException");
     }
 }

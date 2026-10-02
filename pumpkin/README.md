@@ -89,7 +89,7 @@ plugins/data/trchat/
 ├── filter.yml            # 聊天过滤器：Enable(Chat/Sign/Anvil) + Local 敏感词 +
 │                         #   Ignored-Punctuations 跳过标点 + WhiteList 白名单 + Replacement
 ├── function.yml          # 命令控制器规则 + 内置/自定义聊天功能（Mention / Item-Show / …）
-├── datasource.yml        # 数据源（SQLite / MySQL / MariaDB / PostgreSQL，解析对齐 + 文件落盘）
+├── datasource.yml        # 数据源（仅 SQLite / Local：Type 分支 + SQLite.File 解析，真实落盘）
 └── special-chars.yml     # 资源包特殊字符表（彩色 emoji 白名单 + 颜色包裹）
 ```
 
@@ -166,9 +166,10 @@ plugins/data/trchat/
   `filters/<hash>.json` 缓存兜底，每小时刷新一次、`/trchat reload` 后立即刷新，
   加载与刷新时在插件日志播报）
 - [x] 配置对齐内置默认值（缺失键补全并写回文件，未知键删除，对齐 Mod `YamlConfigSynchronizer`）
-- [x] 玩家数据持久化：解析 `datasource.yml`（`Type` 分支、JDBC URL、表名派生，对齐
-  `PlayerDataStore` 语义，单测锁定逐字 SQL），执行层为每玩家一个 JSON 快照
-  （`<存储根>/playerdata/<uuid>.json`，加入时恢复、退出与关服时落盘，原子写）
+- [x] 玩家数据持久化：解析 `datasource.yml`（`Type` 分支、`SQLite.File` 解析、表名派生，对齐
+  `PlayerDataStore` 语义，单测锁定逐字 SQL），执行层为嵌入式 turso_core（limbo）引擎落真实
+  SQLite 文件（`<数据文件夹>/data.db`，四表 DDL + 逐字 SQL，加入时恢复、退出与关服时
+  `BEGIN`/`COMMIT` 事务落盘，对齐 Mod `save` 的 UPDATE 先/INSERT 兜底语义）
 
 ## 说明
 
@@ -194,12 +195,13 @@ plugins/data/trchat/
 * **版本号**：`Cargo.toml` 只能写三段（`2.5.4+1`），对外一律报告 `mod_version`
   （`2.5.4.1`，由 `build.rs` 注入 `TRCHAT_VERSION`）——`/plugins`、`/trchat status`、
   `/ver` 与更新检查用的是同一个字符串。
-* **`datasource.yml` 只做语义解析，不做真实数据库**：WASM 沙箱没有 JDBC 驱动，嵌入式
-  纯 Rust 引擎（turso_core/limbo）探针失败（纯异步 + tokio，无法塞进阻塞型插件事件），
-  所以 `Type` 分支与表名、SQL 文本按 `PlayerDataStore` 逐字对齐并单测锁定，但落盘走
-  **每玩家一个 JSON 文件**（`<存储根>/playerdata/<uuid 去连字符>.json`，原子写；
-  `SQLite.File` 的父目录决定存储根）。Mod 的 `Type: JDBC` 分支本身有缺陷（`ignoredTable` /
-  `preferenceTable` 从未赋值 → NPE），移植版直接不支持，未匹配类型在加载时报错。
+* **`datasource.yml` 落真实 SQLite**：WASM 沙箱没有 JDBC 驱动，所以网络后端分支
+  （MySQL / MariaDB / PostgreSQL / JDBC）不支持，`Type` 分支只接受 `SQLite` / `Local`；
+  落盘由嵌入式纯 Rust 引擎（turso_core/limbo）执行 —— 四表 `CREATE TABLE IF NOT EXISTS`
+  与 SELECT / UPDATE / INSERT / DELETE 文本按 `PlayerDataStore` 逐字对齐并单测锁定
+  （`datasource.rs`/`dbprobe`），`SQLite.File` 相对数据文件夹解析（`data.db` 默认值）。
+  Mod 的 `Type: JDBC` 分支本身有缺陷（`ignoredTable` / `preferenceTable` 从未赋值 → NPE），
+  移植版直接不支持，未匹配类型在加载时报错。
 * 真机（Pumpkin `0.2.0+26.3-26.51`，Windows x64）冒烟测试已通过：插件加载、命令树
   （含权限拒绝路径）、`/trchat reload`、配置文件首次播种、`wasi:http` 拉取 GitHub
   release 并完成版本比较（日志 `TrChat 2.5.4.1 is up to date.`）。

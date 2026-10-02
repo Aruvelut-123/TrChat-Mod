@@ -4,12 +4,10 @@
 //! mute / shadow-mute flags, ignore list and chosen chat colour. The upstream
 //! implementation persists this to a database (`datasource.yml`) on logout and
 //! shutdown; this Pumpkin port keeps the *session* copy in memory (see
-//! [`SessionPlayers`]) and holds the same field set in a file-backed store
-//! ([`PlayerStore`], one JSON file per player UUID under `trchat/playerdata/`).
-//! The file layout is a porting deviation — the WASM sandbox has no database
-//! driver (see `docs/spec/data-redis-update.md` §7) — while the semantics
-//! (`datasource.yml` resolution, table names and exact SQL) live in
-//! [`crate::datasource`].
+//! [`SessionPlayers`]) and mirrors the Mod's rows in a real SQLite file through
+//! the embedded turso_core (limbo) engine ([`PlayerStore`]). The `datasource.yml`
+//! resolution, table names and the exact SQL texts stay in [`crate::datasource`]
+//! (spec §7 verified the engine can run them).
 //!
 //! The muted/ignored snapshot is also what the Redis relay exchanges between
 //! servers (35 s TTL), keeping cross-server ignore checks working without
@@ -17,12 +15,16 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, RwLock};
+use std::num::NonZero;
+use std::path::Path;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use pumpkin_plugin_api::events::player::{PlayerJoinEvent, PlayerLeaveEvent};
 use pumpkin_plugin_api::events::{EventData, EventHandler, EventPriority};
 use pumpkin_plugin_api::{Context, Server};
+
+use crate::datasource::Datasource;
+use turso_core::{OpenOptions, SqliteDialect, StepResult, Value};
 
 /// One player's chat state (mirrors `PlayerDataStore.PlayerState`).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -442,77 +444,327 @@ mod tests {
 // Persistence: `PlayerDataStore` ports.
 //
 // The upstream persists the four tables (`player_state`, `player_channels`,
-// `player_ignored`, `player_preferences`) through JDBC. The WASM sandbox has no
-// driver and the embedded-engine probe failed (spec §7), so this port stores
-// the same field set as one JSON document per player UUID under
-// `trchat/playerdata/`. The SQL/table semantics stay exact in
-// [`crate::datasource`], so a future engine swap needs no format migration.
+// `player_ignored`, `player_preferences`) through JDBC, one transaction per
+// `save` (`PlayerDataStore.java:193-227`). The WASM sandbox has no JDBC
+// driver, so this port executes the same SQL texts (kept exact in
+// [`crate::datasource`]) through the embedded turso_core (limbo) engine
+// against the resolved SQLite file. The spec §7 probe ruled the network
+// backends out and confirmed PlatformIO on wasm32-wasip2 runs on GenericIO
+// (= std::fs), so real files open normally.
 // ---------------------------------------------------------------------------
 
-/// The player-data subfolder under the plugin data folder.
-const PLAYERDATA_DIR: &str = "playerdata";
-
-/// File-backed execution layer for `PlayerDataStore` (`PlayerStore`).
+/// SQLite-backed execution layer for `PlayerDataStore` (`PlayerStore`).
 ///
-/// `datasource.yml` is resolved by [`crate::datasource::Datasource::resolve`];
-/// the file location is the resolved SQLite path when one is configured and the
-/// default `data.db` under the data folder otherwise — both only *name* the
-/// store, since the sandbox cannot open a real database (spec §7).
-#[derive(Debug, Clone)]
+/// Opens `datasource.sqlite_file` through turso_core, ensures the four tables
+/// (`Datasource::ddl`) and runs the Mod's exact SELECT / UPDATE / INSERT /
+/// DELETE statements. `save` batches one transaction per player, mirroring
+/// `PlayerDataStore.saveAsync`/`save` (`:189-227`).
+#[derive(Clone)]
 pub struct PlayerStore {
-    root: PathBuf,
+    conn: Arc<turso_core::Connection>,
+    datasource: Datasource,
+}
+
+/// `Value::from_text` wrapper — the engine takes owned text.
+fn text(value: &str) -> Value {
+    Value::from_text(value.to_string())
 }
 
 impl PlayerStore {
-    /// Builds the store rooted at `<data_root>/playerdata`, creating it. The
-    /// caller passes the *data root* (the resolved `datasource.yml` file name's
-    /// parent directory, or the plugin data folder).
-    pub fn open(data_root: &str) -> Result<PlayerStore, String> {
-        let root = Path::new(data_root).join(PLAYERDATA_DIR);
-        fs::create_dir_all(&root).map_err(|error| format!("cannot create {root:?}: {error}"))?;
-        Ok(PlayerStore { root })
-    }
-
-    /// Path of `name`'s JSON snapshot.
-    fn file_for(&self, uuid: &str) -> PathBuf {
-        let key = uuid.replace('-', "");
-        self.root.join(format!("{key}.json"))
-    }
-
-    /// Loads a player's persisted state (`PlayerDataStore.load`, `:161-190` +
-    /// `:234` + `:277` + `:316`): missing files mean a blank record — the Mod's
-    /// `SELECT` returns no rows and the defaults stand.
-    pub fn load(&self, uuid: &str) -> Result<PlayerState, String> {
-        let path = self.file_for(uuid);
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(PlayerState {
-                    player_uuid: uuid.to_string(),
-                    ..PlayerState::default()
-                });
-            }
-            Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    /// Opens `datasource`'s SQLite file through turso_core and ensures the
+    /// four tables exist (`PlayerDataStore.java:97-128`).
+    pub fn open(datasource: &Datasource) -> Result<PlayerStore, String> {
+        let sqlite_file = &datasource.sqlite_file;
+        if let Some(parent) = sqlite_file.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+        }
+        let io = Arc::new(
+            turso_core::io::PlatformIO::new()
+                .map_err(|error| format!("cannot initialise IO: {error}"))?,
+        );
+        let options = || OpenOptions::new(Arc::new(SqliteDialect {}));
+        let database = turso_core::Database::open(io, &sqlite_file.to_string_lossy(), options())
+            .map_err(|error| format!("cannot open {}: {error}", sqlite_file.display()))?;
+        let conn = database
+            .connect()
+            .map_err(|error| format!("cannot connect: {error}"))?;
+        let store = PlayerStore {
+            conn,
+            datasource: datasource.clone(),
         };
-        let mut state: PlayerState = serde_json::from_str(&text)
-            .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
-        state.player_uuid = uuid.to_string();
+        for ddl in datasource.ddl() {
+            store
+                .conn
+                .execute(&ddl)
+                .map_err(|error| format!("cannot initialise schema: {error}"))?;
+        }
+        Ok(store)
+    }
+
+    /// Binds `binds` to `stmt` (parameter 1 = first element).
+    fn bind_all(&self, stmt: &mut turso_core::Statement, binds: &[Value]) -> Result<(), String> {
+        for (index, value) in binds.iter().enumerate() {
+            stmt.bind_at(NonZero::new(index + 1).unwrap(), value.clone())
+                .map_err(|error| format!("cannot bind parameter {}: {error}", index + 1))?;
+        }
+        Ok(())
+    }
+
+    /// Runs a single non-query statement and reports whether it touched a row
+    /// (`changes()` > 0), mirroring the Mod's `executeUpdate()` counts.
+    fn execute_changes(&self, sql: &str, binds: &[Value]) -> Result<bool, String> {
+        let mut stmt = self
+            .conn
+            .prepare(sql)
+            .map_err(|error| format!("cannot prepare {sql}: {error}"))?;
+        self.bind_all(&mut stmt, binds)?;
+        match stmt.step().map_err(|error| format!("cannot step {sql}: {error}"))? {
+            _ => {}
+        }
+        let mut changed = 0i64;
+        let mut count = self
+            .conn
+            .query("SELECT changes()")
+            .map_err(|error| format!("cannot read changes(): {error}"))?
+            .ok_or_else(|| "changes() returned no statement".to_string())?;
+        loop {
+            match count
+                .step()
+                .map_err(|error| format!("cannot step changes(): {error}"))?
+            {
+                StepResult::Row => {
+                    changed = count
+                        .row()
+                        .ok_or_else(|| "changes() returned no row".to_string())?
+                        .get::<i64>(0)
+                        .unwrap_or(0);
+                }
+                _ => break,
+            }
+        }
+        Ok(changed > 0)
+    }
+
+    /// Loads a player's persisted state (`PlayerDataStore.load`, `:160-187`).
+    ///
+    /// A missing `player_state` row means a blank record — the Mod's `SELECT`
+    /// returns no rows and the defaults stand; the channel / ignore / colour
+    /// tables are only consulted when the state row exists.
+    pub fn load(&self, uuid: &str) -> Result<PlayerState, String> {
+        let mut state = PlayerState {
+            player_uuid: uuid.to_string(),
+            ..PlayerState::default()
+        };
+
+        // `player_state` row (`:161-179`).
+        let mut stmt = self
+            .conn
+            .prepare(self.datasource.load_state_sql())
+            .map_err(|error| format!("cannot prepare state query: {error}"))?;
+        self.bind_all(&mut stmt, &[text(uuid)])?;
+        let mut found = false;
+        loop {
+            match stmt
+                .step()
+                .map_err(|error| format!("cannot step state query: {error}"))?
+            {
+                StepResult::Row => {
+                    found = true;
+                    let row = stmt.row().ok_or_else(|| "state row lost".to_string())?;
+                    state.mute_until = row.get::<i64>(0).unwrap_or(0);
+                    state.mute_reason = row.get::<String>(1).unwrap_or_default();
+                    state.shadow_muted = row.get::<i64>(2).unwrap_or(0) != 0;
+                    state.private_spy = row.get::<i64>(3).unwrap_or(0) != 0;
+                }
+                _ => break,
+            }
+        }
+        if !found {
+            return Ok(state);
+        }
+
+        // Channel membership (`loadMembership`, `:234-253`).
+        let mut stmt = self
+            .conn
+            .prepare(self.datasource.load_membership_sql())
+            .map_err(|error| format!("cannot prepare membership query: {error}"))?;
+        self.bind_all(&mut stmt, &[text(uuid)])?;
+        loop {
+            match stmt
+                .step()
+                .map_err(|error| format!("cannot step membership query: {error}"))?
+            {
+                StepResult::Row => {
+                    let row = stmt.row().ok_or_else(|| "membership row lost".to_string())?;
+                    let channel: String = row.get::<String>(0).unwrap_or_default();
+                    if channel.trim().is_empty() {
+                        continue;
+                    }
+                    if row.get::<i64>(1).unwrap_or(0) != 0 {
+                        state.active_channel = channel.clone();
+                    }
+                    state.joined_channels.insert(channel.to_ascii_lowercase());
+                }
+                _ => break,
+            }
+        }
+
+        // Ignore list (`loadIgnoredPlayers`, `:276-289`). The port tracks
+        // names only, so the UUID column is ignored on read.
+        let mut stmt = self
+            .conn
+            .prepare(self.datasource.load_ignored_sql())
+            .map_err(|error| format!("cannot prepare ignore query: {error}"))?;
+        self.bind_all(&mut stmt, &[text(uuid)])?;
+        loop {
+            match stmt
+                .step()
+                .map_err(|error| format!("cannot step ignore query: {error}"))?
+            {
+                StepResult::Row => {
+                    let row = stmt.row().ok_or_else(|| "ignore row lost".to_string())?;
+                    let name: String = row.get::<String>(1).unwrap_or_default();
+                    if !name.trim().is_empty() {
+                        state.ignored.insert(name.to_ascii_lowercase());
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        // Chat colour (`loadChatColor`, `:315-337`).
+        let mut stmt = self
+            .conn
+            .prepare(self.datasource.load_chat_color_sql())
+            .map_err(|error| format!("cannot prepare colour query: {error}"))?;
+        self.bind_all(&mut stmt, &[text(uuid)])?;
+        loop {
+            match stmt
+                .step()
+                .map_err(|error| format!("cannot step colour query: {error}"))?
+            {
+                StepResult::Row => {
+                    state.colour = stmt
+                        .row()
+                        .ok_or_else(|| "colour row lost".to_string())?
+                        .get::<String>(0)
+                        .unwrap_or_default();
+                }
+                _ => break,
+            }
+        }
+
         Ok(state)
     }
 
-    /// Persists `state` atomically (temp file + rename; the Mod's
-    /// `save*` batch writes).
-    pub fn save(&self, state: &PlayerState) -> Result<(), String> {
+    /// Persists `state` for `name` in one transaction (`PlayerDataStore.save`,
+    /// `:193-227`). Refused without a UUID (the DB row key would be NULL).
+    pub fn save(&self, name: &str, state: &PlayerState) -> Result<(), String> {
         if state.player_uuid.is_empty() {
             return Err("cannot save a player state without a UUID".to_string());
         }
-        let path = self.file_for(&state.player_uuid);
-        let text = serde_json::to_string_pretty(state)
-            .map_err(|error| format!("cannot serialise player state: {error}"))?;
-        let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, text).map_err(|error| format!("cannot write {}: {error}", tmp.display()))?;
-        fs::rename(&tmp, &path)
-            .map_err(|error| format!("cannot commit {}: {error}", path.display()))
+        self.conn
+            .execute("BEGIN")
+            .map_err(|error| format!("cannot begin transaction: {error}"))?;
+        let result = self.save_inner(name, state);
+        match result {
+            Ok(()) => self
+                .conn
+                .execute("COMMIT")
+                .map_err(|error| format!("cannot commit transaction: {error}")),
+            Err(error) => {
+                let _ = self.conn.execute("ROLLBACK");
+                Err(error)
+            }
+        }
+    }
+
+    /// The four table writes behind `save`, run inside the caller's
+    /// transaction (`PlayerDataStore.java:194-223`).
+    fn save_inner(&self, name: &str, state: &PlayerState) -> Result<(), String> {
+        // `player_state`: UPDATE first, INSERT when it touched no row
+        // (`:194-218`).
+        let (update, insert) = self.datasource.save_state_sql();
+        let changed = self.execute_changes(
+            &update,
+            &[
+                text(name),
+                Value::from_i64(state.mute_until),
+                text(&state.mute_reason),
+                Value::from_i64(state.shadow_muted as i64),
+                Value::from_i64(state.private_spy as i64),
+                text(&state.player_uuid),
+            ],
+        )?;
+        if !changed {
+            self.execute_changes(
+                &insert,
+                &[
+                    text(&state.player_uuid),
+                    text(name),
+                    Value::from_i64(state.mute_until),
+                    text(&state.mute_reason),
+                    Value::from_i64(state.shadow_muted as i64),
+                    Value::from_i64(state.private_spy as i64),
+                ],
+            )?;
+        }
+        // `player_channels`: delete, then re-insert the joined set
+        // (`:256-273`). The active channel's own casing is preserved (the
+        // stored `is_active` row keeps the state's original spelling).
+        let (delete, insert) = self.datasource.save_membership_sql();
+        self.execute_changes(&delete, &[text(&state.player_uuid)])?;
+        if !state.joined_channels.is_empty() {
+            let mut joined: Vec<&String> = state.joined_channels.iter().collect();
+            joined.sort();
+            for channel in joined {
+                let is_active = !state.active_channel.is_empty()
+                    && channel.eq_ignore_ascii_case(&state.active_channel);
+                let stored = if is_active {
+                    state.active_channel.as_str()
+                } else {
+                    channel.as_str()
+                };
+                self.execute_changes(
+                    &insert,
+                    &[text(&state.player_uuid), text(stored), Value::from_i64(is_active as i64)],
+                )?;
+            }
+        }
+        // `player_ignored`: delete, then re-insert the ignore set (`:295-312`).
+        // The port tracks names only, so the `ignored_uuid` column carries the
+        // name (the DDL requires a non-null value; the read side ignores it).
+        let (delete, insert) = self.datasource.save_ignored_sql();
+        self.execute_changes(&delete, &[text(&state.player_uuid)])?;
+        if !state.ignored.is_empty() {
+            let mut names: Vec<&String> = state.ignored.iter().collect();
+            names.sort();
+            for name in names {
+                self.execute_changes(
+                    &insert,
+                    &[
+                        text(&state.player_uuid),
+                        text(name),
+                        text(name),
+                    ],
+                )?;
+            }
+        }
+        // `player_preferences`: UPDATE first, INSERT when it touched no row
+        // (`:326-337`).
+        let (update, insert) = self.datasource.save_preferences_sql();
+        let changed = self.execute_changes(
+            &update,
+            &[text(&state.colour), text(&state.player_uuid)],
+        )?;
+        if !changed {
+            self.execute_changes(
+                &insert,
+                &[text(&state.player_uuid), text(&state.colour)],
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -575,7 +827,7 @@ impl EventHandler<PlayerLeaveEvent> for PersistLeaveHandler {
         state.player_uuid = uuid.clone();
         match player_store() {
             Ok(store) => {
-                if let Err(error) = store.save(&state) {
+                if let Err(error) = store.save(&name, &state) {
                     crate::diag::warn(format!(
                         "[TrChat] playerdata: cannot persist {name}: {error}"
                     ));
@@ -606,8 +858,8 @@ pub fn register(context: &Context) -> Result<(), String> {
     Ok(())
 }
 
-/// The shared file store, rooted at the plugin data folder
-/// (`datasource.yml`'s resolved file *name* when available).
+/// The shared database store, rooted at `datasource.yml`'s resolved SQLite
+/// file (`Datasource::resolve` — spec §1.1-§1.4).
 fn player_store() -> Result<PlayerStore, String> {
     let folder = crate::config::data_folder();
     if folder.is_empty() {
@@ -621,16 +873,7 @@ fn player_store() -> Result<PlayerStore, String> {
         "[TrChat] playerdata backend: {:?} ({})",
         datasource.backend, folder
     ));
-    // `datasource.yml`'s `SQLite.File` decides the *name* of the storage root
-    // (spec §1.6): the resolved absolute database path's parent directory,
-    // falling back to the plugin data folder for network backends (no local
-    // database file exists).
-    let root = datasource
-        .sqlite_file
-        .as_deref()
-        .and_then(Path::parent)
-        .unwrap_or(Path::new(&folder));
-    PlayerStore::open(&root.to_string_lossy())
+    PlayerStore::open(&datasource)
 }
 
 /// The configured auto-join channel id, mirroring
@@ -654,11 +897,11 @@ pub fn flush_all() {
     let Ok(store) = player_store() else {
         return;
     };
-    for state in session.states.values() {
+    for (name, state) in session.states.iter() {
         if state.player_uuid.is_empty() {
             continue;
         }
-        if let Err(error) = store.save(state) {
+        if let Err(error) = store.save(name, state) {
             crate::diag::warn(format!(
                 "[TrChat] playerdata: cannot flush {}: {error}",
                 state.player_uuid
@@ -670,6 +913,8 @@ pub fn flush_all() {
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
+    use crate::datasource::{Backend, TableNames};
+    use std::path::PathBuf;
 
     /// A per-test scratch dir: tests run in parallel, so the label keeps the
     /// stores from deleting each other's files.
@@ -678,12 +923,26 @@ mod persistence_tests {
         std::env::temp_dir().join(format!("trchat-playerdata-test-{n}-{label}"))
     }
 
-    /// Round-trips every field through `save` → `load`.
+    /// A test datasource pointing at `dir/data.db` with the Mod's fixed names.
+    fn test_datasource(dir: &Path) -> Datasource {
+        Datasource {
+            backend: Backend::Sqlite,
+            tables: TableNames {
+                state: "trchat_player_state".into(),
+                channels: "trchat_player_channels".into(),
+                ignored: "trchat_player_ignored".into(),
+                preferences: "trchat_player_preferences".into(),
+            },
+            sqlite_file: dir.join("data.db"),
+        }
+    }
+
+    /// Round-trips every persisted field through `save` → `load`.
     #[test]
     fn store_round_trips_full_state() {
         let dir = temp_dir("roundtrip");
         let _ = fs::remove_dir_all(&dir);
-        let store = PlayerStore::open(&dir.to_string_lossy()).unwrap();
+        let store = PlayerStore::open(&test_datasource(&dir)).unwrap();
 
         let mut state = PlayerState {
             player_uuid: "00112233-4455-6677-8899-aabbccddeeff".to_string(),
@@ -697,7 +956,7 @@ mod persistence_tests {
             last_private_sender: "carol".to_string(),
             private_spy: true,
         };
-        store.save(&state).unwrap();
+        store.save("Alice", &state).unwrap();
         state.active_channel = "Other".to_string();
 
         let loaded = store.load(&state.player_uuid).unwrap();
@@ -709,18 +968,20 @@ mod persistence_tests {
         assert!(loaded.shadow_muted);
         assert_eq!(loaded.ignored, HashSet::from(["alice".to_string()]));
         assert_eq!(loaded.colour, "b");
-        assert_eq!(loaded.last_private_sender, "carol");
         assert!(loaded.private_spy);
+        // `last_private_sender` is a session-only convenience field: the Mod's
+        // four tables have no column for it, so it does not survive a reload.
+        assert!(loaded.last_private_sender.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// A missing file loads as a blank record with the key stamped.
+    /// A missing database row loads as a blank record with the key stamped.
     #[test]
     fn missing_file_loads_defaults() {
         let dir = temp_dir("missing");
         let _ = fs::remove_dir_all(&dir);
-        let store = PlayerStore::open(&dir.to_string_lossy()).unwrap();
+        let store = PlayerStore::open(&test_datasource(&dir)).unwrap();
         let state = store.load("ffffffff-0000-0000-0000-000000000000").unwrap();
         assert_eq!(state.player_uuid, "ffffffff-0000-0000-0000-000000000000");
         assert_eq!(state.active_channel, "");
@@ -729,24 +990,27 @@ mod persistence_tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// The UUID key is hyphen-stripped for the file name, like the Mod's
-    /// string keys stay case/dash-normalised.
+    /// Saving creates the resolved SQLite file (`datasource.yml`'s `SQLite.File`).
     #[test]
-    fn save_file_name_strips_hyphens() {
-        let dir = temp_dir("hyphens");
+    fn save_creates_database_file() {
+        let dir = temp_dir("dbfile");
         let _ = fs::remove_dir_all(&dir);
-        let store = PlayerStore::open(&dir.to_string_lossy()).unwrap();
+        let datasource = test_datasource(&dir);
+        let store = PlayerStore::open(&datasource).unwrap();
         let uuid = "00112233-4455-6677-8899-aabbccddeeff";
         store
-            .save(&PlayerState {
-                player_uuid: uuid.to_string(),
-                ..PlayerState::default()
-            })
+            .save(
+                "Alice",
+                &PlayerState {
+                    player_uuid: uuid.to_string(),
+                    ..PlayerState::default()
+                },
+            )
             .unwrap();
         assert!(
-            store.file_for(uuid).exists(),
+            datasource.sqlite_file.exists(),
             "expected {} to exist",
-            store.file_for(uuid).display()
+            datasource.sqlite_file.display()
         );
         let _ = fs::remove_dir_all(&dir);
     }
@@ -756,13 +1020,85 @@ mod persistence_tests {
     fn save_without_uuid_is_refused() {
         let dir = temp_dir("nouuid");
         let _ = fs::remove_dir_all(&dir);
-        let store = PlayerStore::open(&dir.to_string_lossy()).unwrap();
+        let store = PlayerStore::open(&test_datasource(&dir)).unwrap();
         let err = store
-            .save(&PlayerState {
-                ..PlayerState::default()
-            })
+            .save(
+                "Alice",
+                &PlayerState {
+                    ..PlayerState::default()
+                },
+            )
             .unwrap_err();
         assert!(err.contains("UUID"), "err = {err}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A mid-transaction failure rolls back *every* earlier write of that
+    /// `save`, not just the failing statement (`save`'s ROLLBACK path).
+    #[test]
+    fn save_is_atomic_on_mid_transaction_failure() {
+        let dir = temp_dir("atomic");
+        let _ = fs::remove_dir_all(&dir);
+        let mut store = PlayerStore::open(&test_datasource(&dir)).unwrap();
+        let uuid = "00112233-4455-6677-8899-aabbccddeeff";
+
+        store
+            .save(
+                "Alice",
+                &PlayerState {
+                    player_uuid: uuid.to_string(),
+                    active_channel: "Global".to_string(),
+                    joined_channels: HashSet::from(["global".to_string()]),
+                    ..PlayerState::default()
+                },
+            )
+            .unwrap();
+
+        // Break the channels table name *after* open, so the schema is intact
+        // but the membership DELETE fails mid-save.
+        store.datasource.tables.channels = "trchat_player_channels_broken".into();
+        let err = store
+            .save(
+                "Alice",
+                &PlayerState {
+                    player_uuid: uuid.to_string(),
+                    active_channel: "Normal".to_string(),
+                    joined_channels: HashSet::from(["normal".to_string()]),
+                    ..PlayerState::default()
+                },
+            )
+            .unwrap_err();
+        assert!(
+            err.contains("trchat_player_channels_broken"),
+            "err = {err}"
+        );
+
+        // The broken save rolled back its own `player_state` UPDATE too, so
+        // the first save's state is untouched.
+        store.datasource.tables.channels = "trchat_player_channels".into();
+        let loaded = store.load(uuid).unwrap();
+        assert_eq!(loaded.active_channel, "Global");
+        assert_eq!(loaded.joined_channels, HashSet::from(["global".to_string()]));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `open` reports an error (never panics) when the SQLite file's parent
+    /// cannot be created — here the parent path is an existing plain file.
+    #[test]
+    fn open_reports_uncreatable_parent() {
+        let dir = temp_dir("badparent");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let blocker = dir.join("blocker");
+        fs::write(&blocker, "a file, not a directory").unwrap();
+
+        let mut datasource = test_datasource(&dir);
+        datasource.sqlite_file = blocker.join("data.db");
+        let err = match PlayerStore::open(&datasource) {
+            Err(error) => error,
+            Ok(_) => panic!("open should fail when the parent is a file"),
+        };
+        assert!(err.starts_with("cannot create"), "err = {err}");
         let _ = fs::remove_dir_all(&dir);
     }
 
