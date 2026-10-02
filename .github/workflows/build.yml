@@ -130,7 +130,7 @@ jobs:
       - name: Run Rust unit tests (JUnit)
         if: steps.check.outputs.exists == 'true'
         working-directory: pumpkin
-        run: cargo nextest run --lib --profile ci
+        run: cargo nextest run --lib --profile ci --no-fail-fast
 
       - name: Build plugin (WASM component)
         if: steps.check.outputs.exists == 'true'

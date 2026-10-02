@@ -258,7 +258,9 @@ mod tests {
 
     #[test]
     fn sqlite_resolves_fixed_tables_and_absolutized_file() {
-        let ds = Datasource::resolve(&sqlite_cfg(), Path::new("C:\\server\\plugins")).unwrap();
+        // Platform-independent absolute data folder (no bare drive letters).
+        let folder = std::env::temp_dir().join("trchat-datasource-test");
+        let ds = Datasource::resolve(&sqlite_cfg(), &folder).unwrap();
         assert_eq!(ds.backend, Backend::Sqlite);
         assert_eq!(
             ds.tables,
@@ -270,25 +272,27 @@ mod tests {
             }
         );
         // relative File + folder → normalized absolute (Mod :68).
-        assert_eq!(ds.sqlite_file, PathBuf::from("C:\\server\\plugins\\data.db"));
+        assert_eq!(ds.sqlite_file, folder.join("data.db"));
     }
 
     #[test]
     fn sqlite_respects_absolute_and_relative_file() {
         let mut cfg = sqlite_cfg();
-        cfg.sqlite_file = "D:\\db\\trchat.db".to_string();
-        let ds = Datasource::resolve(&cfg, Path::new("C:\\server\\plugins")).unwrap();
+        let absolute = std::env::temp_dir().join("db").join("trchat.db");
+        cfg.sqlite_file = absolute.to_string_lossy().into_owned();
+        let ds = Datasource::resolve(&cfg, Path::new("unused-folder")).unwrap();
         assert_eq!(
             ds.sqlite_file,
-            PathBuf::from("D:\\db\\trchat.db"),
+            absolute,
             "absolute File stays as-is"
         );
 
         cfg.sqlite_file = "data/../nested.db".to_string();
-        let ds = Datasource::resolve(&cfg, Path::new("C:\\server\\plugins")).unwrap();
+        let folder = Path::new("server").join("plugins");
+        let ds = Datasource::resolve(&cfg, &folder).unwrap();
         assert_eq!(
             ds.sqlite_file,
-            PathBuf::from("C:\\server\\plugins\\nested.db"),
+            folder.join("nested.db"),
             ".. is resolved lexically"
         );
     }
