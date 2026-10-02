@@ -1,7 +1,6 @@
 # TrChat data source / TrChat 数据源
-# Available types / 可用类型: SQLite, MySQL, MariaDB, PostgreSQL, JDBC
-# All four common drivers are bundled; no extra jar is needed.
-# SQLite、MySQL、MariaDB、PostgreSQL 驱动均已内嵌，不需要额外安装 jar。
+# The WASM sandbox has no JDBC driver, so only SQLite is supported.
+# WASM 沙箱没有 JDBC 驱动，仅支持 SQLite（MySQL / MariaDB / PostgreSQL / JDBC 已移除）。
 # Moderation state is stored in trchat_player_state and channel memberships in trchat_player_channels.
 # 禁言等状态保存于 trchat_player_state，玩家加入的频道及当前频道保存于 trchat_player_channels。
 Type: SQLite
@@ -10,50 +9,7 @@ SQLite:
   # Relative to config/trchat. Absolute paths are also accepted.
   # 相对于 config/trchat；也可填写绝对路径。
   File: data.db
-
-# Set Type to MySQL to use this section.
-# 使用此处配置时请把 Type 改为 MySQL。
-MySQL:
-  Host: 127.0.0.1
-  Port: 3306
-  Database: trchat
-  User: root
-  Password: ''
-  # Common options: useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC
-  # 常用参数：Unicode、UTF-8、SSL 和时区设置。
-  Parameters: 'useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC'
-
-# Set Type to MariaDB to use this section.
-# 使用此处配置时请把 Type 改为 MariaDB。
-MariaDB:
-  Host: 127.0.0.1
-  Port: 3306
-  Database: trchat
-  User: root
-  Password: ''
-  # MariaDB Connector/J parameters, without the leading question mark.
-  # MariaDB Connector/J 参数，不要填写开头的问号。
-  Parameters: 'useUnicode=true&characterEncoding=utf8&useSsl=false'
-
-# Set Type to PostgreSQL to use this section.
-# 使用此处配置时请把 Type 改为 PostgreSQL。
-PostgreSQL:
-  Host: 127.0.0.1
-  Port: 5432
-  Database: trchat
-  User: postgres
-  Password: ''
-  # PostgreSQL JDBC parameters, without the leading question mark.
-  # PostgreSQL JDBC 参数，不要填写开头的问号。
-  Parameters: ''
-
-# Advanced/custom JDBC connection. Set Type to JDBC.
-# 高级/自定义 JDBC 连接：把 Type 改为 JDBC。
-# Driver may be empty when the driver supports JDBC auto-loading.
-# 若驱动支持 JDBC 自动发现，Driver 可以留空。
-JDBC:
-  Driver: ''
-  Url: ''
-  User: ''
-  Password: ''
-  Table-Prefix: trchat_
+  # If the file (or its parent folder) does not exist yet, it is created
+  # automatically on startup, and the four tables are ensured with
+  # CREATE TABLE IF NOT EXISTS.
+  # 若文件或父目录不存在，启动时会自动创建，并自动建好四张数据表。

@@ -7,7 +7,7 @@
 //! * `settings.yml`      — server, chat guards, logging, updates, Redis
 //! * `channels/*.yml`    — one channel definition per file
 //! * `lang/*.yml`        — locale message tables (consumed by [`crate::lang`])
-//! * `datasource.yml`    — data source (SQLite / MySQL / …)
+//! * `datasource.yml`    — data source (SQLite only)
 //! * `filter.yml`        — blocked-word filter
 //! * `function.yml`      — chat functions (mention, item, …)
 //! * `special-chars.yml` — special-character table
@@ -15,9 +15,9 @@
 //! Fully typed and wired into the runtime today: `settings.yml` plus
 //! `channels/*.yml` (+ `lang/*.yml` through [`crate::lang`]),
 //! `filter.yml` (`TextFilter`), `function.yml` (`functions`),
-//! `special-chars.yml` (`special`) and `redis:` (`crate::redis`).
-//! `datasource.yml` is written and YAML-validated but not consumed yet — the
-//! honest same status Redis had until its bridge landed.
+//! `special-chars.yml` (`special`), `redis:` (`crate::redis`) and
+//! `datasource.yml` (consumed by [`crate::playerdata`] — the SQLite file is
+//! created and the four tables ensured on first open).
 //!
 //! Key naming matches the Mod (`camelCase` in `settings.yml`, `PascalCase`
 //! sections in channel files), so a single `config/trchat/` folder can be
@@ -3125,17 +3125,13 @@ Formats:
         let ds = parse_datasource(&value);
         assert_eq!(ds.kind(), "sqlite");
         assert_eq!(ds.sqlite_file, "data.db");
-        assert_eq!(ds.mysql.host, "127.0.0.1");
-        assert_eq!(ds.mysql.port, 3306);
-        assert_eq!(ds.mysql.database, "trchat");
-        assert_eq!(
-            ds.mysql.parameters,
-            "useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC"
-        );
-        assert_eq!(ds.postgresql.port, 5432);
-        assert_eq!(ds.mariadb.user, "root");
-        assert_eq!(ds.jdbc.table_prefix, "trchat_");
-        assert!(ds.jdbc.driver.is_empty()); // JDBC auto-discovery
+        // The bundled default only ships the SQLite section — the network /
+        // JDBC sections were removed, so they parse to empty defaults.
+        assert_eq!(ds.mysql.host, "");
+        assert_eq!(ds.mysql.port, 0);
+        assert_eq!(ds.postgresql.port, 0);
+        assert_eq!(ds.mariadb.user, "");
+        assert_eq!(ds.jdbc.table_prefix, "");
 
         // Type switches between sections without touching the others.
         let mut switched = ds.clone();
