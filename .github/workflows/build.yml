@@ -123,6 +123,15 @@ jobs:
         with:
           workspaces: pumpkin
 
+      - name: Install cargo-nextest
+        if: steps.check.outputs.exists == 'true'
+        uses: cargo-nextest/cargo-nextest@v1
+
+      - name: Run Rust unit tests (JUnit)
+        if: steps.check.outputs.exists == 'true'
+        working-directory: pumpkin
+        run: cargo nextest run --lib --profile ci
+
       - name: Build plugin (WASM component)
         if: steps.check.outputs.exists == 'true'
         working-directory: pumpkin
@@ -146,3 +155,11 @@ jobs:
           name: TrChat-pumpkin-${{ github.run_number }}
           path: pumpkin/target/wasm32-wasip2/release/trchat_pumpkin.wasm
           if-no-files-found: error
+
+      - name: Publish pumpkin JUnit report
+        if: (success() || failure()) && steps.check.outputs.exists == 'true'
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: pumpkin/target/nextest/ci/junit.xml
+          check_run_annotation: all
+          comment_mode: off
