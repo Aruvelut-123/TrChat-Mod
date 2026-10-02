@@ -125,7 +125,7 @@ jobs:
 
       - name: Install cargo-nextest
         if: steps.check.outputs.exists == 'true'
-        uses: cargo-nextest/cargo-nextest@v1
+        run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
 
       - name: Run Rust unit tests (JUnit)
         if: steps.check.outputs.exists == 'true'
