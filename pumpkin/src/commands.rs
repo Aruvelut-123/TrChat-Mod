@@ -945,7 +945,7 @@ fn state_text(sender: &CommandSender, enabled: bool) -> String {
 /// component per message; `add-child` removes that limitation.
 fn status_overview(sender: &CommandSender, server: &Server) -> TextComponent {
     // The Mod's own version, not the crate's: Cargo cannot hold a four-segment
-    // version, so `CARGO_PKG_VERSION` (`2.5.4+1`) would disagree with `/plugins`.
+    // version, so `CARGO_PKG_VERSION` (`2.5.4+2`) would disagree with `/plugins`.
     let version = crate::updater::CURRENT_VERSION;
     let controller = {
         let config = config::global_config();

@@ -192,8 +192,8 @@ plugins/data/trchat/
   `Bindings.Command`，而 `global_config()` 首次访问会初始化一份**默认**快照；先注册命令
   会让 `OnceLock` 被默认值占住，真实配置再也装不进去（`on_load` 已改为先
   `ChatManager::init` 再 `register_commands`，`init_global` 装不上时也会写日志）。
-* **版本号**：`Cargo.toml` 只能写三段（`2.5.4+1`），对外一律报告 `mod_version`
-  （`2.5.4.1`，由 `build.rs` 注入 `TRCHAT_VERSION`）——`/plugins`、`/trchat status`、
+* **版本号**：`Cargo.toml` 只能写三段（`2.5.4+2`），对外一律报告 `mod_version`
+  （`2.5.4.2`，由 `build.rs` 注入 `TRCHAT_VERSION`）——`/plugins`、`/trchat status`、
   `/ver` 与更新检查用的是同一个字符串。
 * **`datasource.yml` 落真实 SQLite**：WASM 沙箱没有 JDBC 驱动，所以网络后端分支
   （MySQL / MariaDB / PostgreSQL / JDBC）不支持，`Type` 分支只接受 `SQLite` / `Local`；
@@ -204,4 +204,4 @@ plugins/data/trchat/
   移植版直接不支持，未匹配类型在加载时报错。
 * 真机（Pumpkin `0.2.0+26.3-26.51`，Windows x64）冒烟测试已通过：插件加载、命令树
   （含权限拒绝路径）、`/trchat reload`、配置文件首次播种、`wasi:http` 拉取 GitHub
-  release 并完成版本比较（日志 `TrChat 2.5.4.1 is up to date.`）。
+  release 并完成版本比较（日志 `TrChat 2.5.4.2 is up to date.`）。

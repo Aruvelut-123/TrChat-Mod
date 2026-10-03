@@ -1823,7 +1823,7 @@ dependencies = [
 
 [[package]]
 name = "trchat-pumpkin"
-version = "2.5.4+1"
+version = "2.5.4+2"
 dependencies = [
  "pumpkin-plugin-api",
  "redis",
