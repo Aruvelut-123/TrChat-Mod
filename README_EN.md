@@ -12,7 +12,7 @@ A multi-loader, multi-version server-side port of the TrChat Bukkit plugin. Supp
 
 It does not include Bukkit, BungeeCord, Velocity, plugin-message proxy transport, or DiscordSRV. Redis is the only cross-server transport and remains wire-compatible with Bukkit TrChat `2.4.9`.
 
-> ⚠️ **`pumpkin-experimental` branch**: this branch is based on `v2` and additionally contains the `pumpkin/` directory — an **experimental** WASM plugin port of TrChat for [PumpkinMC](https://pumpkinmc.org) (a Rust Minecraft server). It is a WIP and not production-ready. The `v2` branch does not contain that directory. See [pumpkin/README.md](pumpkin/README.md).
+> ⚠️ **`pumpkin/` directory (experimental)**: this repository's `v2` branch contains the `pumpkin/` directory — an **experimental** WASM plugin port of TrChat for [PumpkinMC](https://pumpkinmc.org) (a Rust Minecraft server). It is a WIP and not production-ready. The port was previously developed on the `pumpkin-experimental` branch, which has now been merged into `v2`. See [pumpkin/README.md](pumpkin/README.md).
 
 Author and maintainer: [Baymaxawa](https://www.youtube.com/@baymaxawa). Original TrChat authors: Arasple and ItsFlicker. This port follows the newer branch maintained by ItsFlicker.
 
@@ -127,7 +127,7 @@ rustup target add wasm32-wasip2   # requires Rust 1.97+
 cargo build --release --target wasm32-wasip2
 ```
 
-The output is `pumpkin/target/wasm32-wasip2/release/trchat_pumpkin.wasm`; drop it into the Pumpkin server's `plugins/` directory. It pins Pumpkin's official released `pumpkin-plugin-api` stable tag rather than a nightly API. CI builds and verifies the WASM component on every push to this branch.
+The output is `pumpkin/target/wasm32-wasip2/release/trchat_pumpkin.wasm`; drop it into the Pumpkin server's `plugins/` directory. It pins Pumpkin's official released `pumpkin-plugin-api` stable tag rather than a nightly API. CI builds and verifies the WASM component on every push.
 
 ## License
 
