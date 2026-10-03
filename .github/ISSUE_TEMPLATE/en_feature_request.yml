@@ -2,6 +2,8 @@ name: Feature Request
 description: 'Warning: If you don’t follow the prompts to give feedback, this issue may be ignored or closed.'
 title: "[Feature] "
 labels: ['Enhancement | 新功能']
+assignees:
+  - Aruvelut-123
 body:
   - type: checkboxes
     id: issues-reviewed
