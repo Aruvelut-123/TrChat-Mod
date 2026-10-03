@@ -2,6 +2,8 @@ name: Error Report
 description: 'Warning: Failure to properly follow the prompts for feedback errors will be closed.'
 title: "[issue] "
 labels: ['Bug | 漏洞']
+assignees:
+  - Aruvelut-123
 body:
   - type: input
     id: latests
