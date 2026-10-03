@@ -1,0 +1,145 @@
+General-Too-Long: '&8[&3Tr&bChat&8] &7Your message is too long. &8[&6{0}&8/&2{1}&8]'
+General-Too-Similar: '&8[&3Tr&bChat&8] &7Please do not repeat similar messages.'
+General-Too-Duplicate: '&8[&3Tr&bChat&8] &7Excessive repeated content detected; please stop spamming.'
+General-Too-Frequent: '&8[&3Tr&bChat&8] &7You are sending messages too frequently; please wait.'
+General-No-Permission: '&8[&3Tr&bChat&8] &7You do not have permission.'
+General-Muted: '&8[&3Tr&bChat&8] &cYou are muted until {0}. Reason: {1}'
+General-Global-Muting: '&8[&3Tr&bChat&8] &cGlobal chat is muted.'
+General-Player-Not-Found: '&8[&3Tr&bChat&8] &7Player not found: {0}'
+General-Player-Only: '&8[&3Tr&bChat&8] &cThis command can only be used by a player.'
+Cooldowns-Chat: '&8[&3Tr&bChat&8] &7Wait &6{0} ms &7before chatting again.'
+Plugin-Loaded-Filter-Local: '&8[&3Tr&bChat&8] &aFILTER &8| &3Loaded local filter words &b{0} &3.'
+Plugin-Loaded-Filter-Cloud: '&8[&3Tr&bChat&8] &aFILTER &8| &3Loaded cloud filter words &a{0} &3. &8[{1} - {2}]'
+Plugin-Failed-Load-Filter-Cloud: '&8[&3Tr&bChat&8] &8Unable to update filter thesaurus from the cloud...'
+Channel-Join: '&8[&3Tr&bChat&8] &aJoined channel {0}.'
+Channel-Quit: '&8[&3Tr&bChat&8] &7Left channel {0}.'
+Channel-No-Speak-Permission: '&8[&3Tr&bChat&8] &cYou cannot speak in this channel.'
+Channel-Command-Unbound: '&8[&3Tr&bChat&8] &cChannel command /{0} was removed or is no longer bound.'
+Channel-Unknown: '&8[&3Tr&bChat&8] &cUnknown channel: {0}'
+Channel-Not-Found: '&8[&3Tr&bChat&8] &7The channel &b{0} &7does not exist.'
+Channel-Join-Other: '&8[&3Tr&bChat&8] &3You have moved &7{0} &3to the &b{1} &3channel.'
+Channel-Quit-Other: '&8[&3Tr&bChat&8] &3You have removed &7{0} &3from the chat channel.'
+Reload-Success: '&8[&3Tr&bChat&8] &aReload complete: {0} channels plus languages, function, filter, Redis, and channel commands.'
+Reload-Partial: '&8[&3Tr&bChat&8] &eLoaded {0} channels, but these sections failed: {1}. Check the server log.'
+Reload-Failed: '&8[&3Tr&bChat&8] &cReload failed for {0}. The last valid channel configuration remains active.'
+Status-State-Enabled: '&aenabled'
+Status-State-Disabled: '&cdisabled'
+Status-State-Connected: '&aconnected'
+Status-State-Reconnecting: '&ereconnecting'
+Status-Overview: |-
+  &8&m----------&r &3&lTr&b&lChat &8&m----------
+  &8▪ &7Ver: &b{0} &8| &7MC: &b1.21.1
+  &8▪ &7Channels: &a{1} &8| &7Default: &f{2}
+  &8▪ &7Redis: {3} &8| &7Mute: {4}
+  &8▪ &7CmdCtrl: {5} &8(&f{6}&8)
+  &8▪ &7Online: &a{7}&7/&2{8} &8| &f/trchat reload
+Status-Creator-Prefix: '&8▪ &7By: &fBaymaxawa &8• '
+Status-Creator-Link: '&d&nBilibili'
+Status-Creator-Link-Hover: '&7Click to open Baymaxawa''s Bilibili profile'
+Status-Original-Author: '&8▪ &7Original: &fArasple, ItsFlicker'
+Status-Repository-Prefix: '&8▪ &7Repo: '
+Status-Repository-Link: '&b&nGitHub / Issues'
+Status-Repository-Link-Hover: '&7Click to open the NeoForge repository or report an issue'
+Status-Footer: '&8&m--------------------------------'
+Player-Status-Overview: |-
+  &8&m--------&r &3&lPlayer status &8&m--------
+  &8▪ &7Player: &f{0} &8| &7Channel: &f{1}
+  &8▪ &7Joined: &f{2} &8| &7Ping: &f{3} ms
+  &8▪ &7Muted: {4} &8| &7Shadow: {5}
+  &8▪ &7Spy: {6} &8| &7OP: {7}
+  &8▪ &7Mode: &f{8}
+Player-Status-Mute-Detail: |-
+  &8▪ &7Expires: &f{0}
+  &8▪ &7Reason: &f{1}
+Player-Status-Permanent: 'permanent'
+Command-Controller-Disabled: '&8[&3Tr&bChat&8] &cCommand /{0} is not configured in the enabled Command-Controller.'
+Command-About: |-
+  &8&m----------&r &3&lTr&b&lChat &8&m----------
+  &8▪ &7Ver: &b{0}
+  &8▪ &7Original: &fArasple, ItsFlicker
+  &8▪ &7NeoForge: &fBaymaxawa
+  &8▪ &7MC: &f1.21.1 &8| &7NF: &f21.1.233+
+  &8&m--------------------------------
+Command-Help: |-
+  &8&m----------&r &3&lTr&b&lChat Help &8&m----------
+  &b/trchat status [player]
+  &b/trchat reload
+  &b/mute <player> <time> [reason]
+  &b/shadowmute <player> [on|off]
+  &b/trmsg <player> <message>
+  &b/trreply <message> &8| &b/trspy
+  &8&m--------------------------------
+Redis-Reconnect-Started: '&8[&3Tr&bChat&8] &aRedis reconnect started.'
+Global-Mute-On: '&8[&3Tr&bChat&8] &cGlobal chat is now muted.'
+Global-Mute-Off: '&8[&3Tr&bChat&8] &aGlobal chat is no longer muted.'
+Updater-Available: |-
+  &8&m----------&r &3&lUpdate found &8&m----------
+  &8▪ &7Current: &f{0} &8➜ &7Latest: &a{1}
+Updater-Link-Prefix: '&8▪ &7Download: '
+Updater-Link: '&a&nGitHub Releases'
+Updater-Link-Hover: '&7Click to open the TrChat NeoForge releases page'
+Updater-Changelog: '&8▪ &7Changelog:'
+Updater-Changelog-Empty: '&8  &7No release notes were provided.'
+Private-Message-No-Reply: '&8[&3Tr&bChat&8] &7There is nobody to reply to.'
+Private-Message-Spy-Format: '&8[&3Spy&8] &6{0} &2-> &3{1}&f: &7{2}'
+Private-Message-Spy-On: '&c&l&k|&f &a&lPrivate-message spy enabled &c&l&k|'
+Private-Message-Spy-Off: '&c&l&k|&f &c&lPrivate-message spy disabled &c&l&k|'
+Ignore-Ignored-Player: '&8[&3Tr&bChat&8] &7Ignored messages from &f{0}&7.'
+Ignore-Cancel-Player: '&8[&3Tr&bChat&8] &7Restored messages from &f{0}&7.'
+Ignore-List: '&8[&3Tr&bChat&8] &7Ignored players: &f{0}'
+Ignore-Self: '&8[&3Tr&bChat&8] &7You cannot ignore yourself.'
+Color-Selected: '&8[&3Tr&bChat&8] &7Selected chat color: {0}&7.'
+Color-Reset: '&8[&3Tr&bChat&8] &7Reset your chat color to the channel default.'
+Color-Invalid: '&8[&3Tr&bChat&8] &7Invalid chat color: {0}'
+Clear-Success: '&8[&3Tr&bChat&8] &7Cleared chat for {0}.'
+Mute-Muted-Player: '&8[&3Tr&bChat&8] &7Muted {0} for {1}. Reason: {2}'
+Mute-Cancel-Muted-Player: '&8[&3Tr&bChat&8] &7Unmuted {0}.'
+Mute-Shadow-On: '&8[&3Tr&bChat&8] &7Enabled ShadowMute for {0}.'
+Mute-Shadow-Off: '&8[&3Tr&bChat&8] &7Disabled ShadowMute for {0}.'
+Mute-Wrong-Format: '&8[&3Tr&bChat&8] &7Invalid duration: {0}'
+Function-Snapshot-Expired: '&8[&3Tr&bChat&8] &cThat inventory snapshot has expired.'
+Filter-Anvil-Blocked: '&8[&3Tr&bChat&8] &cThe item name contains blocked words.'
+Command-Controller-Deny: '&cYou cannot use that command.'
+Command-Controller-Cooldown: '&cThat command is on cooldown.'
+Channel-Private-Target: '&8[&3Tr&bChat&8] &7Private channels require a target player.'
+Console-Name: 'Console'
+Channel-Auto-Join-Missing: '&8[&3Tr&bChat&8] &cNo channel has Options.Auto-Join enabled.'
+Channel-No-Join-Permission: '&8[&3Tr&bChat&8] &cYou cannot join channel {0}.'
+Redis-Private-Unavailable: '&8[&3Tr&bChat&8] &cRedis is unavailable; the private message was not delivered.'
+Redis-Unsafe-Item: '&8[&3Tr&bChat&8] &cModded items cannot be shown cross-server; the private message was not delivered.'
+Redis-Force-Unavailable: '&8[&3Tr&bChat&8] &cRedis is unavailable; the message was not delivered.'
+Redis-Fallback: '&8[&3Tr&bChat&8] &eRedis is unavailable; the message was sent locally.'
+Function-Mention-Notify: '&d&l&k|&f &3&lPlayer &a&l{0} &3&lmentioned you in chat &d&l&k|'
+Function-Mention-Title: '&a&lYou were mentioned!'
+Function-Mention-Subtitle: '&3Player &a{0} &3mentioned you in chat'
+# Only these predefined English results are localizable; unknown keys are removed on load.
+Placeholder-Translations:
+  'yes': 'yes'
+  'no': 'no'
+  'SURVIVAL': 'SURVIVAL'
+  'CREATIVE': 'CREATIVE'
+  'ADVENTURE': 'ADVENTURE'
+  'SPECTATOR': 'SPECTATOR'
+  'Overworld': 'Overworld'
+  'Nether': 'Nether'
+  'The End': 'The End'
+  'N': 'N'
+  'NE': 'NE'
+  'E': 'E'
+  'SE': 'SE'
+  'S': 'S'
+  'SW': 'SW'
+  'W': 'W'
+  'NW': 'NW'
+  'invalid date': 'invalid date'
+  'invalid format and time': 'invalid format and time'
+Function-Mention-Hover: '&7{0} mentioned {1}'
+Function-Mention-All-Hover: '&7{0} mentioned everyone'
+Function-Item-Air: '&8[&7Air&8]'
+Function-Inventory-Format: '&8[&bInventory: {0}&8]'
+Function-Inventory-Hover: '&7Click to view the inventory snapshot'
+Function-Inventory-Title: '{0}''s Inventory'
+Function-EnderChest-Format: '&8[&5Ender Chest: {0}&8]'
+Function-EnderChest-Hover: '&7Click to view the ender chest snapshot'
+Function-EnderChest-Title: '{0}''s Ender Chest'
+Function-Item-Title: '{0}''s Item - {1}'

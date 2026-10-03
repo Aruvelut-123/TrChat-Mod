@@ -1,0 +1,15 @@
+# TrChat data source / TrChat 数据源
+# The WASM sandbox has no JDBC driver, so only SQLite is supported.
+# WASM 沙箱没有 JDBC 驱动，仅支持 SQLite（MySQL / MariaDB / PostgreSQL / JDBC 已移除）。
+# Moderation state is stored in trchat_player_state and channel memberships in trchat_player_channels.
+# 禁言等状态保存于 trchat_player_state，玩家加入的频道及当前频道保存于 trchat_player_channels。
+Type: SQLite
+
+SQLite:
+  # Relative to config/trchat. Absolute paths are also accepted.
+  # 相对于 config/trchat；也可填写绝对路径。
+  File: data.db
+  # If the file (or its parent folder) does not exist yet, it is created
+  # automatically on startup, and the four tables are ensured with
+  # CREATE TABLE IF NOT EXISTS.
+  # 若文件或父目录不存在，启动时会自动创建，并自动建好四张数据表。

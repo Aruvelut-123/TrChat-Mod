@@ -1,0 +1,9 @@
+# Probe build artifacts and runtime traces — the probe's source (`src/`,
+# `Cargo.toml`, `Cargo.lock`) is the acceptance evidence; `target/`, wasmtime
+# runs, and the `.db` files it produced are regenerable and must not land in git.
+/target/
+/sandbox/
+/tools/
+*.db
+*.db-wal
+probe-*/target/

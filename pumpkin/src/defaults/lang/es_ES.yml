@@ -1,0 +1,145 @@
+General-Too-Long: '&8[&3Tr&bChat&8] &7Tu mensaje es demasiado largo. &8[&6{0}&8/&2{1}&8]'
+General-Too-Similar: '&8[&3Tr&bChat&8] &7No repitas mensajes similares.'
+General-Too-Duplicate: '&8[&3Tr&bChat&8] &7Se detectó contenido repetido en exceso; por favor, deja de spammeo.'
+General-Too-Frequent: '&8[&3Tr&bChat&8] &7Estás enviando mensajes con demasiada frecuencia; espera un momento.'
+General-No-Permission: '&8[&3Tr&bChat&8] &7No tienes permiso.'
+General-Muted: '&8[&3Tr&bChat&8] &cEstás silenciado hasta {0}. Motivo: {1}'
+General-Global-Muting: '&8[&3Tr&bChat&8] &cEl chat global está silenciado.'
+General-Player-Not-Found: '&8[&3Tr&bChat&8] &7Jugador no encontrado: {0}'
+General-Player-Only: '&8[&3Tr&bChat&8] &cEste comando solo puede usarlo un jugador.'
+Cooldowns-Chat: '&8[&3Tr&bChat&8] &7Espera &6{0} ms &7antes de volver a hablar.'
+Plugin-Loaded-Filter-Local: '&8[&3Tr&bChat&8] &aFILTER &8| &3Cargadas &b{0} &3palabras de filtro locales.'
+Plugin-Loaded-Filter-Cloud: '&8[&3Tr&bChat&8] &aFILTER &8| &3Cargadas &a{0} &3palabras de filtro de la nube. &8[{1} - {2}]'
+Plugin-Failed-Load-Filter-Cloud: '&8[&3Tr&bChat&8] &8Imposible poder actualizar los filtros desde la nube...'
+Channel-Join: '&8[&3Tr&bChat&8] &aTe uniste al canal {0}.'
+Channel-Quit: '&8[&3Tr&bChat&8] &7Saliste del canal {0}.'
+Channel-No-Speak-Permission: '&8[&3Tr&bChat&8] &cNo puedes hablar en este canal.'
+Channel-Command-Unbound: '&8[&3Tr&bChat&8] &cEl comando de canal /{0} fue eliminado o ya no está vinculado.'
+Channel-Unknown: '&8[&3Tr&bChat&8] &cCanal desconocido: {0}'
+Channel-Not-Found: '&8[&3Tr&bChat&8] &7El canal &b{0} &7no existe.'
+Channel-Join-Other: '&8[&3Tr&bChat&8] &3Has movido a &7{0} &3al canal &b{1}&3.'
+Channel-Quit-Other: '&8[&3Tr&bChat&8] &3Has retirado a &7{0} &3del canal de chat.'
+Reload-Success: '&8[&3Tr&bChat&8] &aRecarga completada: {0} canales, idiomas, function, filter, Redis y comandos.'
+Reload-Partial: '&8[&3Tr&bChat&8] &eSe cargaron {0} canales, pero fallaron estas secciones: {1}. Revisa el registro.'
+Reload-Failed: '&8[&3Tr&bChat&8] &cFalló la recarga de {0}. Se conserva la última configuración válida.'
+Status-State-Enabled: '&aactivado'
+Status-State-Disabled: '&cdesactivado'
+Status-State-Connected: '&aconectado'
+Status-State-Reconnecting: '&ereconectando'
+Status-Overview: |-
+  &8&m----------&r &3&lTr&b&lChat &8&m----------
+  &8▪ &7Ver: &b{0} &8| &7MC: &b1.21.1
+  &8▪ &7Canales: &a{1} &8| &7Predet.: &f{2}
+  &8▪ &7Redis: {3} &8| &7Silencio: {4}
+  &8▪ &7CmdCtrl: {5} &8(&f{6}&8)
+  &8▪ &7Online: &a{7}&7/&2{8} &8| &f/trchat reload
+Status-Creator-Prefix: '&8▪ &7NeoForge: &fBaymaxawa &8• '
+Status-Creator-Link: '&d&nBilibili'
+Status-Creator-Link-Hover: '&7Haz clic para abrir el perfil de Bilibili de Baymaxawa'
+Status-Original-Author: '&8▪ &7Original: &fArasple, ItsFlicker'
+Status-Repository-Prefix: '&8▪ &7Repo: '
+Status-Repository-Link: '&b&nGitHub / Issues'
+Status-Repository-Link-Hover: '&7Haz clic para abrir el repositorio NeoForge o informar de un problema'
+Status-Footer: '&8&m--------------------------------'
+Player-Status-Overview: |-
+  &8&m--------&r &3&lEstado jugador &8&m--------
+  &8▪ &7Jugador: &f{0} &8| &7Canal: &f{1}
+  &8▪ &7Unido: &f{2} &8| &7Ping: &f{3} ms
+  &8▪ &7Silencio: {4} &8| &7Shadow: {5}
+  &8▪ &7Espía: {6} &8| &7OP: {7}
+  &8▪ &7Modo: &f{8}
+Player-Status-Mute-Detail: |-
+  &8▪ &7Expira: &f{0}
+  &8▪ &7Motivo: &f{1}
+Player-Status-Permanent: 'permanente'
+Command-Controller-Disabled: '&8[&3Tr&bChat&8] &cEl comando /{0} no está configurado en Command-Controller activado.'
+Command-About: |-
+  &8&m----------&r &3&lTr&b&lChat &8&m----------
+  &8▪ &7Ver: &b{0}
+  &8▪ &7Original: &fArasple, ItsFlicker
+  &8▪ &7NeoForge: &fBaymaxawa
+  &8▪ &7MC: &f1.21.1 &8| &7NF: &f21.1.233+
+  &8&m--------------------------------
+Command-Help: |-
+  &8&m----------&r &3&lAyuda Tr&b&lChat &8&m----------
+  &b/trchat status [jugador]
+  &b/trchat reload
+  &b/mute <jugador> <tiempo> [motivo]
+  &b/shadowmute <jugador> [on|off]
+  &b/trmsg <jugador> <mensaje>
+  &b/trreply <mensaje> &8| &b/trspy
+  &8&m--------------------------------
+Redis-Reconnect-Started: '&8[&3Tr&bChat&8] &aReconexión de Redis iniciada.'
+Global-Mute-On: '&8[&3Tr&bChat&8] &cEl chat global está silenciado.'
+Global-Mute-Off: '&8[&3Tr&bChat&8] &aEl chat global ya no está silenciado.'
+Updater-Available: |-
+  &8&m---------&r &3&lActualización &8&m---------
+  &8▪ &7Actual: &f{0} &8➜ &7Última: &a{1}
+Updater-Link-Prefix: '&8▪ &7Descarga: '
+Updater-Link: '&a&nGitHub Releases'
+Updater-Link-Hover: '&7Haz clic para abrir las versiones de TrChat NeoForge'
+Updater-Changelog: '&8▪ &7Registro de cambios:'
+Updater-Changelog-Empty: '&8  &7Esta versión no incluye notas de lanzamiento.'
+Private-Message-No-Reply: '&8[&3Tr&bChat&8] &7No hay nadie a quien responder.'
+Private-Message-Spy-Format: '&8[&3Espía&8] &6{0} &2-> &3{1}&f: &7{2}'
+Private-Message-Spy-On: '&c&l&k|&f &a&lEscucha de mensajes privados activada &c&l&k|'
+Private-Message-Spy-Off: '&c&l&k|&f &c&lEscucha de mensajes privados desactivada &c&l&k|'
+Ignore-Ignored-Player: '&8[&3Tr&bChat&8] &7Has ignorado los mensajes de &f{0}&7.'
+Ignore-Cancel-Player: '&8[&3Tr&bChat&8] &7Volverás a recibir mensajes de &f{0}&7.'
+Ignore-List: '&8[&3Tr&bChat&8] &7Jugadores ignorados: &f{0}'
+Ignore-Self: '&8[&3Tr&bChat&8] &7No puedes ignorarte a ti mismo.'
+Color-Selected: '&8[&3Tr&bChat&8] &7Color de chat seleccionado: {0}&7.'
+Color-Reset: '&8[&3Tr&bChat&8] &7Se restauró el color predeterminado del canal.'
+Color-Invalid: '&8[&3Tr&bChat&8] &7Color de chat inválido: {0}'
+Clear-Success: '&8[&3Tr&bChat&8] &7Chat limpiado para {0}.'
+Mute-Muted-Player: '&8[&3Tr&bChat&8] &7Silenciaste a {0} durante {1}. Motivo: {2}'
+Mute-Cancel-Muted-Player: '&8[&3Tr&bChat&8] &7Quitaste el silencio a {0}.'
+Mute-Shadow-On: '&8[&3Tr&bChat&8] &7ShadowMute activado para {0}.'
+Mute-Shadow-Off: '&8[&3Tr&bChat&8] &7ShadowMute desactivado para {0}.'
+Mute-Wrong-Format: '&8[&3Tr&bChat&8] &7Duración inválida: {0}'
+Function-Snapshot-Expired: '&8[&3Tr&bChat&8] &cLa captura del inventario ha expirado.'
+Filter-Anvil-Blocked: '&8[&3Tr&bChat&8] &cEl nombre contiene palabras bloqueadas.'
+Command-Controller-Deny: '&cNo puedes usar ese comando.'
+Command-Controller-Cooldown: '&cEse comando está en enfriamiento.'
+Channel-Private-Target: '&8[&3Tr&bChat&8] &7Los canales privados necesitan un jugador objetivo.'
+Console-Name: 'Consola'
+Channel-Auto-Join-Missing: '&8[&3Tr&bChat&8] &cNingún canal tiene Options.Auto-Join activado.'
+Channel-No-Join-Permission: '&8[&3Tr&bChat&8] &cNo puedes unirte al canal {0}.'
+Redis-Private-Unavailable: '&8[&3Tr&bChat&8] &cRedis no está disponible; el mensaje privado no fue entregado.'
+Redis-Unsafe-Item: '&8[&3Tr&bChat&8] &cLos objetos de mods no pueden mostrarse entre servidores; el mensaje privado no fue entregado.'
+Redis-Force-Unavailable: '&8[&3Tr&bChat&8] &cRedis no está disponible; el mensaje no fue entregado.'
+Redis-Fallback: '&8[&3Tr&bChat&8] &eRedis no está disponible; el mensaje se envió localmente.'
+Function-Mention-Notify: '&d&l&k|&f &3&lEl jugador &a&l{0} &3&lte mencionó en el chat &d&l&k|'
+Function-Mention-Title: '&a&l¡Te han mencionado!'
+Function-Mention-Subtitle: '&3El jugador &a{0} &3te mencionó en el chat'
+# Solo estos resultados ingleses predefinidos se pueden localizar; las claves desconocidas se eliminan.
+Placeholder-Translations:
+  'yes': 'sí'
+  'no': 'no'
+  'SURVIVAL': 'SUPERVIVENCIA'
+  'CREATIVE': 'CREATIVO'
+  'ADVENTURE': 'AVENTURA'
+  'SPECTATOR': 'ESPECTADOR'
+  'Overworld': 'Mundo normal'
+  'Nether': 'Nether'
+  'The End': 'El End'
+  'N': 'N'
+  'NE': 'NE'
+  'E': 'E'
+  'SE': 'SE'
+  'S': 'S'
+  'SW': 'SO'
+  'W': 'O'
+  'NW': 'NO'
+  'invalid date': 'fecha no válida'
+  'invalid format and time': 'formato y hora no válidos'
+Function-Mention-Hover: '&7{0} mencionó a {1}'
+Function-Mention-All-Hover: '&7{0} mencionó a todos'
+Function-Item-Air: '&8[&7Aire&8]'
+Function-Inventory-Format: '&8[&bInventario: {0}&8]'
+Function-Inventory-Hover: '&7Haz clic para ver la instantánea del inventario'
+Function-Inventory-Title: 'Inventario de {0}'
+Function-EnderChest-Format: '&8[&5Cofre de Ender: {0}&8]'
+Function-EnderChest-Hover: '&7Haz clic para ver la instantánea del cofre de Ender'
+Function-EnderChest-Title: 'Cofre de Ender de {0}'
+Function-Item-Title: 'Objeto de {0} - {1}'

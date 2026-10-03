@@ -7,6 +7,11 @@
   - loader 特有代码（入口点、事件绑定、配置、权限）放在独立文件并用 `//? if neoforge` / `//? if fabric` 包裹整个文件。
   - loader 无关的命令逻辑放在 `TrChatCommands`（NeoForge 事件在 `TrChatServerEvents`，Fabric 在 `TrChatServerEventsFabric`）。
   - 修改共享源码后必须分别验证所有节点（当前 5 版本 × NeoForge/Fabric，另加 1.20.1-Forge）的 `:版本-loader:test` 编译与测试通过。
+- 本项目的 `pumpkin-experimental` 分支以 `origin/v2` 为基线，仅额外包含 `pumpkin/` 目录（TrChat 对 PumpkinMC 的实验性 WASM 插件移植）：
+  - `pumpkin/` 是独立的 Rust crate，**不属于** Gradle/Stonecutter 构建，与 `src/`、`versions/` 完全隔离，修改它无需运行任何 `gradlew` 任务。
+  - 它固定依赖 Pumpkin 官方发布的 `pumpkin-plugin-api` 稳定标签（见 `pumpkin/Cargo.toml`），不得改回 nightly 或未发布的分支引用。
+  - 校验命令：`cd pumpkin && cargo build --release --target wasm32-wasip2`，产物为 `pumpkin/target/wasm32-wasip2/release/trchat_pumpkin.wasm`。
+  - 该分支的 README/README_EN/AGENTS/CI 不得偏离 `v2` 的对应内容，只允许追加 Pumpkin 相关说明与构建任务。
 - 所有 Git 提交标题必须使用 Conventional Commits 格式：`<type>(<scope>): <中文描述>`。
 - `type` 与可选的 `scope` 保持英文小写，以兼容 CI；冒号后的提交描述必须使用中文。
 - 每个提交只包含一个逻辑改动，并在提交前运行与改动风险相符的测试。

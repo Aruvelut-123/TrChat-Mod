@@ -12,6 +12,8 @@ TrChat Bukkit 插件的多加载器多版本服务端移植版。支持以下加
 
 不包含 Bukkit、BungeeCord、Velocity、插件消息代理或 DiscordSRV；跨服只通过 Redis，并保持与 Bukkit TrChat `2.4.9` 的聊天协议互通。
 
+> ⚠️ **`pumpkin-experimental` 分支**：本分支以 `v2` 为基线，额外包含 `pumpkin/` 目录——TrChat 对 [PumpkinMC](https://pumpkinmc.org)（Rust 实现的 Minecraft 服务端）的**实验性** WASM 插件移植，仍处于 WIP 状态，不保证生产可用。`v2` 分支不含该目录。详见 [pumpkin/README.md](pumpkin/README.md)。
+
 作者与维护者：[Baymaxawa](https://space.bilibili.com/475655508)；原版 TrChat 作者：Arasple、ItsFlicker。本项目基于 ItsFlicker 维护的较新分支继续移植。
 
 项目仓库与 Issue：[Aruvelut-123/TrChat-Mod](https://github.com/Aruvelut-123/TrChat-Mod)。
@@ -116,6 +118,18 @@ config/trchat/
 ```
 
 产物位于 `versions/<版本-加载器>/build/libs/`。
+
+### Pumpkin WASM 插件（实验性）
+
+`pumpkin/` 是一个独立的 Rust crate，不属于 Gradle 构建，需单独编译：
+
+```bash
+cd pumpkin
+rustup target add wasm32-wasip2   # 需 Rust 1.97+
+cargo build --release --target wasm32-wasip2
+```
+
+产物为 `pumpkin/target/wasm32-wasip2/release/trchat_pumpkin.wasm`，放入 Pumpkin 服务端的 `plugins/` 目录即可。它固定依赖 Pumpkin 官方发布的 `pumpkin-plugin-api` 稳定标签，不使用 nightly API。CI 会在本分支推送时自动构建并校验 WASM component。
 
 ## 许可证
 
