@@ -69,10 +69,10 @@ pub enum PrivateOutcome {
     /// The receiver ignores the sender: the sender still saw their own copy and
     /// the spies still saw the conversation, but the receiver did not.
     Ignored,
-    /// Neither a local player nor a Redis-known remote player has that name
+    /// Neither a local player nor a cross-server remote player has that name
     /// (`General-Player-Not-Found`).
     NotFound,
-    /// The receiver is on another server and Redis could not take the message
+    /// The receiver is on another server and no cross-server transport accepted the message
     /// (`Redis-Private-Unavailable`).
     RedisUnavailable,
     /// A cross-server message displayed an item another server cannot resolve,
@@ -87,8 +87,8 @@ pub enum PrivateOutcome {
 /// Shared by `/msg`, `/trreply` and the private-channel aliases. `target_name`
 /// is the spelling the sender typed: the exact account name is resolved from
 /// the local player list first and then from the Redis `UpdateNames` snapshots,
-/// which is how a message reaches a player on another server
-/// (`ChatService.java:162-167`).
+/// from the cross-server `UpdateNames` snapshots, which is how a message reaches
+/// a player on another server (`ChatService.java:162-167`).
 pub fn send_private(
     server: &Server,
     sender: &Player,
@@ -264,17 +264,30 @@ pub fn send_private(
     // is what travels.
     let processed_body = processed.as_ref().map_or(message, |out| out.body.as_str());
     let message_json = TextComponent::text(processed_body).to_json();
-    if !crate::redis::publish_private(
+    let published = crate::redis::publish_private(
         &exact_target,
         &sender_name,
         &receiver_json,
         &receiver_fallback,
         &message_json,
-    ) {
+    ) || crate::proxy::publish_private(
+        server,
+        &exact_target,
+        &sender_name,
+        &receiver_json,
+        &receiver_fallback,
+        &message_json,
+    );
+    if !published {
         return PrivateOutcome::RedisUnavailable;
     }
     if mention_target {
-        crate::redis::publish_send_lang(
+        let _ = crate::redis::publish_send_lang(
+            &exact_target,
+            "Function-Mention-Notify",
+            &[&sender_name],
+        ) || crate::proxy::publish_send_lang(
+            server,
             &exact_target,
             "Function-Mention-Notify",
             &[&sender_name],

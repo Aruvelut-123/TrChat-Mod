@@ -2,8 +2,8 @@
 
 > ⚠️ **实验性（Experimental）**：本目录是 TrChat v2 对
 > [PumpkinMC](https://pumpkinmc.org)（Rust 实现的 Minecraft 服务器）的独立实验性移植。
-> 聊天管线、频道、过滤、命令、权限、语言表、更新检查与跨服 Redis 互通
-> （`trchat-message` 协议，自研 RESP 客户端）均已按 Mod 逐条对齐。
+> 聊天管线、频道、过滤、命令、权限、语言表、更新检查与跨服互通
+> （Redis `trchat-message` + Bukkit/Velocity 插件消息协议）均已按 Mod 逐条对齐。
 
 ## 这是什么
 
@@ -18,7 +18,7 @@ Gradle 构建，与仓库根目录的 Kotlin 模块（`src/`、`versions/`）并
 | 加载机制 | `plugin.yml` + Java 类加载 | WASM Component，放入服务器 `plugins/` |
 | 聊天事件 | `AsyncChatEvent`（Paper） | `PlayerChatEvent`（WIT 事件，可取消、可改消息） |
 | 配置 | `config/trchat/*.yml`（YAML） | 同一套 YAML，落在插件数据目录下 |
-| 互通 | Redis `trchat-message` 协议 | **已实现**：自研 RESP 客户端（`src/redis.rs` + `src/resp.rs`），公共/私聊/全局静音/名单/语言通知五通道对齐 Mod 线协议 |
+| 互通 | Redis `trchat-message` 协议 | **已实现**：自研 RESP 客户端（`src/redis.rs` + `src/resp.rs`），并支持 Bukkit/Velocity 插件消息桥（`src/proxy.rs`）；公共/私聊/全局静音/名单/语言通知均对齐 Mod 线协议 |
 
 ## 构建
 
@@ -57,7 +57,7 @@ wasm-tools component wit target/wasm32-wasip2/release/trchat_pumpkin.wasm
 * **玩家数据**：`SessionPlayers` 会话注册表（活跃频道、已加入频道、禁言、忽略、全局禁言）
 * **权限**：Mod 的 `trchat.*` 节点全集（含 `trchat.color.<0-9a-f>` 共 16 个），注册默认值与 Mod 一致；`reload` / `redis reconnect` 为仅 OP2
 * **配置热重载**：`/trchat reload` 重新读取数据目录中的 YAML（`settings.yml` + `channels/` + `lang/` + `filter.yml` + `function.yml` + `special-chars.yml`），输出成功 / 部分失败 / 整体失败三态
-* 声明了 Redis 互通所需的网络权限（`network.tcp.*`、`network.dns`、`network.loopback`）与更新检查所需的 `http.outbound`
+* 声明了 Redis 互通所需的网络权限（`network.tcp.*`、`network.dns`、`network.loopback`）与更新检查所需的 `http.outbound`；插件消息桥无需额外网络权限
 
 ## 配置
 
@@ -78,7 +78,7 @@ plugins/data/trchat/
 │                         #   antiRepeat* / antiHighFrequency* / antiDuplicate* /
 │                         #   blockedWords / filterReplacement / disabledWorlds）、
 │                         #   logging.*（日志格式与保留天数）、
-│                         #   updates.*（enabled / intervalMinutes）、redis.*
+│                         #   updates.*（enabled / intervalMinutes）、redis.*、proxy.*
 ├── channels/             # 每文件一个频道（Normal / Global / Staff / Private / …）
 │   ├── Normal.yml        #   Options / Bindings(Prefix,Command) / Formats / Sender / Receiver / Console
 │   ├── Global.yml        #   Prefix: ['!all']  + Command: ['global', 'all', 'shout']
@@ -97,6 +97,7 @@ plugins/data/trchat/
   （`Options.Auto-Join: true`，如 `Normal.yml`）的默认频道；`Private.yml` 绑定
   `/msg` 等命令并用 `Sender` / `Receiver` 模板渲染私聊。
 * **语言回退链**：玩家语言 → `chat.defaultLanguage` → `en_US` → 原始 key。
+* **代理互通**：在 `settings.yml` 中启用 `proxy.enabled`；Velocity 使用 `proxy.mode: velocity`（后端发 `trchat:proxy`、代理回发 `trchat:server`），Bungee 使用 `proxy.mode: bungee`（双向 `trchat:main`）。开启 Redis 与代理时，Redis 发布失败才会回退到代理。
 * 数据目录中的同名 YAML **覆盖**内置默认值（首次启动写入的副本就是操作员编辑的版本）。
 
 ## 命令
@@ -105,10 +106,10 @@ plugins/data/trchat/
 
 | 命令 | 权限 | 说明 |
 | --- | --- | --- |
-| `/trchat status` | 无 | 插件概览：版本、频道数、默认频道、Redis / 禁言 / 命令控制状态、在线数 |
+| `/trchat status` | 无 | 插件概览：版本、频道数、默认频道、Redis/代理 / 禁言 / 命令控制状态、在线数 |
 | `/trchat status <玩家>` | `trchat.admin` | 该玩家的频道、禁言（含到期与原因）、影禁言、监听、OP 等级 |
 | `/trchat reload` | **仅 OP2** | 重读数据目录 YAML，输出成功 / 部分失败（列出失败段）/ 整体失败三态 |
-| `/trchat redis reconnect` | **仅 OP2** | 触发 Redis 重连（移植版无 Redis 运行时，仅回显提示键） |
+| `/trchat redis reconnect` | **仅 OP2** | 触发 Redis 重连；代理插件消息桥随配置实时可用 |
 | `/trchat mute` | `trchat.mute` | 切换全服禁言 |
 | `/trchat mute on\|off` | `trchat.mute` | 显式设置全服禁言 |
 | `/trchat mute player <玩家> <时长> [原因]` | `trchat.mute` | 禁言一名玩家（时长支持 `30s` / `5m` / `1h` / `1d` / `7d` / `permanent` 等，原因省略记 `-`） |
@@ -150,6 +151,7 @@ plugins/data/trchat/
 - [x] 权限节点注册（Mod 的 `trchat.*` 节点全集，含 16 个 `trchat.color.*`）
 - [x] 更新检查（GitHub release API + 语义版本比较 + 在线管理员通知，见 `updates:`）
 - [x] Redis 跨服互通：监听 `trchat-message` 频道，与现有 Bukkit/Bungee/Velocity 聊天体系打通
+- [x] 插件消息跨服互通：`proxy.enabled` + `proxy.mode`（`velocity` / `bungee`），Redis 优先、发布失败时回退代理；采用上游的 Base64 JSON 数组 + `uid/index/total/data` 分片封包，兼容 `UpdateAllNames` 名单广播
   （自研 RESP 客户端：TCP 直连 + AUTH/SELECT + 订阅循环 + 断线重连；`BroadcastRaw` / `SendPrivateRaw` /
   `GlobalMute` / `UpdateNames` / `SendLang` 五类 action 与 `ForwardMessage` 剥壳，见 `src/redis.rs`）
 - [x] 特殊字符（`special-chars.yml` 彩色 emoji 白名单 + 颜色包裹）与内置占位符
@@ -192,8 +194,8 @@ plugins/data/trchat/
   `Bindings.Command`，而 `global_config()` 首次访问会初始化一份**默认**快照；先注册命令
   会让 `OnceLock` 被默认值占住，真实配置再也装不进去（`on_load` 已改为先
   `ChatManager::init` 再 `register_commands`，`init_global` 装不上时也会写日志）。
-* **版本号**：`Cargo.toml` 只能写三段（`2.5.4+2`），对外一律报告 `mod_version`
-  （`2.5.4.2`，由 `build.rs` 注入 `TRCHAT_VERSION`）——`/plugins`、`/trchat status`、
+* **版本号**：`Cargo.toml` 只能写三段（`2.5.4+3`），对外一律报告 `mod_version`
+  （`2.5.4.3`，由 `build.rs` 注入 `TRCHAT_VERSION`）——`/plugins`、`/trchat status`、
   `/ver` 与更新检查用的是同一个字符串。
 * **`datasource.yml` 落真实 SQLite**：WASM 沙箱没有 JDBC 驱动，所以网络后端分支
   （MySQL / MariaDB / PostgreSQL / JDBC）不支持，`Type` 分支只接受 `SQLite` / `Local`；
@@ -204,4 +206,4 @@ plugins/data/trchat/
   移植版直接不支持，未匹配类型在加载时报错。
 * 真机（Pumpkin `0.2.0+26.3-26.51`，Windows x64）冒烟测试已通过：插件加载、命令树
   （含权限拒绝路径）、`/trchat reload`、配置文件首次播种、`wasi:http` 拉取 GitHub
-  release 并完成版本比较（日志 `TrChat 2.5.4.2 is up to date.`）。
+  release 并完成版本比较（日志 `TrChat 2.5.4.3 is up to date.`）。

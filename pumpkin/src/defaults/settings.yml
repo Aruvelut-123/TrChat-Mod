@@ -52,7 +52,8 @@ updates:
   # Minutes between checks. The Bukkit upstream default is 15 minutes.
   intervalMinutes: 15
 
-# Redis is the only supported cross-server transport.
+# Redis and the Bukkit/Velocity plugin-message bridge may both be enabled.
+# The chat path prefers Redis and falls back to plugin messages when Redis cannot publish.
 redis:
   enabled: false
   host: "127.0.0.1"
@@ -67,3 +68,9 @@ redis:
   reconnectDelayMillis: 3000
   # Do not change when interoperating with the Bukkit version.
   channel: "trchat-message"
+
+# Bukkit/Velocity plugin-message transport (same protocol as the Java Mod).
+proxy:
+  enabled: false
+  # velocity uses trchat:proxy -> trchat:server; bungee uses trchat:main both ways.
+  mode: velocity

@@ -1,10 +1,10 @@
 [package]
 name = "trchat-pumpkin"
 # Kept in step with `mod_version` in the repository `gradle.properties`
-# (`2.5.4.2`). Cargo versions are strict `MAJOR.MINOR.PATCH`, so the Mod's fourth
+# (`2.5.4.3`). Cargo versions are strict `MAJOR.MINOR.PATCH`, so the Mod's fourth
 # segment lives in build metadata; the plugin reports the exact `mod_version`
 # through `TRCHAT_VERSION` (see `build.rs`), which is what the server lists.
-version = "2.5.4+2"
+version = "2.5.4+3"
 edition = "2021"
 description = "TrChat experimental support for PumpkinMC (Rust / WASM plugin)"
 license = "MIT"
@@ -13,9 +13,10 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [dependencies]
+base64 = "0.22"
 pumpkin-plugin-api = { git = "https://github.com/Pumpkin-MC/Pumpkin", tag = "0.2.0+26.3-26.51" }
 regex = "1.13.1"
-# Cross-server chat (`Redis.Enabled`, `/trchat redis reconnect`). Redis itself
+# Cross-server Redis chat (`Redis.Enabled`, `/trchat redis reconnect`). Redis itself
 # speaks RESP over TCP and `wasm32-wasip2`'s `std` provides `std::net`, so the
 # client is a library rather than a hand-rolled protocol: the Java port needed
 # its own `RespConnection` only because it had no dependency to lean on.

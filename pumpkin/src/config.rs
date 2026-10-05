@@ -4,7 +4,7 @@
 //! startup the plugin writes the bundled defaults (byte-identical copies of
 //! `src/main/resources/defaults/`) into the plugin data folder, then loads:
 //!
-//! * `settings.yml`      — server, chat guards, logging, updates, Redis
+//! * `settings.yml`      — server, chat guards, logging, updates, Redis, proxy
 //! * `channels/*.yml`    — one channel definition per file
 //! * `lang/*.yml`        — locale message tables (consumed by [`crate::lang`])
 //! * `datasource.yml`    — data source (SQLite only)
@@ -15,8 +15,8 @@
 //! Fully typed and wired into the runtime today: `settings.yml` plus
 //! `channels/*.yml` (+ `lang/*.yml` through [`crate::lang`]),
 //! `filter.yml` (`TextFilter`), `function.yml` (`functions`),
-//! `special-chars.yml` (`special`), `redis:` (`crate::redis`) and
-//! `datasource.yml` (consumed by [`crate::playerdata`] — the SQLite file is
+//! `special-chars.yml` (`special`), `redis:` (`crate::redis`), `proxy:`
+//! (`crate::proxy`) and `datasource.yml` (consumed by [`crate::playerdata`] — the SQLite file is
 //! created and the four tables ensured on first open).
 //!
 //! Key naming matches the Mod (`camelCase` in `settings.yml`, `PascalCase`
@@ -74,6 +74,7 @@ pub struct Settings {
     pub logging: LoggingSection,
     pub updates: UpdatesSection,
     pub redis: RedisSection,
+    pub proxy: ProxySection,
 }
 
 /// `chat:` — the guards and display knobs used by the chat pipeline.
@@ -178,6 +179,15 @@ pub struct RedisSection {
     pub channel: String,
 }
 
+/// `proxy:` — Bukkit/Velocity plugin-message transport.  `mode` accepts
+/// `velocity` (the default) or `bungee` and uses the upstream TrChat channels.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ProxySection {
+    pub enabled: bool,
+    pub mode: String,
+}
+
 /// One parsed channel: the `Options`/`Bindings`/`Formats`/`Sender`/
 /// `Receiver`/`Console` sections of a `channels/<Id>.yml` file.
 #[derive(Debug, Clone)]
@@ -244,8 +254,9 @@ pub struct ChannelOptions {
     pub private: bool,
     /// `ALL` | `SELF` | `SINGLE_WORLD` | `DISTANCE;<blocks>`.
     pub target: String,
-    /// Consumed by the Redis cross-server proxy (`chat.rs` Proxy channel
-    /// publish; `Force-Proxy` blocks non-proxied traffic).
+    /// Enables cross-server publishing through Redis first, then the configured
+    /// plugin-message proxy bridge (`chat.rs` Proxy channel publish; `Force-Proxy`
+    /// blocks non-proxied traffic).
     pub proxy: bool,
     /// `Force-Proxy` — reject when the channel is proxy-only.
     pub force_proxy: bool,
@@ -3279,5 +3290,7 @@ Replacement: ''
         assert_eq!(settings.updates.interval_minutes, 15);
         assert_eq!(settings.chat.server_id, 25565);
         assert_eq!(settings.chat.default_language, "zh_CN");
+        assert!(!settings.proxy.enabled);
+        assert_eq!(settings.proxy.mode, "velocity");
     }
 }

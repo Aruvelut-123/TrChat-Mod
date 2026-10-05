@@ -276,7 +276,7 @@ fn channel_subtree() -> CommandNode {
         )
 }
 
-/// §1.6 — tab-completes online player names, plus the Redis-known remote names
+/// §1.6 — tab-completes online player names, plus the cross-server remote names
 /// (`ChatService.knownPlayerNames`, `ChatService.java:276-287`).
 struct PlayerNames;
 
@@ -945,7 +945,7 @@ fn state_text(sender: &CommandSender, enabled: bool) -> String {
 /// component per message; `add-child` removes that limitation.
 fn status_overview(sender: &CommandSender, server: &Server) -> TextComponent {
     // The Mod's own version, not the crate's: Cargo cannot hold a four-segment
-    // version, so `CARGO_PKG_VERSION` (`2.5.4+2`) would disagree with `/plugins`.
+    // version, so `CARGO_PKG_VERSION` (`2.5.4+3`) would disagree with `/plugins`.
     let version = crate::updater::CURRENT_VERSION;
     let controller = {
         let config = config::global_config();
@@ -971,13 +971,13 @@ fn status_overview(sender: &CommandSender, server: &Server) -> TextComponent {
         players.is_global_muted()
     };
 
-    // §1.2 — the overview reports the Redis transport state: disabled when the
-    // config turns it off, otherwise connected or still reconnecting as the
-    // bridge currently is (`Status-State-Disabled` / `Status-State-Connected` /
+    // §1.2 — the overview reports the combined cross-server transport state:
+    // Redis is preferred, while a ready plugin-message carrier also counts as
+    // connected (`Status-State-Disabled` / `Status-State-Connected` /
     // `Status-State-Reconnecting`, `TrChatCommands.java:281-286`).
-    let redis_state = if !crate::redis::is_enabled() {
+    let redis_state = if !crate::redis::is_enabled() && !crate::proxy::is_enabled() {
         message("Status-State-Disabled", sender, &[]).to_string()
-    } else if crate::redis::is_connected() {
+    } else if crate::redis::is_connected() || crate::proxy::is_ready(server) {
         message("Status-State-Connected", sender, &[]).to_string()
     } else {
         message("Status-State-Reconnecting", sender, &[]).to_string()
@@ -1471,10 +1471,10 @@ fn set_global_mute(sender: &CommandSender, server: &Server, muted: bool) {
             .unwrap_or_else(|e| e.into_inner());
         players.set_global_muted(muted);
     }
-    // §1.6 — with Redis connected, the state change is relayed to every other
-    // server, which applies it locally and announces it to its own players
-    // (`ChatService.java:334-336`; the payload is `on`/`off`).
-    crate::redis::publish_global_mute(muted);
+    // §1.6 — relay to every other server, preferring Redis and falling back to
+    // the plugin-message proxy bridge (`ChatService.java:334-336`).
+    let _ = crate::redis::publish_global_mute(muted)
+        || crate::proxy::publish_global_mute(server, muted);
     // The announcement goes to everyone online, including the issuer.
     let key = if muted {
         "Global-Mute-On"
@@ -1570,7 +1570,7 @@ fn reason_or_dash(reason: &str) -> String {
 
 /// Whether `name` belongs to a known player (case-insensitive).
 ///
-/// The upstream ignore command consults the Redis-known player list as well, so
+/// The upstream ignore command consults the cross-server player list as well, so
 /// a player parked on another server can be ignored
 /// (`ChatService.findKnownPlayer`, `ChatService.java:1168-1175`).
 fn player_exists(server: &Server, name: &str) -> bool {
@@ -1650,7 +1650,7 @@ impl CommandHandler for IgnoreCommand {
             return Ok(0);
         }
         // The target has to be a known player. The upstream also consults the
-        // Redis-known list; this port only knows who is online.
+        // Cross-server list; this port only knows who is online.
         if !player_exists(&server, &target) {
             send(
                 &sender,

@@ -7,8 +7,9 @@
 //! * renders the message with the configured format,
 //! * broadcasts the rendered message to all online players,
 //! * relays chat, private messages, the player list, the global mute and
-//!   language notices to other TrChat servers over Redis (`redis::start`), in
-//!   the wire format the Bukkit/NeoForge Mod publishes.
+//!   language notices to other TrChat servers over Redis or the Bukkit/Velocity
+//!   plugin-message bridge (`redis::start` / `proxy::start`), in the wire format
+//!   the Bukkit/NeoForge Mod publishes.
 //!
 //! The crate declares the network permissions the Redis transport needs.
 
@@ -30,6 +31,7 @@ mod perms;
 mod placeholder;
 mod playerdata;
 mod private_msg;
+mod proxy;
 mod redis;
 mod resp;
 mod snapshot;
@@ -101,8 +103,10 @@ impl Plugin for TrChatPlugin {
         crate::block_filter::register(&context)?;
         // Last: the checker reads the global config `ChatManager::init` seeds.
         crate::updater::start(&context)?;
-        // Cross-server chat reads the same configuration; it stays inert until
-        // `redis.enabled` is set.
+        // Cross-server chat reads the same configuration.  Both transports are
+        // registered so `/trchat reload` can enable either one without a plugin
+        // restart; the chat path prefers Redis and falls back to plugin messages.
+        crate::proxy::start(&context)?;
         crate::redis::start(&context)?;
         // Player-data persistence: restores chat state on join, stores it on
         // leave (`datasource.yml` semantics; file-backed execution layer).

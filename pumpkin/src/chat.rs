@@ -649,14 +649,12 @@ fn chat_pipeline(
         return ChatOutcome::Accepted;
     }
 
-    // §1.3 step 6.5 — the `Proxy` option (`ChatService.java:603-623`): with Redis
-    // enabled and a cross-server-safe body, the message is *published* instead of
-    // broadcast locally. This server's own subscription echoes the packet back
-    // and `redis::receive_broadcast` delivers it to the local receivers (and logs
-    // it), which is why a successful publish returns without touching the loop
-    // below.
+    // §1.3 step 6.5 — the `Proxy` option (`ChatService.java:603-623`): with a
+    // cross-server-safe body, Redis is tried first and the plugin-message proxy
+    // bridge is the fallback. A successful transport returns without touching
+    // the local loop below; the receiving side delivers the echoed packet.
     if let Some(ch) = channel {
-        if ch.options.proxy && crate::redis::is_enabled() {
+        if ch.options.proxy {
             // §2.8 — a body showing an item another server cannot resolve is
             // simply broadcast locally instead (`processed.crossServerSafe()`).
             let cross_server_safe = outcome.as_ref().is_none_or(|out| out.cross_server_safe);
@@ -676,6 +674,16 @@ fn chat_pipeline(
                     .unwrap_or_default();
                 mentioned.sort();
                 let published = crate::redis::publish_broadcast(
+                    &player.get_id().to_string(),
+                    &component_json,
+                    ch.listen_permission(),
+                    ch.options.double_transfer,
+                    &ch.options.ports,
+                    &fallback,
+                    &name,
+                    &mentioned.join(","),
+                ) || crate::proxy::publish_broadcast(
+                    server,
                     &player.get_id().to_string(),
                     &component_json,
                     ch.listen_permission(),

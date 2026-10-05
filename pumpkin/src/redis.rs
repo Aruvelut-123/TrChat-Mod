@@ -64,7 +64,7 @@ const POLL_TIMEOUT: Duration = Duration::from_millis(1);
 
 /// `ChatService.REMOTE_PLAYER_TTL` — a `UpdateNames` snapshot older than this is
 /// no longer offered to `/msg`.
-const REMOTE_PLAYER_TTL: Duration = Duration::from_secs(35);
+const REMOTE_PLAYER_TTL: Duration = Duration::from_secs(90);
 
 /// `ChatService.tick` publishes the player list every 200 ticks.
 const PLAYER_NAMES_INTERVAL_TICKS: u32 = 200;
@@ -559,7 +559,7 @@ pub fn exact_remote_name(requested: &str) -> Option<String> {
     find_remote_player(requested).map(|player| player.name)
 }
 
-/// The account names of every Redis-known remote player, deduplicated and
+/// The account names of every cross-server remote player, deduplicated and
 /// sorted — the remote half of `ChatService.knownPlayerNames`
 /// (`ChatService.java:276-287`).
 pub fn remote_player_names() -> Vec<String> {
@@ -850,13 +850,28 @@ fn unwrap(message: &Message) -> Vec<String> {
 /// `ChatService.handleRedisMessage`.
 fn handle(server: &Server, message: &Message) {
     let data = unwrap(message);
+    dispatch_fields(server, &data);
+}
+
+/// Dispatches one decoded TrChat action, regardless of whether it arrived over
+/// Redis or the proxy plugin-message bridge.
+pub(crate) fn handle_fields(server: &Server, fields: &[String]) {
+    let mut data = fields.to_vec();
+    while data.len() > 1 && data[0] == "ForwardMessage" {
+        data.remove(0);
+    }
+    dispatch_fields(server, &data);
+}
+
+fn dispatch_fields(server: &Server, data: &[String]) {
     let Some(action) = data.first() else {
         return;
     };
     match action.as_str() {
-        "BroadcastRaw" => receive_broadcast(server, &data),
-        "SendPrivateRaw" => receive_private(server, &data),
-        "UpdateNames" => receive_player_names(&data),
+        "BroadcastRaw" => receive_broadcast(server, data),
+        "SendPrivateRaw" => receive_private(server, data),
+        "UpdateNames" => receive_player_names(data),
+        "UpdateAllNames" => receive_all_player_names(data),
         "GlobalMute" => {
             if let Some(value) = data.get(1) {
                 let muted = value.eq_ignore_ascii_case("on");
@@ -866,9 +881,9 @@ fn handle(server: &Server, message: &Message) {
                     .set_global_muted(muted);
             }
         }
-        "SendLang" => receive_language_notice(server, &data),
+        "SendLang" => receive_language_notice(server, data),
         other => crate::diag::debug(format!(
-            "Ignoring unsupported Bukkit Redis action '{other}'"
+            "Ignoring unsupported TrChat cross-server action '{other}'"
         )),
     }
 }
@@ -888,7 +903,7 @@ fn handle(server: &Server, message: &Message) {
 /// hover/click as unknown fields — which is why cross-server messages lost
 /// their hover (e.g. the `%server_time%` hover line). These helpers remap the
 /// keys at the JSON level so the wire always carries the Adventure shape.
-fn to_adventure_wire_json(component_json: &str) -> String {
+pub(crate) fn to_adventure_wire_json(component_json: &str) -> String {
     let Ok(mut value) = serde_json::from_str::<serde_json::Value>(component_json) else {
         return component_json.to_string();
     };
@@ -1218,10 +1233,8 @@ fn receive_private(server: &Server, data: &[String]) {
     if from.trim().is_empty() {
         return;
     }
-    if let Some(target) = target {
-        if !ignored {
-            crate::private_msg::remember_correspondent(&target_name, &from);
-        }
+    if target.is_some() && !ignored {
+        crate::private_msg::remember_correspondent(&target_name, &from);
     }
     // Field 5 carries the spy view; its fallback is the delivered text
     // (`ChatService.java:1047-1049`).
@@ -1246,6 +1259,42 @@ fn receive_player_names(data: &[String]) {
     let names = split_list(&data[2]);
     let display_names = split_list(&data[3]);
     let uuids = split_list(&data[4]);
+    let players = parse_remote_players(&names, &display_names, &uuids);
+    lock_remote_players().insert(
+        reported.to_string(),
+        RemoteServerPlayers {
+            updated_at: Instant::now(),
+            players,
+        },
+    );
+}
+
+/// `ChatService.receiveAllPlayerNames` — the aggregate snapshot sent by a
+/// Bungee/Velocity proxy after a backend publishes `UpdateNames`.
+fn receive_all_player_names(data: &[String]) {
+    if data.len() < 4 {
+        return;
+    }
+    let names = split_list(&data[1]);
+    let display_names = split_list(&data[2]);
+    let uuids = split_list(&data[3]);
+    let players = parse_remote_players(&names, &display_names, &uuids);
+    let mut remote = lock_remote_players();
+    remote.clear();
+    remote.insert(
+        "proxy".to_string(),
+        RemoteServerPlayers {
+            updated_at: Instant::now(),
+            players,
+        },
+    );
+}
+
+fn parse_remote_players(
+    names: &[String],
+    display_names: &[String],
+    uuids: &[String],
+) -> Vec<RemotePlayer> {
     let mut players = Vec::new();
     for (index, name) in names.iter().enumerate() {
         if name.trim().is_empty() {
@@ -1264,13 +1313,7 @@ fn receive_player_names(data: &[String]) {
             uuid,
         });
     }
-    lock_remote_players().insert(
-        reported.to_string(),
-        RemoteServerPlayers {
-            updated_at: Instant::now(),
-            players,
-        },
-    );
+    players
 }
 
 /// `ChatService.receiveLanguageNotice` — either the mention alert or a literal
