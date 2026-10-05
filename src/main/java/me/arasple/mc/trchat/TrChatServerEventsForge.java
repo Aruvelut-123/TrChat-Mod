@@ -44,7 +44,7 @@ public final class TrChatServerEventsForge extends TrChatCommands {
             updateChecker = new UpdateChecker(event.getServer(), service.languages(), modVersion());
             updateChecker.start();
         }
-        TrChatMod.LOGGER.info("{} started with {} channels (Forge 1.20.1 LTS, Redis-only transport)",
+        TrChatMod.LOGGER.info("{} started with {} channels (Forge 1.20.1 LTS, Redis/plugin-message transport)",
             TrChatMod.MOD_NAME, service.channelCount());
     }
 

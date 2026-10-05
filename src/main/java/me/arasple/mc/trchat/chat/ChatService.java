@@ -21,6 +21,16 @@ import me.arasple.mc.trchat.protocol.TrChatMessage;
 import me.arasple.mc.trchat.protocol.TrChatProtocol;
 import me.arasple.mc.trchat.redis.RedisBridge;
 import me.arasple.mc.trchat.redis.RedisSettings;
+import me.arasple.mc.trchat.util.proxy.ProxyBridge;
+import me.arasple.mc.trchat.util.proxy.ProxyMode;
+import me.arasple.mc.trchat.util.proxy.ProxyTransport;
+//? if neoforge {
+import me.arasple.mc.trchat.util.proxy.transport.NeoForgeProxyTransport;
+//? } else if forge {
+import me.arasple.mc.trchat.util.proxy.transport.ForgeProxyTransport;
+//? } else {
+import me.arasple.mc.trchat.util.proxy.transport.FabricProxyTransport;
+//? }
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -40,7 +50,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class ChatService implements AutoCloseable {
 
-    private static final Duration REMOTE_PLAYER_TTL = Duration.ofSeconds(35);
+    private static final Duration REMOTE_PLAYER_TTL = Duration.ofSeconds(90);
 
     private final MinecraftServer server;
     private final ChannelManager channels;
@@ -60,6 +70,7 @@ public final class ChatService implements AutoCloseable {
     private final Map<String, RemoteServerPlayers> remotePlayers = new ConcurrentHashMap<>();
     private final Map<UUID, String> lastPrivateSender = new HashMap<>();
     private RedisBridge redis;
+    private ProxyBridge proxy;
     private boolean globalMute;
     private int tickCounter;
 
@@ -79,6 +90,7 @@ public final class ChatService implements AutoCloseable {
             playerJoined(player);
         }
         reconnectRedis();
+        reconnectProxy();
     }
 
     public void handleChat(ServerPlayer player, String originalMessage) {
@@ -123,7 +135,7 @@ public final class ChatService implements AutoCloseable {
             channel, ChannelRenderer.Audience.CHAT, null, (ServerPlayer) null, normalized, defaultContext
         );
 
-        if (channel.options().redis() && redis != null) {
+        if (channel.options().redis()) {
             TrChatMessage packet = TrChatMessage.of(
                 "BroadcastRaw",
                 TrChatProtocol.formatUuid(TrChatProtocol.NIL_UUID),
@@ -133,7 +145,7 @@ public final class ChatService implements AutoCloseable {
                 String.join(";", channel.options().ports()),
                 rendered.fallback()
             );
-            if (redis.publish(packet)) {
+            if (publishCrossServer(packet)) {
                 chatLogs.logNormal(moderation.languages().text(null, "Console-Name"), normalized);
                 return 1;
             }
@@ -211,7 +223,7 @@ public final class ChatService implements AutoCloseable {
             return 1;
         }
 
-        if (!channel.options().redis() || redis == null || !redis.publish(TrChatProtocol.forwardPrivate(
+        if (!channel.options().redis() || !publishCrossServer(TrChatProtocol.forwardPrivate(
             exactTarget,
             sender.getGameProfile().getName(),
             ComponentJson.serialize(receiverView.component(), server),
@@ -222,7 +234,8 @@ public final class ChatService implements AutoCloseable {
             return 0;
         }
         if (processed.mentionedPlayers().stream().anyMatch(name -> exactTarget.equalsIgnoreCase(name))) {
-            redis.publish(TrChatMessage.of(
+            publishCrossServer(TrChatMessage.of(
+                "ForwardMessage",
                 "SendLang",
                 exactTarget,
                 "Function-Mention-Notify",
@@ -331,8 +344,8 @@ public final class ChatService implements AutoCloseable {
 
     public void setGlobalMute(boolean muted, boolean publish) {
         globalMute = muted;
-        if (publish && redis != null) {
-            redis.publish(TrChatMessage.of("GlobalMute", muted ? "on" : "off"));
+        if (publish) {
+            publishCrossServer(TrChatMessage.of("ForwardMessage", "GlobalMute", muted ? "on" : "off"));
         }
         String key = muted ? "Global-Mute-On" : "Global-Mute-Off";
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -360,6 +373,7 @@ public final class ChatService implements AutoCloseable {
         if (!moderation.reloadLanguages()) failed.add("lang");
         SpecialChars.reload();
         reconnectRedis();
+        reconnectProxy();
         return new ReloadResult(failed.isEmpty(), loaded, List.copyOf(failed));
     }
 
@@ -497,6 +511,32 @@ public final class ChatService implements AutoCloseable {
         }
     }
 
+    public void reconnectProxy() {
+        if (proxy != null) {
+            proxy.close();
+            proxy = null;
+        }
+        if (TrChatConfig.PROXY_ENABLED.get()) {
+            ProxyTransport.setMode(ProxyMode.parse(TrChatConfig.PROXY_MODE.get()));
+            proxy = new ProxyBridge(message -> server.execute(() -> handleRedisMessage(message)));
+            proxy.start();
+            //? if neoforge {
+            ProxyTransport.setSender(new NeoForgeProxyTransport.NeoForgeSender(server));
+            //? } else if forge {
+            ProxyTransport.setSender(new ForgeProxyTransport.ForgeSender(server));
+            //? } else {
+            ProxyTransport.setSender(new FabricProxyTransport.FabricSender(server));
+            //? }
+        }
+    }
+
+    private boolean publishCrossServer(TrChatMessage packet) {
+        if (redis != null && redis.publish(packet)) {
+            return true;
+        }
+        return proxy != null && proxy.publish(packet);
+    }
+
     public boolean isRedisEnabled() {
         return redis != null;
     }
@@ -549,6 +589,10 @@ public final class ChatService implements AutoCloseable {
             redis.close();
             redis = null;
         }
+        if (proxy != null) {
+            proxy.close();
+            proxy = null;
+        }
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
             persistChannelMembership(player);
         }
@@ -600,7 +644,7 @@ public final class ChatService implements AutoCloseable {
             return true;
         }
 
-        if (channel.options().redis() && redis != null && processed.crossServerSafe()) {
+        if (channel.options().redis() && processed.crossServerSafe()) {
             TrChatMessage packet = TrChatMessage.of(
                 "BroadcastRaw",
                 TrChatProtocol.formatUuid(player.getUUID()),
@@ -612,7 +656,7 @@ public final class ChatService implements AutoCloseable {
                 player.getGameProfile().getName(),
                 String.join(",", mentioned)
             );
-            if (redis.publish(packet)) {
+            if (publishCrossServer(packet)) {
                 return true;
             }
             if (channel.options().forceRedis()) {
@@ -979,6 +1023,7 @@ public final class ChatService implements AutoCloseable {
                 case "BroadcastRaw" -> receiveBroadcast(data);
                 case "SendPrivateRaw" -> receivePrivate(data);
                 case "UpdateNames" -> receivePlayerNames(data);
+                case "UpdateAllNames" -> receiveAllPlayerNames(data);
                 case "GlobalMute" -> {
                     if (data.size() >= 2) {
                         globalMute = "on".equalsIgnoreCase(data.get(1));
@@ -1098,6 +1143,30 @@ public final class ChatService implements AutoCloseable {
         remotePlayers.put(serverId, new RemoteServerPlayers(System.nanoTime(), players));
     }
 
+    private void receiveAllPlayerNames(List<String> data) {
+        if (data.size() < 4) {
+            return;
+        }
+        String[] names = splitProtocolList(data.get(1));
+        String[] displayNames = splitProtocolList(data.get(2));
+        String[] uuids = splitProtocolList(data.get(3));
+        List<RemotePlayer> players = new ArrayList<>();
+        for (int index = 0; index < names.length; index++) {
+            if (names[index].isBlank()) {
+                continue;
+            }
+            String displayName = index < displayNames.length && !"#".equals(displayNames[index])
+                ? displayNames[index]
+                : names[index];
+            UUID uuid = index < uuids.length ? TrChatProtocol.parseUuid(uuids[index]) : null;
+            if (uuid != null) {
+                players.add(new RemotePlayer(names[index], displayName, uuid));
+            }
+        }
+        remotePlayers.clear();
+        remotePlayers.put("proxy", new RemoteServerPlayers(System.nanoTime(), players));
+    }
+
     private void receiveLanguageNotice(List<String> data) {
         if (data.size() < 4) {
             return;
@@ -1115,7 +1184,7 @@ public final class ChatService implements AutoCloseable {
     }
 
     private void publishPlayerNames() {
-        if (redis == null) {
+        if (proxy == null && redis == null) {
             return;
         }
         List<ServerPlayer> players = server.getPlayerList().getPlayers();
@@ -1123,7 +1192,7 @@ public final class ChatService implements AutoCloseable {
         // parses the UUID at index zero. A nil UUID safely clears the previous
         // server snapshot without producing FastUUID warnings or a real player.
         if (players.isEmpty()) {
-            redis.publish(TrChatProtocol.emptyPlayerNames(
+            publishCrossServer(TrChatProtocol.emptyPlayerNames(
                 Integer.toString(TrChatConfig.SERVER_ID.get())
             ));
             return;
@@ -1138,7 +1207,7 @@ public final class ChatService implements AutoCloseable {
         String uuids = String.join(",", players.stream()
             .map(player -> TrChatProtocol.formatUuid(player.getUUID()))
             .toList());
-        redis.publish(TrChatMessage.of(
+        publishCrossServer(TrChatMessage.of(
             "UpdateNames",
             Integer.toString(TrChatConfig.SERVER_ID.get()),
             names,

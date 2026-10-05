@@ -95,6 +95,7 @@ dependencies {
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("com.google.code.gson:gson:2.11.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

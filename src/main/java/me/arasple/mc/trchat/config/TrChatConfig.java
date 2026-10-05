@@ -40,6 +40,9 @@ public final class TrChatConfig {
     public static final ModConfigSpec.IntValue REDIS_RECONNECT_DELAY;
     public static final ModConfigSpec.ConfigValue<String> REDIS_CHANNEL;
 
+    public static final ModConfigSpec.BooleanValue PROXY_ENABLED;
+    public static final ModConfigSpec.ConfigValue<String> PROXY_MODE;
+
     public static final ModConfigSpec.IntValue ANTI_REPEAT_MAX_PER_PERIOD;
     public static final ModConfigSpec.IntValue ANTI_REPEAT_PERIOD_MILLIS;
     public static final ModConfigSpec.BooleanValue ANTI_REPEAT_COMPARE_ALL;
@@ -140,7 +143,7 @@ public final class TrChatConfig {
             .defineInRange("intervalMinutes", 15, 1, 1440);
         builder.pop();
 
-        builder.comment("Redis is the only supported cross-server transport.")
+        builder.comment("Redis cross-server transport settings.")
             .push("redis");
         REDIS_ENABLED = builder.define("enabled", false);
         REDIS_HOST = builder.define("host", "127.0.0.1");
@@ -158,6 +161,20 @@ public final class TrChatConfig {
         REDIS_CHANNEL = builder
             .comment("Do not change when interoperating with the Bukkit version.")
             .define("channel", "trchat-message");
+        builder.pop();
+
+        builder.comment(
+            "TrChat proxy plugin-message channel (Velocity / BungeeCord proxy protocol).",
+            "Used when proxy transport is enabled and Redis is unavailable."
+        ).push("proxy");
+        PROXY_ENABLED = builder
+            .comment("Publish cross-server messages through the proxy plugin-message channel.",
+                "通过代理插件消息通道转发跨服消息。")
+            .define("enabled", false);
+        PROXY_MODE = builder
+            .comment("Proxy protocol: VELOCITY (trchat:proxy/server) or BUNGEE (trchat:main).",
+                "代理协议：VELOCITY（trchat:proxy/server）或 BUNGEE（trchat:main）。")
+            .define("mode", "VELOCITY");
         builder.pop();
 
         SPEC = builder.build();
@@ -200,6 +217,9 @@ public final class TrChatConfig {
     public static final ForgeConfigSpec.IntValue REDIS_SOCKET_TIMEOUT;
     public static final ForgeConfigSpec.IntValue REDIS_RECONNECT_DELAY;
     public static final ForgeConfigSpec.ConfigValue<String> REDIS_CHANNEL;
+
+    public static final ForgeConfigSpec.BooleanValue PROXY_ENABLED;
+    public static final ForgeConfigSpec.ConfigValue<String> PROXY_MODE;
 
     public static final ForgeConfigSpec.IntValue ANTI_REPEAT_MAX_PER_PERIOD;
     public static final ForgeConfigSpec.IntValue ANTI_REPEAT_PERIOD_MILLIS;
@@ -298,7 +318,7 @@ public final class TrChatConfig {
             .defineInRange("intervalMinutes", 15, 1, 1440);
         builder.pop();
 
-        builder.comment("Redis is the only supported cross-server transport.")
+        builder.comment("Redis cross-server transport settings.")
             .push("redis");
         REDIS_ENABLED = builder.define("enabled", false);
         REDIS_HOST = builder.define("host", "127.0.0.1");
@@ -316,6 +336,20 @@ public final class TrChatConfig {
         REDIS_CHANNEL = builder
             .comment("Do not change when interoperating with the Bukkit version.")
             .define("channel", "trchat-message");
+        builder.pop();
+
+        builder.comment(
+            "TrChat proxy plugin-message channel (Velocity / BungeeCord proxy protocol).",
+            "Used when proxy transport is enabled and Redis is unavailable."
+        ).push("proxy");
+        PROXY_ENABLED = builder
+            .comment("Publish cross-server messages through the proxy plugin-message channel.",
+                "通过代理插件消息通道转发跨服消息。")
+            .define("enabled", false);
+        PROXY_MODE = builder
+            .comment("Proxy protocol: VELOCITY (trchat:proxy/server) or BUNGEE (trchat:main).",
+                "代理协议：VELOCITY（trchat:proxy/server）或 BUNGEE（trchat:main）。")
+            .define("mode", "VELOCITY");
         builder.pop();
 
         SPEC = builder.build();
@@ -369,6 +403,8 @@ public final class TrChatConfig {
     public static final Value<Integer> REDIS_SOCKET_TIMEOUT = new Value<>("redis.socketTimeoutMillis", Integer.valueOf(0), v -> ((Number) v).intValue());
     public static final Value<Integer> REDIS_RECONNECT_DELAY = new Value<>("redis.reconnectDelayMillis", Integer.valueOf(3000), v -> ((Number) v).intValue());
     public static final Value<String> REDIS_CHANNEL = new Value<>("redis.channel", "trchat-message", Object::toString);
+    public static final Value<Boolean> PROXY_ENABLED = new Value<>("proxy.enabled", Boolean.FALSE, v -> ((Boolean) v));
+    public static final Value<String> PROXY_MODE = new Value<>("proxy.mode", "VELOCITY", Object::toString);
 
     private static Map<String, Object> data() {
         Map<String, Object> cached = data;

@@ -28,12 +28,13 @@ Options:
   # ALL, SELF, SINGLE_WORLD/WORLD, DISTANCE;<blocks>.
   # 可选 ALL、SELF、SINGLE_WORLD/WORLD、DISTANCE;<方块数>。
   Target: ALL
-  # Here Proxy only means Bukkit-compatible Redis forwarding, not proxy linking.
-  # 此处 Proxy 只表示 Bukkit 兼容的 Redis 转发，不包含代理端连接。
+  # Use cross-server forwarding through Redis or the Bukkit-compatible plugin-message channel.
+  # 此处 Proxy 表示通过 Redis 或 Bukkit 兼容的插件消息通道跨服转发。
   Proxy: false
-  # Refuse delivery when Redis is down. / Redis 不可用时拒绝发送。
+  # Refuse delivery when all configured cross-server transports are down.
+  # 所有已配置的跨服传输均不可用时拒绝发送。
   Force-Proxy: false
-  # Bukkit Redis protocol compatibility flag. / Bukkit Redis 协议兼容标记。
+  # Bukkit protocol compatibility flag. / Bukkit 协议兼容标记。
   Double-Transfer: false
   # Destination server IDs; empty means all. / 目标服务器 ID；留空表示全部。
   Ports: []

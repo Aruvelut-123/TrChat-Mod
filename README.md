@@ -10,7 +10,7 @@ TrChat Bukkit 插件的多加载器多版本服务端移植版。支持以下加
 | Fabric | 1.21.1、1.21.11、26.1.2、26.2、26.3 |
 | Forge（LTS） | 1.20.1（47.4.0+） |
 
-不包含 Bukkit、BungeeCord、Velocity、插件消息代理或 DiscordSRV；跨服只通过 Redis，并保持与 Bukkit TrChat `2.4.9` 的聊天协议互通。
+不包含 Bukkit、BungeeCord、Velocity 或 DiscordSRV 代理插件；跨服频道可使用 Redis，或使用与 Bukkit 兼容的插件消息传输（BungeeCord 使用 `trchat:main`，Velocity 使用 `trchat:proxy`/`trchat:server`）。
 
 > ⚠️ **`pumpkin/` 目录（实验性）**：本仓库 `v2` 分支包含 `pumpkin/` 目录——TrChat 对 [PumpkinMC](https://pumpkinmc.org)（Rust 实现的 Minecraft 服务端）的**实验性** WASM 插件移植，仍处于 WIP 状态，不保证生产可用。该移植此前在 `pumpkin-experimental` 分支开发，现已合并入 `v2`。详见 [pumpkin/README.md](pumpkin/README.md)。
 
@@ -43,6 +43,7 @@ TrChat Bukkit 插件的多加载器多版本服务端移植版。支持以下加
 - YAML 配置与语言文件加载时自动补齐缺失项、删除未知项，并保留所有已知项的用户值。
 - 本地 `data.db` 持久化；`datasource.yml` 可切换 SQLite、MySQL、MariaDB 或自定义 JDBC。
 - Redis 自动重连，以及与 Bukkit 版的广播、私聊、在线玩家列表和全服禁言协议互通。
+- 与 Bukkit 兼容的 BungeeCord/Velocity 插件消息转发，支持分片载荷和代理端玩家列表聚合。
 - 内置 GitHub Release 更新检查器。
 
 ## 加载器差异
@@ -96,13 +97,19 @@ config/trchat/
     └── Example.yml
 ```
 
-频道文件沿用 Bukkit 版的大部分结构。`Options.Proxy` 在本项目中仅表示"使用 Redis 互通"，不是 BungeeCord/Velocity 代理连接。
+频道文件沿用 Bukkit 版的大部分结构。`Options.Proxy: true` 启用跨服传输，使用可用的 Redis 或插件消息通道。
 
 ## Redis 与 Bukkit 互通
 
 编辑配置文件。每台服务端的 `serverId` 必须唯一，建议直接使用服务端端口。Bukkit TrChat 端应连接同一 Redis 数据库，并保留 `trchat-message` 频道。
 
 普通/全服聊天、私聊、私聊监听、在线玩家列表与全服禁言可以跨 Bukkit/NeoForge/Fabric 互通。物品、背包和末影箱快照始终只在本服处理。
+
+## 插件消息与 Bukkit 互通
+
+在代理上安装上游 TrChat 插件，后端的 `proxy.enabled` 设为 `true`，`proxy.mode` 选择 `VELOCITY` 或 `BUNGEE`；每个跨服频道仍需设置 `Options.Proxy: true`。NeoForge/Forge 使用 `settings.toml` 的 `[proxy]` 段，Fabric 使用 `settings.yml` 的 `proxy` 段。`chat.serverId` 应与代理配置中的后端端口一致。
+
+插件消息需要本服至少有一名在线玩家作为载体；无人在线时发送返回不可用，频道按 `Options.Force-Proxy` 决定是否允许本地回退。Redis 与插件消息同时启用时优先使用 Redis，Redis 不可用时尝试插件消息。聊天、私聊、在线玩家列表、提及通知和全服禁言沿用上游协议，物品及容器快照仍仅在本服处理。
 
 ## 构建和测试
 

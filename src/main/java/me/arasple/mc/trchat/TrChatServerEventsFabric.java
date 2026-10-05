@@ -33,7 +33,7 @@ public final class TrChatServerEventsFabric extends TrChatCommands {
                 updateChecker = new UpdateChecker(server, service.languages(), modVersion());
                 updateChecker.start();
             }
-            TrChatMod.LOGGER.info("{} started with {} channels (Fabric, Redis-only transport)",
+            TrChatMod.LOGGER.info("{} started with {} channels (Fabric, Redis/plugin-message transport)",
                 TrChatMod.MOD_NAME, service.channelCount());
         });
 

@@ -52,7 +52,7 @@ updates:
   # Minutes between checks. The Bukkit upstream default is 15 minutes.
   intervalMinutes: 15
 
-# Redis is the only supported cross-server transport.
+# Redis cross-server transport settings.
 redis:
   enabled: false
   host: "127.0.0.1"
@@ -67,3 +67,13 @@ redis:
   reconnectDelayMillis: 3000
   # Do not change when interoperating with the Bukkit version.
   channel: "trchat-message"
+
+# TrChat proxy plugin-message channel (Velocity / BungeeCord proxy protocol).
+# Used when proxy transport is enabled and Redis is unavailable.
+proxy:
+  # Publish cross-server messages through the proxy plugin-message channel.
+  # 通过代理插件消息通道转发跨服消息。
+  enabled: false
+  # VELOCITY uses trchat:proxy -> proxy and trchat:server <- proxy.
+  # BUNGEE uses the bidirectional trchat:main channel.
+  mode: "VELOCITY"

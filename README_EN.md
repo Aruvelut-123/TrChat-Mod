@@ -10,7 +10,7 @@ A multi-loader, multi-version server-side port of the TrChat Bukkit plugin. Supp
 | Fabric | 1.21.1, 1.21.11, 26.1.2, 26.2, 26.3 |
 | Forge (LTS) | 1.20.1 (47.4.0+) |
 
-It does not include Bukkit, BungeeCord, Velocity, plugin-message proxy transport, or DiscordSRV. Redis is the only cross-server transport and remains wire-compatible with Bukkit TrChat `2.4.9`.
+It does not include Bukkit, BungeeCord, Velocity, or DiscordSRV proxy plugins. Cross-server channels can use Redis or the Bukkit-compatible plugin-message transport (`trchat:main` for BungeeCord, `trchat:proxy`/`trchat:server` for Velocity).
 
 > ⚠️ **`pumpkin/` directory (experimental)**: this repository's `v2` branch contains the `pumpkin/` directory — an **experimental** WASM plugin port of TrChat for [PumpkinMC](https://pumpkinmc.org) (a Rust Minecraft server). It is a WIP and not production-ready. The port was previously developed on the `pumpkin-experimental` branch, which has now been merged into `v2`. See [pumpkin/README.md](pumpkin/README.md).
 
@@ -43,6 +43,7 @@ Server-side installation only; vanilla clients can join directly.
 - YAML and language synchronization that adds missing keys, removes unknown keys, and retains user values for known keys.
 - Local `data.db` persistence, switchable through `datasource.yml` to SQLite, MySQL, MariaDB, or custom JDBC.
 - Redis reconnection and Bukkit-compatible broadcast, private-message, online-player-list, and global-mute messages.
+- Bukkit-compatible BungeeCord/Velocity plugin-message forwarding with chunked payloads and proxy-wide player-name aggregation.
 - Built-in GitHub Release update checks.
 
 ## Loader differences
@@ -101,6 +102,12 @@ config/trchat/
 Edit the configuration file. Each server must use a unique `serverId` (the server port is recommended). The Bukkit TrChat server should connect to the same Redis database and keep the `trchat-message` channel.
 
 Public/global chat, private messages, private-spy, online-player-list, and global-mute can work across Bukkit/NeoForge/Fabric servers. Item, inventory, and Ender Chest snapshots are always local.
+
+## Plugin-message and Bukkit interoperability
+
+Install upstream TrChat on the proxy, set `proxy.enabled` to `true`, and select `VELOCITY` or `BUNGEE` for `proxy.mode`. Enable `Options.Proxy: true` on each cross-server channel. NeoForge/Forge use the `[proxy]` section in `settings.toml`; Fabric uses `proxy` in `settings.yml`. Set `chat.serverId` to the backend port configured on the proxy.
+
+Plugin messages require at least one player connected to the backend to carry packets. With no players, sending is unavailable and `Options.Force-Proxy` controls local fallback. When both transports are enabled, Redis takes priority and plugin messages are attempted if Redis is unavailable. Chat, private messages, player lists, mention notices, and global mute use the upstream protocol; item and container snapshots remain local.
 
 ## Building and testing
 
